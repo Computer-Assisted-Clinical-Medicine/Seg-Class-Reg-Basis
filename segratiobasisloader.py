@@ -2,8 +2,8 @@ import tensorflow as tf
 import traceback
 import warnings
 import numpy as np
-import config as cfg
-from segbasisloader import SegBasisLoader
+from . import config as cfg
+from .segbasisloader import SegBasisLoader
 
 
 class SegRatioBasisLoader(SegBasisLoader):

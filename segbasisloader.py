@@ -1,8 +1,8 @@
 import numpy as np
 import SimpleITK as sitk
-import config as cfg
-import NetworkBasis.image as Image
-from NetworkBasis.dataloader import DataLoader
+from . import config as cfg
+from .NetworkBasis import image as Image
+from .NetworkBasis.dataloader import DataLoader
 
 
 class SegBasisLoader(DataLoader):

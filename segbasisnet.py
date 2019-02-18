@@ -1,10 +1,10 @@
 import tensorflow as tf
 import numpy as np
 from time import time
-import config as cfg
-from NetworkBasis.network import Network
-import NetworkBasis.loss as Loss
-import NetworkBasis.metric as Metric
+from . import config as cfg
+from .NetworkBasis.network import Network
+from .NetworkBasis import loss as Loss
+from .NetworkBasis import metric as Metric
 import os
 
 
@@ -138,10 +138,10 @@ class SegBasisNet(Network):
                             tf.uint8), axis=-1),
                                  2, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
             else:
-                tf.summary.scalar('OneHotMax-Img', tf.reduce_max(self.y), collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
+                tf.summary.scalar('OneHotMax-Img', tf.reduce_max(self.inputs['y']), collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
                 help_img = self.inputs['y'][:, :, :, 1]
-                for i in range(2, self.n_classes):
-                    help_img = tf.expand_dims(tf.add(help_img, tf.multiply(self.y[:, :, :, i], i)), -1)
+                for i in range(2, self.options['out_channels']):
+                    help_img = tf.expand_dims(tf.add(help_img, tf.multiply(self.inputs['y'][:, :, :, i], i)), -1)
                 tf.summary.scalar('IntMax-Img', tf.reduce_max(help_img),
                                   collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
                 tf.summary.image('train_seg_lbl', tf.cast(tf.gather(help_img, [0, cfg.batch_size-1]) * (255 // (self.n_classes-1)), tf.uint8), 2,
@@ -171,28 +171,28 @@ class SegBasisNet(Network):
 
     def _set_up_testing_image_summaries(self):
         with tf.device('/cpu:0'):
-            if self.n_channels > 1:
-                tf.summary.image('test_img', tf.cast((self.x[:, :, :, ::self.n_channels//2]+1) * 255/2, tf.uint8),
+            if self.options['in_channels'] > 1:
+                tf.summary.image('test_img', tf.cast((self.inputs['x'][:, :, :, ::self.options['in_channels']//2]+1) * 255/2, tf.uint8),
                                  1, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
             else:
                 tf.summary.image('test_img', tf.cast(
-                    (self.x + 1) * 255 / 2,
+                    (self.inputs['x'] + 1) * 255 / 2,
                     tf.uint8), 1, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
 
-            if self.n_classes == 2:
+            if self.options['out_channels'] == 2:
                 tf.summary.image('test_seg_pred', tf.expand_dims(tf.cast(self.outputs['predictions'] * 255, tf.uint8), axis=-1),
                              1)
-                tf.summary.image('test_seg_lbl', tf.expand_dims(tf.cast(self.y[:, :, :, 1] * 255, tf.uint8), axis=-1), 1)
+                tf.summary.image('test_seg_lbl', tf.expand_dims(tf.cast(self.inputs['y'][:, :, :, 1] * 255, tf.uint8), axis=-1), 1)
                 tf.summary.image('test_seg_prob',
                              tf.expand_dims(tf.cast(self.outputs['probabilities'][:, :, :, 1] * 255, tf.uint8), axis=-1), 1)
                 tf.summary.image('test_seg_log_object',
                              tf.expand_dims(self.outputs['logits'][:, :, :, 1], axis=-1), 1)
             else:
-                tf.summary.scalar('OneHotMax-Img', tf.reduce_max(self.y),
+                tf.summary.scalar('OneHotMax-Img', tf.reduce_max(self.inputs['y']),
                                   collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-                help_img = self.y[:, :, :, 1]
-                for i in range(2, self.n_classes):
-                    help_img = tf.expand_dims(tf.add(help_img, tf.multiply(self.y[:, :, :, i], i)), -1)
+                help_img = self.inputs['y'][:, :, :, 1]
+                for i in range(2, self.options['out_channels']):
+                    help_img = tf.expand_dims(tf.add(help_img, tf.multiply(self.inputs['y'][:, :, :, i], i)), -1)
                 tf.summary.scalar('IntMax-Img', tf.reduce_max(help_img),
                                   collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
                 tf.summary.image('test_seg_lbl',
@@ -230,17 +230,17 @@ class SegBasisNet(Network):
     def _run_test(self, sess, step, version, test_path, feed_dict, test_files, summaries_per_case=cfg.summaries_per_case):
 
         summary_op = tf.summary.merge_all()
-        writer = tf.summary.FileWriter(test_path, graph=self.graph)
+        writer = tf.summary.FileWriter(test_path, graph=self.variables['graph'])
         eval_file_path = os.path.join(test_path, os.path.basename(test_path) + '-' + version + '-eval.csv')
 
         with tf.device('/cpu:0'):
-            header_row = evaluation.make_csv_file(eval_file_path)
+            header_row = self._init_evaluation(eval_file_path)
 
         # perform tests
         for file in test_files:
 
             with tf.device('/cpu:0'):
-                image_samples, label_samples,             data_info, file_number = evaluation.read_nii_for_testing(file)
+                image_samples, label_samples, data_info, file_number = self._read_data_for_inference(file, 'test')
 
             s = image_samples.shape
             predictions = []
@@ -260,9 +260,9 @@ class SegBasisNet(Network):
 
                     if self.options['batch_normalization']:
                         test_dict = {**feed_dict, **{self.options['is_training_tf']: False,
-                                                    self.x: image_slice, self.y: label_slice}}
+                                                     self.inputs['x']: image_slice, self.inputs['y']: label_slice}}
                     else:
-                        test_dict = {**feed_dict, **{self.x: image_slice, self.y: label_slice}}
+                        test_dict = {**feed_dict, **{self.inputs['x']: image_slice, self.inputs['y']: label_slice}}
 
                     # compute and write summaries
                     if i % (s[0]//summaries_per_case) == 0:
@@ -310,9 +310,20 @@ class SegBasisNet(Network):
 
                 del label_samples
 
-                result_metrics = evaluation.evaluate_segmentation_prediction(predictions, result_metrics, data_info, file, test_path, version)
+                pred_img = self._write_inference_data(predictions, data_info, file_number, test_path, version)
 
-                evaluation.write_metrics_to_csv(eval_file_path, header_row, result_metrics)
+                result_metrics = self._run_evaluation(pred_img, result_metrics, data_info, file)
+
+                self._write_evaluation(eval_file_path, header_row, result_metrics)
+
+    def _init_evaluation(self, eval_file_path):
+        raise NotImplementedError('not implemented')
+
+    def _run_evaluation(self, pred_img, result_metrics, data_info, path):
+        raise NotImplementedError('not implemented')
+
+    def _write_evaluation(self, eval_file_path, header_row, result_metrics):
+        raise NotImplementedError('not implemented')
 
     def _run_apply(self, sess, step, version, apply_path, feed_dict, test_files):
 
@@ -322,7 +333,7 @@ class SegBasisNet(Network):
         for file in test_files:
 
             with tf.device('/cpu:0'):
-                image_samples, data_info, file_number = evaluation.read_nii_for_application(file)
+                image_samples, data_info, file_number = self._read_data_for_inference(file, 'apply')
 
             s = image_samples.shape
             predictions = []
@@ -338,9 +349,9 @@ class SegBasisNet(Network):
 
                 if self.options['batch_normalization']:
                     test_dict = {**feed_dict, **{self.options['is_training_tf']: False,
-                                                 self.x: image_slice}}
+                                                 self.inputs['x']: image_slice}}
                 else:
-                    test_dict = {**feed_dict, **{self.x: image_slice}}
+                    test_dict = {**feed_dict, **{self.inputs['x']: image_slice}}
 
                 [pred] = sess.run([self.outputs['predictions']], feed_dict=test_dict)
 
@@ -360,4 +371,10 @@ class SegBasisNet(Network):
                 print('  Elapsed Time (Seconds): ', elapsed_time)
 
                 predictions = np.concatenate(predictions)
-                evaluation.process_and_write_predictions_nii(predictions, data_info, file_number, apply_path, version)
+                self._write_inference_data(predictions, data_info, file_number, apply_path, version)
+
+    def _read_data_for_inference(self, file, mode):
+        raise NotImplementedError('not implemented')
+
+    def _write_inference_data(self, predictions, data_info, file_number, out_path, version):
+        raise NotImplementedError('not implemented')
