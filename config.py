@@ -30,15 +30,15 @@ else:
     ONSERVER = False
     op_parallelism_threads = 3
     batch_size = 8
-    training_epochs = 1
-    batch_capacity = 400
-    train_reader_instances = 1
+    training_epochs = 100
+    batch_capacity = 2000
+    train_reader_instances = 2
 
 write_step = 2500
 summary_step = 100
 
 ##### Testing #####
-do_connected_component_analysis = True
+do_connected_component_analysis = False
 test_size = 1
 summaries_per_case = 10
 
@@ -58,7 +58,7 @@ number_of_vald = 2
 
 ##### Loader #####
 vald_reader_instances = 1
-file_name_capacity = 9
+file_name_capacity = 11
 batch_capacity_valid = batch_capacity//2
 
 # Sample Mining
@@ -67,23 +67,22 @@ in_between_slice_factor = 2
 slice_shift = ((num_channels - 1) // 2) * in_between_slice_factor
 min_n_samples = 10
 random_sampling_mode = SAMPLINGMODES.CONSTRAINED_MUSTD
-percent_of_object_samples = 50  # %
-samples_per_slice_liver = 2
-samples_per_slice_lesion = 4
+percent_of_object_samples = 75  # %
+samples_per_slice_lesion = 5
 samples_per_slice_bkg = 1
 samples_per_slice_uni = 1
 
 # Resampling
-adapt_resolution = True
+adapt_resolution = False
 if adapt_resolution:
     target_spacing = [0.75, 0.75, 1.25]
     target_size = [512, 512]
 target_direction = (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)  # make sure all images are oriented equally
 target_type_image = sitk.sitkFloat32
 target_type_label = sitk.sitkUInt32
-data_background_value = -1000
+data_background_value = 0
 label_background_value = 0
-max_rotation = 0.07
+max_rotation = 0.5
 
 # Tversky
 tversky_alpha = 0.3
@@ -97,10 +96,11 @@ max_weight = 1.2
 tissue_threshold = -0.9
 
 # Preprocessing
-norm_min_v_t1 = 0
-norm_max_v_t1 = 3500
+norm_min_v_t1 = 600
+norm_max_v_t1 = 3250
 norm_min_v_t2 = 0
-norm_max_v_t2 = 800
+norm_max_v_t2 = 400
+norm_min_v = norm_min_v_t2
 norm_eps = 1e-5
 
 ##### Network #####

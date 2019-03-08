@@ -148,8 +148,12 @@ class SegBasisLoader(DataLoader):
             sample_x = np.random.randint(min_x, max_x + 1, samples_per_slice)
             sample_y = np.random.randint(min_y, max_y + 1, samples_per_slice)
             for i in range(samples_per_slice):
-                I[i] = np.squeeze(image[sample_x[i] - (bb_dim[0] // 2):sample_x[i] + (bb_dim[0] // 2),
+                if len(data_shape) > 3:
+                    I[i] = np.squeeze(image[sample_x[i] - (bb_dim[0] // 2):sample_x[i] + (bb_dim[0] // 2),
                          sample_y[i] - (bb_dim[1] // 2):sample_y[i] + (bb_dim[1] // 2), :])
+                else:
+                    I[i] = image[sample_x[i] - (bb_dim[0] // 2):sample_x[i] + (bb_dim[0] // 2),
+                                      sample_y[i] - (bb_dim[1] // 2):sample_y[i] + (bb_dim[1] // 2), :]
                 L[i] = label[sample_x[i] - (bb_dim[0] // 2):sample_x[i] + (bb_dim[0] // 2),
                          sample_y[i] - (bb_dim[1] // 2):sample_y[i] + (bb_dim[1] // 2)]
         elif cfg.random_sampling_mode == cfg.SAMPLINGMODES.CONSTRAINED_LABEL:
