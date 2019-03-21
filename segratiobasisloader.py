@@ -193,31 +193,59 @@ class SegRatioBasisLoader(SegBasisLoader):
         @return slice indices as numpy array
         '''
         s = lbl.shape[2]  # third dimension is z-axis
-        indices = np.arange(0 + cfg.slice_shift, s - cfg.slice_shift, 1)
-        object_indices = np.intersect1d(np.unique(np.nonzero(lbl)[2]), indices)  # all valid slices containing labels
+        indices = np.arange(0 + 20, s - 5, 1)
+        object_indices = np.intersect1d(np.unique(np.nonzero(lbl > 0.8)[2]), indices)  # all valid slices containing labels
         z_bkg = np.setdiff1d(indices, object_indices)  # select all slices which do not contain annotations
         # If the segmentation is not a continuous volume (case 102), a vector from min to max leads to empty slices.
         # -> use unique instead!
 
         if z_bkg.size > 0:  # some scans don't have non object slices
             # select 100 - cfg.non_zero_sample_percent empty samples, but pay attention to samples per slice
-            number_of_background_indices = min(int(((object_indices.size * samples_per_object_slice)
-                                              / cfg.percent_of_object_samples) * (100 - cfg.percent_of_object_samples)
-                                             / cfg.samples_per_slice_bkg), z_bkg.size)
-            selection = np.random.choice(z_bkg.size, number_of_background_indices,
-                                         replace=False)  # make sure selection is unique
-            background_indices = z_bkg[selection]
+
+            number_of_background_samples = int(np.round(((object_indices.size * samples_per_object_slice) /
+                                            cfg.percent_of_object_samples) * (100 - cfg.percent_of_object_samples)))
+            number_of_missing_samples = number_of_background_samples
+
+            s_r = int(max(np.ceil(number_of_background_samples / z_bkg.size), 1))
+            background_indices = np.array([], dtype=np.int)
+            samples_per_slice_bkg = np.array([], dtype=np.int)
+
+            while number_of_missing_samples > 0:
+                remaining_bkg = np.setdiff1d(z_bkg, background_indices)
+                number_of_background_indices = min(int(np.floor(number_of_missing_samples/ s_r)), remaining_bkg.size)
+                if number_of_missing_samples % s_r > 0 and s_r < number_of_missing_samples and number_of_background_indices == remaining_bkg.size:
+                    number_of_background_indices -= 1
+                # print('OI:', object_indices.size, 'BI:', background_indices.size,
+                #       'Current I:', number_of_background_indices, 'Remaining I:', remaining_bkg.size,
+                #        'Current S:', np.sum(samples_per_slice_bkg), 'Missing S:', number_of_missing_samples)
+                if number_of_background_indices > 0:
+                    selection = np.random.choice(remaining_bkg.size, number_of_background_indices,
+                                                 replace=False)  # make sure selection is unique
+                    additional_indices = remaining_bkg[selection]
+                    additional_samples_per_slice = np.array([s_r] * additional_indices.size, dtype=np.int)
+                    background_indices = np.concatenate([background_indices, additional_indices])
+                    samples_per_slice_bkg = np.concatenate([samples_per_slice_bkg, additional_samples_per_slice])
+
+                number_of_missing_samples = number_of_background_samples - np.sum(samples_per_slice_bkg)
+                if number_of_missing_samples > s_r:
+                    s_r += 1
+                elif number_of_missing_samples < s_r:
+                    s_r -= 1
+                else:
+                    break
+
         else:
             background_indices = np.array([])  # if there are no non object slices, pass empty array
+            samples_per_slice_bkg = np.array([])
 
         print('      Slices:', s, 'Number of Indices (Object, Background): ', object_indices.size, background_indices.size)
 
-        return object_indices, background_indices
+        return object_indices, background_indices, samples_per_slice_bkg
 
     def _get_samples_from_volume(self, data, lbl):
         raise NotImplementedError('not implemented')
 
-    def _get_ratio_samples_from_volume(self, data, lbl, n_object_samples, n_background_samples):
+    def _get_ratio_samples_from_volume(self, data, lbl, n_object_samples):
         '''!
         Get batches/samples for training from image and label data.
 
@@ -231,7 +259,7 @@ class SegRatioBasisLoader(SegBasisLoader):
 
         @return numpy arrays I (containing input samples) and L (containing according labels)
         '''
-        indices_obj, indices_bkg = self._select_indices(data, lbl)
+        indices_obj, indices_bkg, sampling_rates_bkg = self._select_indices(data, lbl)
 
         L_obj = np.zeros((len(indices_obj)*n_object_samples, *self.dshapes[1]))
         I_obj = np.zeros((len(indices_obj)*n_object_samples, *self.dshapes[0]))
@@ -240,12 +268,15 @@ class SegRatioBasisLoader(SegBasisLoader):
             I_obj[i*n_object_samples:(i+1)*n_object_samples] = images
             L_obj[i*n_object_samples:(i+1)*n_object_samples] = labels
 
-        L_bkg = np.zeros((len(indices_bkg) * cfg.samples_per_slice_bkg, *self.dshapes[1]))
-        I_bkg = np.zeros((len(indices_bkg) * cfg.samples_per_slice_bkg, *self.dshapes[0]))
+        L_bkg = []
+        I_bkg = []
         for i in range(len(indices_bkg)):
-            images, labels = self._get_samples_by_index(data, lbl, indices_bkg[i], n_background_samples)
-            I_bkg[i * cfg.samples_per_slice_bkg:(i + 1) * cfg.samples_per_slice_bkg] = images
-            L_bkg[i * cfg.samples_per_slice_bkg:(i + 1) * cfg.samples_per_slice_bkg] = labels
+            images, labels = self._get_samples_by_index(data, lbl, indices_bkg[i], sampling_rates_bkg[i])
+            I_bkg.extend(images)
+            L_bkg.extend(labels)
+
+        L_bkg = np.array(L_bkg)
+        I_bkg = np.array(I_bkg)
 
         I_bkg = self._preprocess(I_bkg)
         I_obj = self._preprocess(I_obj)
@@ -254,135 +285,3 @@ class SegRatioBasisLoader(SegBasisLoader):
         print('    Label Shape: ', L_obj.shape, L_bkg.shape)
 
         return [I_obj, L_obj], [I_bkg, L_bkg]
-
-
-
-
-
-
-
-    # def _get_batches(self, data, lbl):
-    #     '''!
-    #     Get batches/samples for training from image and label data.
-    #
-    #     @param data <em>numpy array,  </em> input image data with config.num_channels channels
-    #     @param lbl <em>numpy array,  </em> label image, one channel
-    #
-    #     This function operates as follows:
-    #     - calls _select_indices()
-    #     - calls _get_samples() for each index
-    #     - calls _preprocess() on the input samples
-    #
-    #     @return numpy arrays I (containing input samples) and L (containing according labels)
-    #     '''
-    #     lesion_indices, liver_indices, indices_bkg = self._select_indices(lbl)
-    #
-    #     L_lesion = np.zeros((len(lesion_indices)*cfg.samples_per_slice_lesion, *self.dshapes[1]))
-    #     I_lesion = np.zeros((len(lesion_indices)*cfg.samples_per_slice_lesion, *self.dshapes[0]))
-    #     for i in range(len(lesion_indices)):
-    #         images, labels = self._get_samples(data, lbl, lesion_indices[i], cfg.samples_per_slice_lesion)
-    #         I_lesion[i*cfg.samples_per_slice_lesion:(i+1)*cfg.samples_per_slice_lesion] = images
-    #         L_lesion[i*cfg.samples_per_slice_lesion:(i+1)*cfg.samples_per_slice_lesion] = labels
-    #
-    #     L_liver = np.zeros((len(liver_indices) * cfg.samples_per_slice_liver, *self.dshapes[1]))
-    #     I_liver = np.zeros((len(liver_indices) * cfg.samples_per_slice_liver, *self.dshapes[0]))
-    #     for i in range(len(liver_indices)):
-    #         images, labels = self._get_samples(data, lbl, liver_indices[i], cfg.samples_per_slice_liver)
-    #         I_liver[i * cfg.samples_per_slice_liver:(i + 1) * cfg.samples_per_slice_liver] = images
-    #         L_liver[i * cfg.samples_per_slice_liver:(i + 1) * cfg.samples_per_slice_liver] = labels
-    #
-    #     L_obj = np.concatenate([L_lesion, L_liver], 0)
-    #     I_obj = np.concatenate([I_lesion, I_liver], 0)
-    #
-    #     L_bkg = np.zeros((len(indices_bkg) * cfg.samples_per_slice_bkg, *self.dshapes[1]))
-    #     I_bkg = np.zeros((len(indices_bkg) * cfg.samples_per_slice_bkg, *self.dshapes[0]))
-    #     for i in range(len(indices_bkg)):
-    #         images, labels = self._get_samples(data, lbl, indices_bkg[i], cfg.samples_per_slice_bkg)
-    #         I_bkg[i * cfg.samples_per_slice_bkg:(i + 1) * cfg.samples_per_slice_bkg] = images
-    #         L_bkg[i * cfg.samples_per_slice_bkg:(i + 1) * cfg.samples_per_slice_bkg] = labels
-    #
-    #     I_bkg = self._preprocess(I_bkg)
-    #     I_obj = self._preprocess(I_obj)
-    #
-    #     print('   Image Shape: ', I_obj.shape, I_bkg.shape)
-    #     print('   Label Shape: ', L_obj.shape, L_bkg.shape)
-    #
-    #     return [I_obj, L_obj], [I_bkg, L_bkg]
-    #
-    # def _select_indices(self, lbl):
-    #     '''!
-    #     select slice indices from which samples should be taken
-    #
-    #     @param lbl <em>numpy array,  </em> label image, where background is zero
-    #
-    #     Z-axis / craniocaudal axis is assumed to be third dimension. Across the third dimension the slices are differentiated
-    #     into zero (empty slices/no segmentation) and non-zero slices.
-    #     For <tt>  self.mode </tt> = @p 'train' all non-zero slices are added to the index list.
-    #     For <tt>  self.mode </tt> = @p 'validate' the number of slices is restricted by config.validation_num_non_zero_indices.
-    #     The number of zero samples is calculated in relation to the non-zero samples based on config.non_zero_sample_percent. Should this number
-    #     be higher than the number actual number of zero indices, then only the available indices are added.
-    #
-    #     @return slice indices as numpy array
-    #     '''
-    #     s = lbl.shape[2]  # third dimension is z-axis
-    #     indices = np.arange(0 + cfg.slice_shift, s - cfg.slice_shift, 1)
-    #
-    #     nz_liver = np.intersect1d(np.unique(np.nonzero(lbl)[2]), indices)  # all valid slices containing liver
-    #     z_bkg = np.setdiff1d(indices, nz_liver)  # select all slices which do not contain annotations
-    #     nz_lesion = np.nonzero(np.greater(lbl, 1))
-    #     # If the segmentation is not a continuous volume (case 102), a vector from min to max leads to empty slices.
-    #     # -> use unique instead!
-    #     lesion_indices = np.random.permutation(np.intersect1d(np.unique(nz_lesion[2]), indices))
-    #     nz_onlyliver = np.setdiff1d(nz_liver, nz_lesion)
-    #
-    #     # if more lesion samples than threshold use 50:50 lesion and only liver slices
-    #     if lesion_indices.size > cfg.min_n_samples:
-    #         # check if there are enough only liver slices
-    #         if nz_onlyliver.size > 0:
-    #             n_liversamples = min(lesion_indices.size, nz_onlyliver.size)  # 50:50 or all there are
-    #             selection = np.random.choice(nz_onlyliver.size, n_liversamples, replace=False) # make sure selection is unique
-    #             #print('Sizes: ', s, lesion_indices.size, nz_onlyliver.size, 'Min: ', n_liversamples, type(n_liversamples), selection.size, type(selection))
-    #             liver_indices = nz_onlyliver[selection]
-    #         else:
-    #             liver_indices = np.array([])  # if there are no only liver slices, pass empty array
-    #     else:
-    #         #print('  Few Lesion samples available: ', lesion_indices.size, '. Using ', cfg.min_n_samples, 'Liver Samples instead.')
-    #         selection = np.random.choice(nz_onlyliver.size, min(cfg.min_n_samples, nz_onlyliver.size), replace=False)
-    #         liver_indices = nz_onlyliver[selection]
-    #
-    #     if z_bkg.size > 0:  # some scans don't have non liver slices
-    #         # select 100 - cfg.non_zero_sample_percent empty samples, but pay attention to samples per slice
-    #         number_of_zero_indices = min(int(((liver_indices.size * cfg.samples_per_slice_liver
-    #                                             + lesion_indices.size * cfg.samples_per_slice_lesion)
-    #                                           / cfg.percent_of_object_samples) * (100 - cfg.percent_of_object_samples)
-    #                                          / cfg.samples_per_slice_bkg), z_bkg.size)
-    #         selection = np.random.choice(z_bkg.size, number_of_zero_indices,
-    #                                      replace=False)  # make sure selection is unique
-    #         zero_indices = z_bkg[selection]
-    #     else:
-    #         zero_indices = np.array([])  # if there are no non liver slices, pass empty array
-    #
-    #     print('    Slices:', s, 'Number of Indices (Lesion, Liver, Zero): ', lesion_indices.size, liver_indices.size, zero_indices.size)
-    #
-    #     return lesion_indices, liver_indices, zero_indices
-    #
-    # def one_hot_label(label):
-    #     '''!
-    #     convert a one-channel binary label image into a one-hot label image
-    #
-    #     @param label <em>numpy array,  </em> label image, where background is zero and object is 1 (only works for binary problems)
-    #
-    #     @return two-channel one-hot label as numpy array
-    #     '''
-    #     # add empty last dimension
-    #     if label.ndim < 4 and label.shape[-1] > 1:
-    #         label = np.expand_dims(label, axis=-1)
-    #     # add empty first dimension if single sample
-    #     if label.ndim < 3:
-    #         label = np.expand_dims(label, axis=0)
-    #
-    #     liver_label = np.equal(label, 1)
-    #     lesion_label = np.equal(label, 2)
-    #
-    #     invert_label = np.logical_not(np.logical_and(liver_label, lesion_label))  # complementary binary mask
-    #     return np.concatenate([invert_label, liver_label, lesion_label], axis=-1)  # fuse

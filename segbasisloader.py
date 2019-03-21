@@ -99,6 +99,17 @@ class SegBasisLoader(DataLoader):
         I, lbl = self._select_patches(image, lbl, samples_per_slice)
         L = self.__class__.one_hot_label(lbl)
 
+        if self.mode == 'train':
+                for sample in range(I.shape[0]):
+                    if cfg.do_flip_coronal:
+                        if np.random.randint(0, 2) > 0:
+                            I[sample, :, :, :] = np.flip(I[sample, :, :, :], 1)
+                            L[sample, :, :, :] = np.flip(L[sample, :, :, :], 1)
+                    if cfg.do_flip_sagittal:
+                        if np.random.randint(0, 2) > 0:
+                            I[sample, :, :, :] = np.flip(I[sample, :, :, :], 0)
+                            L[sample, :, :, :] = np.flip(L[sample, :, :, :], 0)
+
         return [I, L]
 
     def _select_patches(self, image, label, samples_per_slice):
@@ -181,7 +192,7 @@ class SegBasisLoader(DataLoader):
         if label.ndim < 3:
             label = np.expand_dims(label, axis=0)
 
-        invert_label = np.logical_not(label)  # complementary binary mask
+        invert_label = 1 - label  # complementary binary mask
         return np.concatenate([invert_label, label], axis=-1)  # fuse
 
     def _preprocess(self, data):
