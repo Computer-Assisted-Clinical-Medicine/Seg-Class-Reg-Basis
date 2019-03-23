@@ -14,22 +14,20 @@ from enum import Enum
 class SAMPLINGMODES(Enum):
     UNIFORM = 0
     CONSTRAINED_MUSTD = 1
-    CONSTRAINED_LABEL = 1
+    CONSTRAINED_LABEL = 2
 
 ##### Mode #####
 VERBOSE = True
 
 if socket.gethostname() == 'ckm4cad':
     ONSERVER = True
-    op_parallelism_threads = 6
-    batch_size = 16
+    batch_size = 8
     training_epochs = 20
     batch_capacity = 4000
     train_reader_instances = 2
 
 else:
     ONSERVER = False
-    op_parallelism_threads = 3
     batch_size = 8
     training_epochs = 200
     batch_capacity = 2000
