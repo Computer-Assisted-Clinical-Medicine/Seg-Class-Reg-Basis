@@ -114,9 +114,20 @@ class SegBasisNet(Network):
     def _set_up_training_image_summaries(self):
         with tf.device('/cpu:0'):
             if self.options['in_channels'] > 1:
-                tf.summary.image('train_img', tf.cast((tf.gather(self.inputs['x'], [0, cfg.batch_size-1])
-                                [:, :, :, ::self.options['in_channels']//2]+1) * 255/2, tf.uint8),
-                                 2, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
+                if self.options['in_channels'] > 2:
+                    tf.summary.image('train_img', tf.cast((tf.gather(self.inputs['x'], [0, cfg.batch_size-1])
+                                    [:, :, :, ::self.options['in_channels']//2]+1) * 255/2, tf.uint8),
+                                     2, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
+                else:
+                    tf.summary.image('train_img_c1', tf.expand_dims(
+                        tf.cast((tf.gather(self.inputs['x'][:, :, :, 0], [0, cfg.batch_size - 1]) + 1) * 255 / 2, tf.uint8),
+                        axis=-1), 2, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
+                    tf.summary.image('train_img_c2',
+                                     tf.expand_dims(
+                                         tf.cast(
+                                             (tf.gather(self.inputs['x'][:, :, :, 1], [0, cfg.batch_size - 1]) + 1) * 255 / 2,
+                                             tf.uint8),
+                                         axis=-1), 2, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
             else:
                 tf.summary.image('train_img', tf.cast(
                     (tf.gather(self.inputs['x'], [0, cfg.batch_size - 1]) + 1) * 255 / 2,
@@ -172,8 +183,17 @@ class SegBasisNet(Network):
     def _set_up_testing_image_summaries(self):
         with tf.device('/cpu:0'):
             if self.options['in_channels'] > 1:
-                tf.summary.image('test_img', tf.cast((self.inputs['x'][:, :, :, ::self.options['in_channels']//2]+1) * 255/2, tf.uint8),
-                                 1, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
+                if self.options['in_channels'] > 2:
+                    tf.summary.image('test_img', tf.cast((tf.gather(self.inputs['x'], [0, cfg.batch_size - 1])
+                                                           [:, :, :, ::self.options['in_channels'] // 2] + 1) * 255 / 2,
+                                                          tf.uint8),
+                                     2, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
+                else:
+                    tf.summary.image('test_img_c1', tf.expand_dims(tf.cast((self.inputs['x'][:, :, :, 0] + 1) * 255 / 2,
+                                tf.uint8),axis=-1), 2, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
+                    tf.summary.image('test_img_c2',
+                                     tf.expand_dims(tf.cast((self.inputs['x'][:, :, :, 1] + 1) * 255 / 2,
+                                             tf.uint8), axis=-1), 2, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
             else:
                 tf.summary.image('test_img', tf.cast(
                     (self.inputs['x'] + 1) * 255 / 2,
@@ -259,7 +279,7 @@ class SegBasisNet(Network):
                             label_slice = np.expand_dims(label_slice, axis=0)
 
                     if self.options['batch_normalization']:
-                        test_dict = {**feed_dict, **{self.options['is_training_tf']: False,
+                        test_dict = {**feed_dict, **{self.variables['is_training_tf']: False,
                                                      self.inputs['x']: image_slice, self.inputs['y']: label_slice}}
                     else:
                         test_dict = {**feed_dict, **{self.inputs['x']: image_slice, self.inputs['y']: label_slice}}
@@ -348,7 +368,7 @@ class SegBasisNet(Network):
                         image_slice = np.expand_dims(image_slice, axis=0)
 
                 if self.options['batch_normalization']:
-                    test_dict = {**feed_dict, **{self.options['is_training_tf']: False,
+                    test_dict = {**feed_dict, **{self.variables['is_training_tf']: False,
                                                  self.inputs['x']: image_slice}}
                 else:
                     test_dict = {**feed_dict, **{self.inputs['x']: image_slice}}
