@@ -30,7 +30,7 @@ else:
     ONSERVER = False
     batch_size = 8
     training_epochs = 200
-    batch_capacity = 2000
+    batch_capacity = 4000
     train_reader_instances = 2
 
 write_step = 2500
@@ -62,6 +62,8 @@ batch_capacity_valid = batch_capacity//4
 do_flip_coronal = True
 do_flip_sagittal = True
 use_smooth_labels = True
+leave_out_indices = [20, 5]
+clear_peripheral_slices = True
 
 # Sample Mining
 patch_shift_factor = 1  # 3*std is 99th percentile
@@ -94,8 +96,8 @@ tversky_beta = 1 - tversky_alpha
 # Preprocessing
 norm_min_v_t1 = 500
 norm_max_v_t1 = 3000
-norm_min_v_t2 = 20
-norm_max_v_t2 = 200
+norm_min_v_t2 = 10
+norm_max_v_t2 = 300
 norm_min_v = norm_min_v_t2
 norm_eps = 1e-5
 
