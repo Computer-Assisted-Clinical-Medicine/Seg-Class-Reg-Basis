@@ -8,7 +8,7 @@ from .segbasisloader import SegBasisLoader
 
 class SegRatioBasisLoader(SegBasisLoader):
 
-    def __call__(self, file_list, batch_size, n_epochs, read_threads):
+    def __call__(self, file_list, batch_size, n_epochs=1, read_threads=1):
         """!
         Parses the list of file IDs given in @p file_list, identifies .nii files to load and loads the data and labels, genetares @p tf.dataset of data and labels with necessary repeating, shuffling, batching and prefetching.
 
@@ -38,53 +38,113 @@ class SegRatioBasisLoader(SegBasisLoader):
             - @p ds is returned
 
         """
+        if self.mode is self.MODES.APPLY:
+            raise ValueError('Segmentation Ratio Loader is not applicable for Application, please use the regular Loader.')
+        else:
+            self.n_files = len(file_list)
 
-        def concat(*ds_elements):
-            #Create one empty list for each component of the dataset
-            lists = [[] for _ in ds_elements[0]]
-            for element in ds_elements:
-                for i, tensor in enumerate(element):
-                    #For each element, add all its component to the associated list
-                    lists[i].append(tensor)
+            def concat(*ds_elements):
+                # Create one empty list for each component of the dataset
+                lists = [[] for _ in ds_elements[0]]
+                for element in ds_elements:
+                    for i, tensor in enumerate(element):
+                        # For each element, add all its component to the associated list
+                        lists[i].append(tensor)
 
-            #Concatenate each component list
-            return tuple(tf.concat(l, axis=0) for l in lists)
+                # Concatenate each component list
+                return tuple(tf.concat(l, axis=0) for l in lists)
 
-        with tf.name_scope(self.name):
-            id_tensor = tf.squeeze(tf.convert_to_tensor(file_list, dtype=tf.string))
-            # Create dataset from list of file names,
-            file_list_ds = tf.data.Dataset.from_tensor_slices(id_tensor)
-            #shuffle and repeat n_poch times if in training mode
-            file_list_ds = file_list_ds.shuffle(buffer_size=self.file_name_buffer_size).repeat(count=n_epochs)
-            # map the dataset with read wrapper to generate sample example and labels
-            ds = file_list_ds.map(map_func=self._read_wrapper, num_parallel_calls=read_threads)
+            with tf.name_scope(self.name):
+                    id_tensor = tf.squeeze(tf.convert_to_tensor(file_list, dtype=tf.string))
+                    # Create dataset from list of file names
+                    file_list_ds = tf.data.Dataset.from_tensor_slices(id_tensor)
 
-            # here each element corresponds to one file. use flat map to make each element correspond to one tensor
-            ds_obj = ds.flat_map(lambda e, l, _1, _2: tf.data.Dataset().zip((
-                  tf.data.Dataset().from_tensor_slices(e),
-                  tf.data.Dataset().from_tensor_slices(l))))
-            ds_bkg = ds.flat_map(lambda _1, _2, e, l: tf.data.Dataset().zip((
-                tf.data.Dataset().from_tensor_slices(e),
-                tf.data.Dataset().from_tensor_slices(l))))
+                    if self.mode is self.MODES.TRAIN:
+                        # shuffle and repeat n_poch times if in training mode
+                        file_list_ds = file_list_ds.shuffle(buffer_size=self.n_files).repeat(count=n_epochs)
+                        # map the dataset with read wrapper to generate sample example and labels
 
-            # shuffle, batch prefetch
-            obj_buffer_part = int(self.train_buffer_size * (cfg.percent_of_object_samples / 100))
-            bkg_buffer_part = self.train_buffer_size - obj_buffer_part
-            ds_obj = ds_obj.shuffle(buffer_size=obj_buffer_part, seed=self.seed)
-            ds_bkg = ds_bkg.shuffle(buffer_size=bkg_buffer_part, seed=self.seed)
+                    # read data from file using the _read_wrapper
+                    ds = file_list_ds.map(map_func=self._read_wrapper, num_parallel_calls=read_threads)
 
-            # no smaller final batch
-            obj_batch_part = cfg.batch_size * cfg.percent_of_object_samples // 100
-            bkg_batch_part = cfg.batch_size - obj_batch_part
-            ds_obj = ds_obj.batch(batch_size=obj_batch_part, drop_remainder=True)
-            ds_bkg = ds_bkg.batch(batch_size=bkg_batch_part, drop_remainder=True)
+                    ds_obj, ds_bkg = self._zip_data_elements_tensorwise(ds)
 
-            zipped_ds = tf.data.Dataset.zip((ds_obj, ds_bkg))
-            ds = zipped_ds.map(concat)
-            ds = ds.prefetch(1)
+                    # shuffle, batch prefetch
+                    obj_buffer_part = int(self.sample_buffer_size * (cfg.percent_of_object_samples / 100))
+                    bkg_buffer_part = self.sample_buffer_size - obj_buffer_part
+                    ds_obj = ds_obj.shuffle(buffer_size=obj_buffer_part, seed=self.seed)
+                    ds_bkg = ds_bkg.shuffle(buffer_size=bkg_buffer_part, seed=self.seed)
+
+                    # no smaller final batch
+                    obj_batch_part = cfg.batch_size * cfg.percent_of_object_samples // 100
+                    bkg_batch_part = cfg.batch_size - obj_batch_part
+                    ds_obj = ds_obj.batch(batch_size=obj_batch_part, drop_remainder=True)
+                    ds_bkg = ds_bkg.batch(batch_size=bkg_batch_part, drop_remainder=True)
+
+                    zipped_ds = tf.data.Dataset.zip((ds_obj, ds_bkg))
+                    ds = zipped_ds.map(concat)
+
+                    ds = ds.prefetch(1)
+
         return ds
 
-    def _read_wrapper(self, id_queue, **kwargs):
+    def _zip_data_elements_tensorwise(self, ds):
+        """!
+                here each element corresponds to one file.
+                Use flat map to make each element correspond to one Sample.
+                Overwrite this function if not using [sample, label]
+
+               Parameters
+               ----------
+               ds : tf.data.Dataset
+                   Dataset
+
+               Returns
+               -------
+               ds : tf.data.Dataset
+                    Dataset where each element corresponds to one sample
+
+               """
+
+        # def split(*element):
+        #     lists = [[]for _ in range(4)]
+        #     for i, tensor in enumerate(element):
+        #         # For each element, add all its component to the associated list
+        #         lists[i].append(tensor)
+        #
+        #     ds_obj = tuple((lists[0], lists[1]))
+        #     ds_bkg = tuple((lists[2], lists[3]))
+        #
+        #     print(ds_obj, ds_bkg)
+        #
+        #     return tuple((ds_obj, ds_bkg))
+
+        if self.mode is self.MODES.APPLY:
+            ds = ds.flat_map(lambda e: tf.data.Dataset.from_tensor_slices(e))
+            return ds
+        else:
+            # here each element corresponds to one file. use flat map to make each element correspond to one tensor
+            # ds = ds.flat_map(lambda e_1, l_1, e_2, l_2:
+            #       tf.data.Dataset.zip((
+            #       tf.data.Dataset.from_tensor_slices(e_1).concatenate(tf.data.Dataset.from_tensor_slices(e_2)),
+            #       tf.data.Dataset.from_tensor_slices(l_1).concatenate(tf.data.Dataset.from_tensor_slices(l_2)))))
+            # ds = ds.flat_map(lambda e_1, l_1, e_2, l_2:
+            #       tf.data.Dataset.zip((
+            #       tf.data.Dataset.from_tensor_slices(e_1),
+            #       tf.data.Dataset.from_tensor_slices(l_1),
+            #       tf.data.Dataset.from_tensor_slices(e_2),
+            #       tf.data.Dataset.from_tensor_slices(l_2))))
+            ds_obj = ds.flat_map(lambda e, l, _1, _2: tf.data.Dataset.zip((
+                  tf.data.Dataset.from_tensor_slices(e),
+                  tf.data.Dataset.from_tensor_slices(l))))
+            ds_bkg = ds.flat_map(lambda _1, _2, e, l: tf.data.Dataset.zip((
+                tf.data.Dataset.from_tensor_slices(e),
+                tf.data.Dataset.from_tensor_slices(l))))
+
+            # ds_obj, ds_bkg = ds.map(split)
+            return ds_obj, ds_bkg
+
+    def _read_wrapper(self, id_data_set, **kwargs):
         # this has been adapted from https://github.com/DLTK/DLTK
 
         """!
@@ -94,7 +154,7 @@ class SegRatioBasisLoader(SegBasisLoader):
 
         Parameters
         ----------
-        id_queue : list
+        id_data_set : list
             list of tf.Tensors from the id_list queue. Provides an identifier for the examples to read.
         kwargs :
             additional arguments for the '_read_sample function'
@@ -113,7 +173,7 @@ class SegRatioBasisLoader(SegBasisLoader):
         @todo Nadia: modify for doxygen
         """
 
-        def get_tensors_from_file_names(id):
+        def get_sample_tensors_from_file_name(file_id):
             """!
             Wrapper for the python function
 
@@ -121,7 +181,7 @@ class SegRatioBasisLoader(SegBasisLoader):
 
             Parameters
             ----------
-            id_queue : list
+            id_data_set : list
             list of tf.Tensors from the id_list queue. Provides an identifier for the examples to read.
 
             Returns
@@ -130,42 +190,14 @@ class SegRatioBasisLoader(SegBasisLoader):
                 list of things just read
             """
             try:
-                ex_obj, ex_bkg = self._read_file(id)
+                samples_obj, samples_bkg = self._read_file_and_return_numpy_samples(file_id.numpy())
             except Exception as e:
                 print('got error `{} from `_read_file`:'.format(e))
                 print(traceback.format_exc())
                 raise
+            return samples_obj[0], samples_obj[1], samples_bkg[0], samples_bkg[1]
 
-            # eventually fix data types of read objects
-            tensors_obj = []
-            for t, d in zip(ex_obj, self.dtypes):
-                if isinstance(t, np.ndarray):
-                    tensors_obj.append(t.astype(self._map_dtype(d)))
-                elif isinstance(t, (float, int)):
-                    if d is tf.float32 and isinstance(t, int):
-                        warnings.warn('Losing accuracy by converting int to float')
-                        tensors_obj.append(self._map_dtype(d)(t))
-                elif isinstance(t, bool):
-                    tensors_obj.append(t)
-                else:
-                    raise Exception('Not sure how to interpret "{}"'.format(type(t)))
-
-            tensors_bkg = []
-            for t, d in zip(ex_bkg, self.dtypes):
-                if isinstance(t, np.ndarray):
-                    tensors_bkg.append(t.astype(self._map_dtype(d)))
-                elif isinstance(t, (float, int)):
-                    if d is tf.float32 and isinstance(t, int):
-                        warnings.warn('Losing accuracy by converting int to float')
-                        tensors_bkg.append(self._map_dtype(d)(t))
-                elif isinstance(t, bool):
-                    tensors_bkg.append(t)
-                else:
-                    raise Exception('Not sure how to interpret "{}"'.format(type(t)))
-
-            return tensors_obj[0], tensors_obj[1], tensors_bkg[0], tensors_bkg[1]
-
-        ex = tf.py_func(get_tensors_from_file_names, [id_queue], (*self.dtypes, *self.dtypes))  # use python function in tensorflow
+        ex = tf.py_function(get_sample_tensors_from_file_name, [id_data_set], (*self.dtypes, *self.dtypes))  # use python function in tensorflow
 
         ex[0].set_shape([None] + list(self.dshapes[0]))
         ex[1].set_shape([None] + list(self.dshapes[1]))
@@ -177,7 +209,7 @@ class SegRatioBasisLoader(SegBasisLoader):
     def _select_indices(self, data, lbl):
         raise NotImplementedError('not implemented')
 
-    def _select_ratio_indices(self, data, lbl, samples_per_object_slice):
+    def _select_ratio_indices(self, data, lbl, samples_per_volume, percent_of_object_samples):
         '''!
         select slice indices from which samples should be taken
 
@@ -193,54 +225,54 @@ class SegRatioBasisLoader(SegBasisLoader):
         @return slice indices as numpy array
         '''
         s = lbl.shape[2]  # third dimension is z-axis
-        indices = np.arange(0 + 20, s - 5, 1)
-        object_indices = np.intersect1d(np.unique(np.nonzero(lbl > 0.8)[2]), indices)  # all valid slices containing labels
-        z_bkg = np.setdiff1d(indices, object_indices)  # select all slices which do not contain annotations
+        indices = np.arange(0 + cfg.slice_shift, s - cfg.slice_shift, 1)
+        object_slices = np.intersect1d(np.unique(np.nonzero(lbl > 0.8)[2]), indices)  # all valid slices containing labels
+        background_slices = np.setdiff1d(indices, object_slices)  # select all slices which do not contain annotations
         # If the segmentation is not a continuous volume (case 102), a vector from min to max leads to empty slices.
         # -> use unique instead!
+        n_object_samples = (samples_per_volume * percent_of_object_samples) // 100
+        n_background_samples = samples_per_volume - n_object_samples
+        # print('Sample Ratio: ', n_object_samples, n_background_samples)
+        # print(' ---- Objects ---- ')
+        object_indices, samples_per_slice_obj = self._distribute_samples_accross_indices(object_slices, n_object_samples)
+        # print(' ---- Background ---- ')
+        background_indices, samples_per_slice_bkg = self._distribute_samples_accross_indices(background_slices, n_background_samples)
 
-        if z_bkg.size > 0:  # some scans don't have non object slices
-            # select 100 - cfg.non_zero_sample_percent empty samples, but pay attention to samples per slice
+        # print('      Slices:', s, 'Number of Indices (Object, Background): ', object_indices.size, background_indices.size)
 
-            number_of_background_samples = int(np.round(((object_indices.size * samples_per_object_slice) /
-                                            cfg.percent_of_object_samples) * (100 - cfg.percent_of_object_samples)))
-            number_of_missing_samples = number_of_background_samples
+        return object_indices, samples_per_slice_obj, background_indices, samples_per_slice_bkg
 
-            s_r = int(max(np.ceil(number_of_background_samples / z_bkg.size), 1))
-            background_indices = np.array([], dtype=np.int)
-            samples_per_slice_bkg = np.array([], dtype=np.int)
+    def _distribute_samples_accross_indices(self, slices, number_of_samples):
+        if slices.size > 0:
+            if number_of_samples <= slices.size:
+                selected_slices = np.random.choice(slices.size, number_of_samples,
+                                             replace=False)  # make sure selection is unique
+                samples_per_slice = np.ones(selected_slices.size, dtype=np.int)
+            else:
+                # take at least one sample from each slice and then determin the rest
+                selected_slices = np.random.permutation(slices)
+                samples_per_slice = np.ones(selected_slices.size, dtype=np.int)
 
-            while number_of_missing_samples > 0:
-                remaining_bkg = np.setdiff1d(z_bkg, background_indices)
-                number_of_background_indices = min(int(np.floor(number_of_missing_samples/ s_r)), remaining_bkg.size)
-                if number_of_missing_samples % s_r > 0 and s_r < number_of_missing_samples and number_of_background_indices == remaining_bkg.size:
-                    number_of_background_indices -= 1
-                # print('OI:', object_indices.size, 'BI:', background_indices.size,
-                #       'Current I:', number_of_background_indices, 'Remaining I:', remaining_bkg.size,
-                #        'Current S:', np.sum(samples_per_slice_bkg), 'Missing S:', number_of_missing_samples)
-                if number_of_background_indices > 0:
-                    selection = np.random.choice(remaining_bkg.size, number_of_background_indices,
-                                                 replace=False)  # make sure selection is unique
-                    additional_indices = remaining_bkg[selection]
-                    additional_samples_per_slice = np.array([s_r] * additional_indices.size, dtype=np.int)
-                    background_indices = np.concatenate([background_indices, additional_indices])
-                    samples_per_slice_bkg = np.concatenate([samples_per_slice_bkg, additional_samples_per_slice])
+                s_r = int(max(np.floor(number_of_samples / slices.size), 1))
+                samples_per_slice = samples_per_slice * s_r
+                number_of_missing_samples = int(number_of_samples - np.sum(samples_per_slice))
 
-                number_of_missing_samples = number_of_background_samples - np.sum(samples_per_slice_bkg)
-                if number_of_missing_samples > s_r:
-                    s_r += 1
-                elif number_of_missing_samples < s_r:
-                    s_r -= 1
-                else:
-                    break
+                # print('Already Selected: ', np.sum(samples_per_slice), ' samples from ', selected_slices.size, 'slices with ', s_r)
 
+                samples_per_slice[:number_of_missing_samples] = s_r + 1
+
+                # print('  Current SR: ', s_r + 1, 'Missing S:', number_of_missing_samples)
+
+                assert np.sum(samples_per_slice) == number_of_samples
         else:
-            background_indices = np.array([])  # if there are no non object slices, pass empty array
-            samples_per_slice_bkg = np.array([])
+            selected_slices = np.array([])  # if there are no non object slices, pass empty array
+            samples_per_slice = np.array([])
 
-        print('      Slices:', s, 'Number of Indices (Object, Background): ', object_indices.size, background_indices.size)
+        # print('  Selected Slices: ', selected_slices.size, 'Samples per Slice:', samples_per_slice.size)
 
-        return object_indices, background_indices, samples_per_slice_bkg
+        return selected_slices, samples_per_slice
+
+
 
     def _get_samples_from_volume(self, data, lbl):
         raise NotImplementedError('not implemented')
@@ -259,14 +291,17 @@ class SegRatioBasisLoader(SegBasisLoader):
 
         @return numpy arrays I (containing input samples) and L (containing according labels)
         '''
-        indices_obj, indices_bkg, sampling_rates_bkg = self._select_indices(data, lbl)
+        indices_obj, sampling_rates_obj, indices_bkg, sampling_rates_bkg = self._select_indices(data, lbl)
 
-        L_obj = np.zeros((len(indices_obj)*n_object_samples, *self.dshapes[1]))
-        I_obj = np.zeros((len(indices_obj)*n_object_samples, *self.dshapes[0]))
+        L_obj = []
+        I_obj = []
         for i in range(len(indices_obj)):
-            images, labels = self._get_samples_by_index(data, lbl, indices_obj[i], n_object_samples)
-            I_obj[i*n_object_samples:(i+1)*n_object_samples] = images
-            L_obj[i*n_object_samples:(i+1)*n_object_samples] = labels
+            images, labels = self._get_samples_by_index(data, lbl, indices_obj[i], sampling_rates_obj[i])
+            I_obj.extend(images)
+            L_obj.extend(labels)
+
+        I_obj = np.array(I_obj)
+        L_obj = np.array(L_obj)
 
         L_bkg = []
         I_bkg = []
@@ -275,13 +310,14 @@ class SegRatioBasisLoader(SegBasisLoader):
             I_bkg.extend(images)
             L_bkg.extend(labels)
 
-        L_bkg = np.array(L_bkg)
         I_bkg = np.array(I_bkg)
+        L_bkg = np.array(L_bkg)
 
-        I_bkg = self._preprocess(I_bkg)
-        I_obj = self._preprocess(I_obj)
+        if self.mode is self.MODES.TRAIN:
+            I_bkg, L_bkg = self._augment_samples(I_bkg, L_bkg)
+            I_obj, L_obj = self._augment_samples(I_obj, L_obj)
 
-        print('    Image Shape: ', I_obj.shape, I_bkg.shape)
-        print('    Label Shape: ', L_obj.shape, L_bkg.shape)
+        print('          Image Shape: ', I_obj.shape, I_bkg.shape)
+        print('          Label Shape: ', L_obj.shape, L_bkg.shape)
 
         return [I_obj, L_obj], [I_bkg, L_bkg]

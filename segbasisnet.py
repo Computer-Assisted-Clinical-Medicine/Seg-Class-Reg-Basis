@@ -6,22 +6,17 @@ from .NetworkBasis.network import Network
 from .NetworkBasis import loss as Loss
 from .NetworkBasis import metric as Metric
 import os
-
+import multiprocessing
 
 class SegBasisNet(Network):
 
-    def _set_iterator(self):
-        self.options['batch_size'] = cfg.batch_size
-        iterator = tf.data.Iterator.from_string_handle(self.variables['handle'], (cfg.dtype, cfg.dtype), (
-            np.append([None], cfg.train_input_shape), (np.append([None], cfg.train_label_shape))))
-        self.inputs['x'], self.inputs['y'] = iterator.get_next()
+    def _set_up_inputs(self):
+        if self.options['is_training']:
+            self.inputs['x'] = tf.keras.Input(shape=cfg.train_input_shape, batch_size=cfg.batch_size, dtype=cfg.dtype)
+        else:
+            self.inputs['x'] = tf.keras.Input(shape=cfg.cfg.test_data_shape, batch_size=cfg.batch_size, dtype=cfg.dtype)
 
-    def _set_placeholder(self):
-        self.batch_size = cfg.test_size
-        x_placeholder = tf.placeholder(tf.float32, np.append([None], cfg.test_data_shape))
-        y_placeholder = tf.placeholder(tf.float32, np.append([None], cfg.test_label_shape_seg))
-        self.inputs['x'] = x_placeholder
-        self.inputs['y'] = y_placeholder
+        self.options['out_channels'] = cfg.num_classes_seg
 
     def _load_collections(self):
         self.outputs['probabilities'] = tf.get_collection("probabilities")[0]
@@ -61,12 +56,6 @@ class SegBasisNet(Network):
         tf.add_to_collection("probabilities", self.outputs['probabilities'])
         tf.add_to_collection("predictions", self.outputs['predictions'])
 
-        if cfg.VERBOSE:
-            print('Predictions: ', self.outputs['predictions'].dtype)
-            print('Logits: ', self.outputs['logits'].dtype)
-            print('Input: ', self.inputs['x'].dtype)
-            print('Label: ', self.inputs['y'].dtype)
-
     def _get_loss(self):
         '''!
                 Returns loss depending on `self.options['loss']``.
@@ -75,11 +64,11 @@ class SegBasisNet(Network):
                 @returns @b loss : tf.float
                 '''
         # Assert that dimensions match!
-        assert self.outputs['logits'].shape.as_list()[1:-1] == self.inputs['y'].shape.as_list()[1:-1]
+        # assert self.outputs['probabilities'].shape.as_list()[1:-1] == self.inputs['y'].shape.as_list()[1:-1]
 
         # Loss
         if self.options['loss'] == 'DICE':
-            loss = Loss.dice_loss(self.outputs['probabilities'], self.inputs['y'])
+            loss = Loss.dice_loss
 
         elif self.options['loss'] == 'TVE':
             loss = Loss.tversky_loss(self.outputs['probabilities'], self.inputs['y'], cfg.tversky_alpha, cfg.tversky_beta)
@@ -108,7 +97,6 @@ class SegBasisNet(Network):
         else:
             raise ValueError(self.options['loss'], 'is not a supported loss function.')
 
-        tf.summary.scalar(self.options['loss'], loss, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
         return loss
 
     def _set_up_training_image_summaries(self):
@@ -247,154 +235,132 @@ class SegBasisNet(Network):
             with tf.device('/cpu:0'):
                 tf.summary.scalar('dice_'+str(i), self.outputs['error'][i-1], collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
 
-    def _run_test(self, sess, step, version, test_path, feed_dict, test_files, summaries_per_case=cfg.summaries_per_case):
-
-        summary_op = tf.summary.merge_all()
-        writer = tf.summary.FileWriter(test_path, graph=self.variables['graph'])
-        eval_file_path = os.path.join(test_path, os.path.basename(test_path) + '-' + version + '-eval.csv')
-
-        with tf.device('/cpu:0'):
-            header_row = self._init_evaluation(eval_file_path)
-
-        # perform tests
-        for file in test_files:
-
-            with tf.device('/cpu:0'):
-                image_samples, label_samples, data_info, file_number = self._read_data_for_inference(file, 'test')
-
-            s = image_samples.shape
-            predictions = []
-            probabilities = []
-            start_time = time()
-
-            for i in range(0, s[0], self.batch_size):
-                    try:
-                        image_slice = image_samples[i:i + self.batch_size]
-                        label_slice = label_samples[i:i + self.batch_size]
-                    except:
-                        image_slice = image_samples[i:-1]
-                        label_slice = label_samples[i:-1]
-                        if len(image_slice.shape) < 4:
-                            image_slice = np.expand_dims(image_slice, axis=0)
-                            label_slice = np.expand_dims(label_slice, axis=0)
-
-                    if self.options['batch_normalization']:
-                        test_dict = {**feed_dict, **{self.variables['is_training_tf']: False,
-                                                     self.inputs['x']: image_slice, self.inputs['y']: label_slice}}
-                    else:
-                        test_dict = {**feed_dict, **{self.inputs['x']: image_slice, self.inputs['y']: label_slice}}
-
-                    # compute and write summaries
-                    if i % (s[0]//summaries_per_case) == 0:
-                        [summary, pred, prob] = sess.run([summary_op, self.outputs['predictions'], self.outputs['probabilities']],
-                                                          feed_dict=test_dict)
-                        writer.add_summary(summary, step)
-                    else:
-                        [pred, prob] = sess.run([self.outputs['predictions'], self.outputs['probabilities']],
-                                                feed_dict=test_dict)
-
-                    pred = np.squeeze(pred)
-                    prob = np.squeeze(prob)
-                    if len(pred.shape) < 3:
-                        pred = np.expand_dims(pred, axis=0)
-                        prob = np.expand_dims(prob, axis=0)
-                    predictions.append(pred)
-                    probabilities.append(prob)
-
-                    # manually adapt step in testing
-                    step += 1
-
-            end_time = time()
-            del image_samples
-
-            with tf.device('/cpu:0'):
-                predictions = np.concatenate(predictions)
-                probabilities = np.concatenate(probabilities)
-
-                print('  Pred: ', predictions.shape)
-                print('  Prob: ', probabilities.shape)
-                print('  Labels: ', label_samples.shape)
-
-                result_metrics = {}
-                result_metrics['File Number'] = file_number
-
-                elapsed_time = end_time - start_time
-                print('  Elapsed Time (Seconds): ', elapsed_time)
-                result_metrics['Time'] = elapsed_time
-
-                if cfg.adapt_resolution:
-                    # dice on resampled data
-                    res_dice = Metric.dice_coefficient_np(probabilities, label_samples)
-                    print('  Resampled Dice Coefficient: ', res_dice)
-                    result_metrics['Dice (R)'] = res_dice
-
-                del label_samples
-
-                pred_img = self._write_inference_data(predictions, data_info, file_number, test_path, version)
-
-                result_metrics = self._run_evaluation(pred_img, result_metrics, data_info, file)
-
-                self._write_evaluation(eval_file_path, header_row, result_metrics)
-
-    def _init_evaluation(self, eval_file_path):
-        raise NotImplementedError('not implemented')
-
-    def _run_evaluation(self, pred_img, result_metrics, data_info, path):
-        raise NotImplementedError('not implemented')
-
-    def _write_evaluation(self, eval_file_path, header_row, result_metrics):
-        raise NotImplementedError('not implemented')
-
-    def _run_apply(self, sess, step, version, apply_path, feed_dict, test_files):
+    def _run_apply(self, version, apply_path, application_dataset, filename):
 
         if not os.path.exists(apply_path):
             os.makedirs(apply_path)
 
-        for file in test_files:
+        predictions = []
+        start_time = time()
 
-            with tf.device('/cpu:0'):
-                image_samples, data_info, file_number = self._read_data_for_inference(file, 'apply')
+        for x in application_dataset:
+            prediction = self.model(x)
+            predictions.append(prediction)
 
-            s = image_samples.shape
-            predictions = []
-            start_time = time()
+        end_time = time()
 
-            for i in range(0, s[0], self.batch_size):
-                try:
-                    image_slice = image_samples[i:i + self.batch_size]
-                except:
-                    image_slice = image_samples[i:-1]
-                    if len(image_slice.shape) < 4:
-                        image_slice = np.expand_dims(image_slice, axis=0)
+        with tf.device('/cpu:0'):
+            elapsed_time = end_time - start_time
+            print('  Elapsed Time (Seconds): ', elapsed_time)
 
-                if self.options['batch_normalization']:
-                    test_dict = {**feed_dict, **{self.variables['is_training_tf']: False,
-                                                 self.inputs['x']: image_slice}}
-                else:
-                    test_dict = {**feed_dict, **{self.inputs['x']: image_slice}}
+            predictions = np.concatenate(predictions)
+            self._write_inference_data(predictions, filename, apply_path, version)
 
-                [pred] = sess.run([self.outputs['predictions']], feed_dict=test_dict)
 
-                pred = np.squeeze(pred)
-                if len(pred.shape) < 3:
-                    pred = np.expand_dims(pred, axis=0)
-                predictions.append(pred)
+    def _run_train(self, logs_path, folder_name, training_dataset, validation_dataset, op_parallelism_threads=-1,
+                   summary_step=10, write_step=1500, l_r=0.001, optimizer='Adam'):
+        '''!
+        Sets up and runs training session
+        @param  logs_path               : str; path to logs
+        @param  folder_name             : str
+        @param  feed_dict_train         : dict
+        @param  feed_dict_test          : dict
+        @param  training_iterator       : tf.iterator
+        @param  validation_iterator     : tf.iterator
+        @param  summary_step            : int
+        @param  write_step              : int
+        @param  l_r                     : float; Learning Rate for the optimizer
+        @param  optimizer               : {'Adam', 'Momentum', 'Adadelta'}; Optimizer.
+        '''
 
-                # manually adapt step in testing
-                step += 1
+        iter_per_epoch = cfg.samples_per_volume * cfg.num_files // cfg.batch_size
+        print('Iter per Epoch', iter_per_epoch)
 
-            end_time = time()
-            del image_samples
+        if self.options['do_finetune']:
+            folder_name = folder_name + '-f'
 
-            with tf.device('/cpu:0'):
-                elapsed_time = end_time - start_time
-                print('  Elapsed Time (Seconds): ', elapsed_time)
+        global_step = tf.Variable(0, name='global_step', trainable=False, dtype=tf.int64)
 
-                predictions = np.concatenate(predictions)
-                self._write_inference_data(predictions, data_info, file_number, apply_path, version)
+        train_path = os.path.join(logs_path, folder_name, '')
+        print(train_path)
+
+        # save the keras model
+        tf.keras.experimental.export_saved_model(self.model, train_path)
+
+        with tf.name_scope('objective'):
+            self.outputs['objective'] = self._get_loss()
+
+        if not hasattr(self, 'optimizer'):
+            self.optimizer = self._get_optimizer(optimizer, l_r, global_step)
+
+        # save checkpoints in the variables folder of the keras model
+        checkpoint = tf.train.Checkpoint(optimizer=self.optimizer, model=self.model)
+        checkpoint_manager = tf.train.CheckpointManager(
+            checkpoint, directory=os.path.join(train_path, "variables"), max_to_keep=3, checkpoint_name=folder_name)
+
+        epoch_loss_avg = tf.keras.metrics.Mean()
+
+        for x_t, y_t in training_dataset:
+
+            with tf.GradientTape() as tape:
+                prediction = self.model(x_t)
+                objective_train = self.outputs['objective'](prediction, y_t)
+                epoch_loss_avg.update_state(objective_train)
+            gradients = tape.gradient(objective_train, self.model.trainable_variables)
+            self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
+
+            if global_step.numpy() % iter_per_epoch == 0 and global_step.numpy() // iter_per_epoch > 0:
+                self._end_of_epoch(checkpoint_manager, global_step, iter_per_epoch, epoch_loss_avg, validation_dataset)
+
+            # if true compute and write summaries
+            elif global_step.numpy() % summary_step == 0:
+                print('   Step: ', global_step.numpy(), ' Objective: ', objective_train.numpy(), '(Train)')
+
+            global_step = global_step + 1
+
+        self._end_of_epoch(checkpoint_manager, global_step, iter_per_epoch, epoch_loss_avg, validation_dataset)
+        print('Done -- Finished training after', global_step.numpy() // iter_per_epoch,
+              ' epochs /', global_step.numpy(), 'steps.', ' Average Objective: ', epoch_loss_avg.result().numpy(), '(Train)')
+
+    def _end_of_epoch(self, checkpoint_manager, global_step, iter_per_epoch, epoch_loss_avg, validation_dataset):
+        print(' Epoch: ', global_step.numpy() // iter_per_epoch)
+        checkpoint_manager.save(checkpoint_number=global_step.numpy() // iter_per_epoch)
+        epoch_loss_avg.reset_states()
+
+        for x_v, y_v in validation_dataset:
+            prediction = self.model(x_v)
+            objective_validation = self.outputs['objective'](prediction, y_v)
+            epoch_loss_avg.update_state(objective_validation)
+
+        print(' Epoch: ', global_step.numpy() // iter_per_epoch, ' Average Objective: ',
+              epoch_loss_avg.result().numpy(), '(Valid)')
+
+    def _select_final_activation(self):
+        # http://dataaspirant.com/2017/03/07/difference-between-softmax-function-and-sigmoid-function/
+        if self.options['out_channels'] > 2 or self.options['loss'] in ['DICE', 'TVE', 'GDL']:
+            # Dice and Tversky require SoftMax
+            return 'softmax'
+        elif self.options['out_channels'] == 2 and self.options['loss'] in ['CEL', 'WCEL']:
+            return 'sigmoid'
+        else:
+            raise ValueError(self.options['loss'],
+                             'is not a supported loss function or cannot combined with ',
+                             self.options['out_channels'], 'output channels.')
+
+    @staticmethod
+    def _get_optimizer(optimizer, l_r, global_step):
+        if optimizer == 'Adam':
+            return tf.optimizers.Adam(learning_rate=l_r, epsilon=1e-3)
+        elif optimizer == 'Momentum':
+            mom = 0.9
+            learning_rate = tf.train.exponential_decay(l_r, global_step, 6000, 0.96, staircase=True)
+            return tf.train.MomentumOptimizer(learning_rate, momentum=mom)
+        elif optimizer == 'Adadelta':
+            return tf.optimizers.AdamAdadelta(learning_rate=l_r)
 
     def _read_data_for_inference(self, file, mode):
         raise NotImplementedError('not implemented')
 
     def _write_inference_data(self, predictions, data_info, file_number, out_path, version):
         raise NotImplementedError('not implemented')
+

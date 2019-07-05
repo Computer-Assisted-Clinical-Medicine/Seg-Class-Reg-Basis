@@ -13,7 +13,17 @@ from enum import Enum
 class SAMPLINGMODES(Enum):
     UNIFORM = 0
     CONSTRAINED_MUSTD = 1
-    CONSTRAINED_LABEL = 1
+    CONSTRAINED_LABEL = 2
+
+
+class NORMALIZING(Enum):
+    WINDOW = 0
+    MEAN_STD = 1
+
+class ORGANS(Enum):
+    LIVER = 'liver'
+    TUMORS = 'tumors'
+    LIVERANDTUMORS = 'liver+tumors'
 
 ##### Mode #####
 VERBOSE = True
@@ -29,7 +39,7 @@ if socket.gethostname() == 'ckm4cad':
 else:
     ONSERVER = False
     op_parallelism_threads = 3
-    batch_size = 8
+    batch_size = 4
     training_epochs = 1
     batch_capacity = 400
     train_reader_instances = 1
@@ -43,6 +53,18 @@ test_size = 1
 summaries_per_case = 10
 
 ##### Data #####
+organ = ORGANS.LIVER
+num_channels = 3
+num_slices = 1
+num_classes_seg = 2
+num_files = -1
+train_dim = 256
+train_input_shape = [train_dim, train_dim, num_channels]
+train_label_shape = [train_dim, train_dim, num_classes_seg]
+test_dim = 512
+test_data_shape = [test_dim, test_dim, num_channels]
+test_label_shape = [test_dim, test_dim, num_classes_seg]
+
 dtype = tf.float32
 data_train_split = 0.75
 number_of_vald = 2
@@ -50,14 +72,26 @@ number_of_vald = 2
 ##### Loader #####
 vald_reader_instances = 1
 file_name_capacity = 140
+file_name_capacity_valid = file_name_capacity // 10
 batch_capacity_valid = batch_capacity//2
+normalizing_method = NORMALIZING.WINDOW
 
 # Sample Mining
 patch_shift_factor = 3  # 3*std is 99th percentile
 in_between_slice_factor = 2
 slice_shift = ((num_channels - 1) // 2) * in_between_slice_factor
 min_n_samples = 10
-random_sampling_mode = SAMPLINGMODES.CONSTRAINED_MUSTD
+random_sampling_mode = SAMPLINGMODES.CONSTRAINED_LABEL
+percent_of_object_samples = 50  # %
+samples_per_volume = 400
+samples_per_slice_liver = 4
+samples_per_slice_lesion = 4
+samples_per_slice_bkg = 1
+samples_per_slice_uni = 1
+do_flip_coronal = False
+do_flip_sagittal = False
+do_variate_intensities = True
+intensity_variation_interval = 0.01
 
 # Resampling
 adapt_resolution = True
@@ -66,7 +100,7 @@ if adapt_resolution:
     target_size = [512, 512]
 target_direction = (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)  # make sure all images are oriented equally
 target_type_image = sitk.sitkFloat32
-target_type_label = sitk.sitkUInt32
+target_type_label = sitk.sitkUInt8
 data_background_value = -1000
 label_background_value = 0
 max_rotation = 0.07
@@ -81,3 +115,11 @@ tissue_factor = 5
 contour_factor = 2
 max_weight = 1.2
 tissue_threshold = -0.9
+
+# Preprocessing
+norm_min_v = -200
+norm_max_v = 250
+norm_eps = 1e-5
+
+##### Network #####
+sparse_cardinality = 2
