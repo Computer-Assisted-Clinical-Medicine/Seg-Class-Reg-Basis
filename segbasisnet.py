@@ -281,7 +281,7 @@ class SegBasisNet(Network):
 
         global_step = tf.Variable(0, name='global_step', trainable=False, dtype=tf.int64)
 
-        train_path = os.path.join(logs_path, folder_name, '')
+        train_path = os.path.join(logs_path, folder_name, 'model')
         print(train_path)
 
         # save the keras model

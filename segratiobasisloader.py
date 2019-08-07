@@ -1,5 +1,6 @@
 import tensorflow as tf
 import traceback
+import scipy
 import warnings
 import numpy as np
 from . import config as cfg
@@ -224,33 +225,53 @@ class SegRatioBasisLoader(SegBasisLoader):
 
         @return slice indices as numpy array
         '''
+        data_shape = data.shape
+        if self.data_rank == 3:
+            bb_dim = [self.dshapes[0][0], self.dshapes[0][1]]
+        else:
+            bb_dim = [self.dshapes[0][1], self.dshapes[0][2]]
+        min_x = bb_dim[0] // 2
+        max_x = data_shape[0] - bb_dim[0] // 2
+        min_y = bb_dim[1] // 2
+        max_y = data_shape[1] - bb_dim[1] // 2
         s = lbl.shape[2]  # third dimension is z-axis
-        indices = np.arange(0 + cfg.slice_shift, s - cfg.slice_shift, 1)
-        object_slices = np.intersect1d(np.unique(np.nonzero(lbl > 0.8)[2]), indices)  # all valid slices containing labels
-        background_slices = np.setdiff1d(indices, object_slices)  # select all slices which do not contain annotations
+        indices = np.arange(0 + self.slice_shift, s - self.slice_shift, 1)
+        # print('---- Full Indix List:', np.min(indices), np.max(indices))
+        valid_patch_centers = lbl[min_x:max_x, min_y:max_y, indices]
+        valid_patch_centers_objects = scipy.ndimage.morphology.binary_erosion(valid_patch_centers)
+        valid_patch_centers_background = np.logical_not(scipy.ndimage.morphology.binary_dilation(valid_patch_centers))
+        print('---- Valid Patch Centers:', valid_patch_centers.size, ' - OB:', np.sum(valid_patch_centers_objects)/valid_patch_centers.size, ' - BG:', np.sum(valid_patch_centers_background)/valid_patch_centers.size)
+        n_object_per_slice = np.sum(valid_patch_centers_objects, axis=(0, 1))
+        n_background_per_slice = np.sum(valid_patch_centers_background, axis=(0, 1))
+        print('---- Centers per Slice:', valid_patch_centers.size, ' - OB:', n_object_per_slice. size, n_object_per_slice, ' - BG:', n_background_per_slice.size, n_background_per_slice)
         # If the segmentation is not a continuous volume (case 102), a vector from min to max leads to empty slices.
         # -> use unique instead!
         n_object_samples = (samples_per_volume * percent_of_object_samples) // 100
         n_background_samples = samples_per_volume - n_object_samples
         # print('Sample Ratio: ', n_object_samples, n_background_samples)
         # print(' ---- Objects ---- ')
-        object_indices, samples_per_slice_obj = self._distribute_samples_accross_indices(object_slices, n_object_samples)
+        object_indices, samples_per_slice_obj = self._distribute_samples_accross_indices(n_object_per_slice, n_object_samples)
         # print(' ---- Background ---- ')
-        background_indices, samples_per_slice_bkg = self._distribute_samples_accross_indices(background_slices, n_background_samples)
+        background_indices, samples_per_slice_bkg = self._distribute_samples_accross_indices(n_background_per_slice, n_background_samples)
+
+        # To Do: fix indices
 
         # print('      Slices:', s, 'Number of Indices (Object, Background): ', object_indices.size, background_indices.size)
-
+        # print('---- Object Indix List:', np.min(object_indices), np.max(object_indices))
+        # print('---- Background Indix List:', np.min(background_indices), np.max(background_indices))
         return object_indices, samples_per_slice_obj, background_indices, samples_per_slice_bkg
 
     def _distribute_samples_accross_indices(self, slices, number_of_samples):
         if slices.size > 0:
+            sorted_slice_indices = np.argsort(slices)
+            sorted_slice_indices = sorted_slice_indices[slices[sorted_slice_indices] > 0]
             if number_of_samples <= slices.size:
-                selected_slices = np.random.choice(slices.size, number_of_samples,
-                                             replace=False)  # make sure selection is unique
+                selected_slices = np.random.choice(sorted_slice_indices, number_of_samples,
+                                             replace=False) # make sure selection is unique
                 samples_per_slice = np.ones(selected_slices.size, dtype=np.int)
             else:
                 # take at least one sample from each slice and then determin the rest
-                selected_slices = np.random.permutation(slices)
+                selected_slices = sorted_slice_indices
                 samples_per_slice = np.ones(selected_slices.size, dtype=np.int)
 
                 s_r = int(max(np.floor(number_of_samples / slices.size), 1))

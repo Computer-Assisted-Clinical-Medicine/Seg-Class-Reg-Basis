@@ -19,6 +19,8 @@ class SAMPLINGMODES(Enum):
 class NORMALIZING(Enum):
     WINDOW = 0
     MEAN_STD = 1
+    PERCENT5 = 2
+
 
 class ORGANS(Enum):
     LIVER = 'liver'
@@ -33,7 +35,7 @@ if socket.gethostname() == 'ckm4cad':
     op_parallelism_threads = 6
     batch_size = 16
     training_epochs = 20
-    batch_capacity = 4000
+    batch_capacity_train = 4000
     train_reader_instances = 2
 
 else:
@@ -41,7 +43,7 @@ else:
     op_parallelism_threads = 3
     batch_size = 4
     training_epochs = 1
-    batch_capacity = 400
+    batch_capacity_train = 400
     train_reader_instances = 1
 
 write_step = 2500
@@ -73,18 +75,17 @@ number_of_vald = 2
 vald_reader_instances = 1
 file_name_capacity = 140
 file_name_capacity_valid = file_name_capacity // 10
-batch_capacity_valid = batch_capacity//2
+batch_capacity_valid = batch_capacity_train // 2
 normalizing_method = NORMALIZING.WINDOW
 
 # Sample Mining
 patch_shift_factor = 3  # 3*std is 99th percentile
 in_between_slice_factor = 2
-slice_shift = ((num_channels - 1) // 2) * in_between_slice_factor
 min_n_samples = 10
 random_sampling_mode = SAMPLINGMODES.CONSTRAINED_LABEL
 percent_of_object_samples = 50  # %
-samples_per_volume = 400
-samples_per_slice_liver = 4
+samples_per_volume = 200
+samples_per_slice_liver = 2
 samples_per_slice_lesion = 4
 samples_per_slice_bkg = 1
 samples_per_slice_uni = 1
@@ -96,7 +97,7 @@ intensity_variation_interval = 0.01
 # Resampling
 adapt_resolution = True
 if adapt_resolution:
-    target_spacing = [0.75, 0.75, 1.25]
+    target_spacing = [0.75, 0.75, 1.5]
     target_size = [512, 512]
 target_direction = (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)  # make sure all images are oriented equally
 target_type_image = sitk.sitkFloat32

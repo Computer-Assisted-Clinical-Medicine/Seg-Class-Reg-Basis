@@ -27,16 +27,27 @@ class SegBasisLoader(DataLoader):
             self.dtypes = [cfg.dtype]
             self.dshapes = [cfg.test_data_shape]
 
-        self.slice_shift = ((self.n_channels - 1) // 2) * cfg.in_between_slice_factor
+        self.data_rank = len(self.dshapes[0])
+        if self.data_rank == 3:
+            print('    Rank of input shape is', self.data_rank, '. Loading 2D samples.')
+            self.slice_shift = ((self.n_channels - 1) // 2) * cfg.in_between_slice_factor
+        elif self.data_rank == 4:
+            print('    Rank of input shape is', self.data_rank, '. Loading 3D samples.')
+            self.slice_shift = self.dshapes[0][0] // 2
+            print(self.slice_shift)
+        else:
+            raise Exception('rank = \'{}\' is not supported'.format(self.data_rank))
+
+
 
     def _set_up_capacities(self):
         """!
         sets buffer sizes for file name and sample buffer based on cfg.file_name_capacity and
-        cfg.batch_capacity for 'train' and cfg.file_name_capacity_valid and cfg.batch_capacity_valid for 'valid
+        cfg.batch_capacity_train for 'train' and cfg.file_name_capacity_valid and cfg.batch_capacity_valid for 'valid
 
         """
         if self.mode is self.MODES.TRAIN:
-            self.sample_buffer_size = cfg.batch_capacity
+            self.sample_buffer_size = cfg.batch_capacity_train
         elif self.mode is self.MODES.VALIDATE:
             self.sample_buffer_size = cfg.batch_capacity_valid
 
@@ -126,7 +137,7 @@ class SegBasisLoader(DataLoader):
         @return slice indices as numpy array
         '''
         s = lbl.shape[2]  # third dimension is z-axis
-        indices = np.arange(0 + cfg.slice_shift, s - cfg.slice_shift, 1)
+        indices = np.arange(0 + self.slice_shift, s - self.slice_shift, 1)
         if self.mode == self.MODES.APPLY:
             return indices, np.ones(indices.size, dtype=np.int)
         else:
@@ -148,10 +159,14 @@ class SegBasisLoader(DataLoader):
 
         @return numpy arrays I (containing input samples) and L (containing according labels)
         '''
-        image = data[:, :, index - cfg.slice_shift:index + cfg.slice_shift + 1:cfg.in_between_slice_factor]
-
-        if self.mode is not self.MODES.APPLY:
-            label = label[:, :, index]
+        if self.data_rank == 3:
+            image = data[:, :, index - self.slice_shift:index + self.slice_shift + 1:cfg.in_between_slice_factor]
+            if self.mode is not self.MODES.APPLY:
+                label = label[:, :, index]
+        else:
+            image = data[:, :, index - self.slice_shift:index + self.slice_shift:1]
+            if self.mode is not self.MODES.APPLY:
+                label = label[:, :, index - self.slice_shift:index + self.slice_shift:1]
 
         I, label = self._select_patches(image, label, samples_per_slice)
 
@@ -177,7 +192,10 @@ class SegBasisLoader(DataLoader):
         '''
 
         data_shape = image.shape
-        bb_dim = [self.dshapes[0][0], self.dshapes[0][1]]
+        if self.data_rank == 3:
+            bb_dim = [self.dshapes[0][0], self.dshapes[0][1]]
+        else:
+            bb_dim = [self.dshapes[0][1], self.dshapes[0][2]]
         use_bb_boundaries = False
         slice_is_empty = False
 
@@ -283,17 +301,27 @@ class SegBasisLoader(DataLoader):
 
             for i in range(samples_per_slice):
                 # print(n_z[0][sample[i]] - (bb_dim[0] // 2), n_z[0][sample[i]] + (bb_dim[0] // 2),
-                #                       n_z[1][sample[i]] - (bb_dim[1] // 2), n_z[1][sample[i]] + (bb_dim[1] // 2))
-                if len(data_shape) > 3:
-                    I[i] = np.squeeze(image[n_z[0][sample[i]] - (bb_dim[0] // 2):n_z[0][sample[i]] + (bb_dim[0] // 2),
-                                      n_z[1][sample[i]] - (bb_dim[1] // 2):n_z[1][sample[i]] + (bb_dim[1] // 2), :])
-                else:
+                #                       n_z[1][sample[i]] - (bb_dim[1] // 2), n_z[1][sample[i]] + (bb_dim[1] // 2), image.shape[-1])
+                if self.data_rank == 3:
                     I[i] = image[n_z[0][sample[i]] - (bb_dim[0] // 2):n_z[0][sample[i]] + (bb_dim[0] // 2),
                                       n_z[1][sample[i]] - (bb_dim[1] // 2):n_z[1][sample[i]] + (bb_dim[1] // 2), :]
+                else:
+                    I[i] = np.expand_dims(np.moveaxis(image[n_z[0][sample[i]] - (bb_dim[0] // 2):
+                                                                n_z[0][sample[i]] + (bb_dim[0] // 2),
+                                                                n_z[1][sample[i]] - (bb_dim[1] // 2):
+                                                                n_z[1][sample[i]] + (bb_dim[1] // 2), :], -1, 0), -1)
 
                 if self.mode is not self.MODES.APPLY:
-                    L[i] = label[n_z[0][sample[i]] - (bb_dim[0] // 2):n_z[0][sample[i]] + (bb_dim[0] // 2),
-                                      n_z[1][sample[i]] - (bb_dim[1] // 2):n_z[1][sample[i]] + (bb_dim[1] // 2)]
+                    if self.data_rank == 3:
+                        L[i] = label[n_z[0][sample[i]] - (bb_dim[0] // 2):
+                                        n_z[0][sample[i]] + (bb_dim[0] // 2),
+                                        n_z[1][sample[i]] - (bb_dim[1] // 2):
+                                        n_z[1][sample[i]] + (bb_dim[1] // 2)]
+                    else:
+                        L[i] = np.moveaxis(label[n_z[0][sample[i]] - (bb_dim[0] // 2):
+                                                    n_z[0][sample[i]] + (bb_dim[0] // 2),
+                                                    n_z[1][sample[i]] - (bb_dim[1] // 2):
+                                                    n_z[1][sample[i]] + (bb_dim[1] // 2), :], -1, 0)
 
         else:
             #TODO: throw error for not allowed mode
@@ -313,11 +341,11 @@ class SegBasisLoader(DataLoader):
         @return two-channel one-hot label as numpy array
         '''
         # add empty last dimension
-        if label.ndim < 4 and label.shape[-1] > 1:
+        if label.shape[-1] > 1:
             label = np.expand_dims(label, axis=-1)
-        # add empty first dimension if single sample
-        if label.ndim < 3:
-            label = np.expand_dims(label, axis=0)
+        # Todo: add empty first dimension if single sample
+        # if label.ndim < 3:
+        #     label = np.expand_dims(label, axis=0)
 
         invert_label = 1 - label  # complementary binary mask
         return np.concatenate([invert_label, label], axis=-1)  # fuse
@@ -382,10 +410,10 @@ class SegBasisLoader(DataLoader):
     @staticmethod
     def normalize(img, eps=np.finfo(np.float).min):
         '''
-        Truncates input to interval [config.norm_min_v, config.norm_max_v] and normalizes it to interval [-1, 1].
-
-        @todo Nadia
+        Truncates input to interval [config.norm_min_v, config.norm_max_v] an
+         normalizes it to interval [-1, 1] when using WINDOW and to mean = 0 and std = 1 when MEAN_STD.
         '''
+        # ToDo: normalize by percentile
         flags = img < cfg.norm_min_v
         img[flags] = cfg.norm_min_v
         flags = img > cfg.norm_max_v
