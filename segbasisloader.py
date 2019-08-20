@@ -18,6 +18,10 @@ class SegBasisLoader(DataLoader):
         - dshapes
         - slice_shift
 
+        also derives:
+        - data_rank
+        - slice_shift
+
         """
         self.n_channels = cfg.num_channels
         if self.mode is self.MODES.TRAIN or self.mode is self.MODES.VALIDATE:
@@ -28,40 +32,45 @@ class SegBasisLoader(DataLoader):
             self.dshapes = [cfg.test_data_shape]
 
         self.data_rank = len(self.dshapes[0])
+
+        # Automatically determin data dimension
         if self.data_rank == 3:
             print('    Rank of input shape is', self.data_rank, '. Loading 2D samples.')
+            # In 2D this parameter describes how many slices are additionally loaded.
+            # They will be interpreted as channels.
+            # Using in_between_slice_factor slices will be skipped.
             self.slice_shift = ((self.n_channels - 1) // 2) * cfg.in_between_slice_factor
         elif self.data_rank == 4:
             print('    Rank of input shape is', self.data_rank, '. Loading 3D samples.')
+            # In 3D this parameter describes the z extend of teh sample.
             self.slice_shift = self.dshapes[0][0] // 2
             print(self.slice_shift)
         else:
             raise Exception('rank = \'{}\' is not supported'.format(self.data_rank))
 
 
-
     def _set_up_capacities(self):
         """!
-        sets buffer sizes for file name and sample buffer based on cfg.file_name_capacity and
-        cfg.batch_capacity_train for 'train' and cfg.file_name_capacity_valid and cfg.batch_capacity_valid for 'valid
+        sets buffer size for sample buffer based on cfg.batch_capacity_train and
+        cfg.batch_capacity_train based on self.mode
 
         """
         if self.mode is self.MODES.TRAIN:
             self.sample_buffer_size = cfg.batch_capacity_train
         elif self.mode is self.MODES.VALIDATE:
-            self.sample_buffer_size = cfg.batch_capacity_valid
+            self.sample_buffer_size = cfg.batch_capacity_train
 
     def _read_file_and_return_numpy_samples(self, file_id):
         """!
-        reads nii data file and nii labels file given the @p file_id
-        @param file_id <em>string,  </em> a file ID correspondinging to a pair of data file and label file to be loaded. It should have the format <tt> 'Location\\file_number'</tt> and identify a pair of data file and labels file. @p Location must contain the data file and label file with that @p file_number, respectiely named as @p volume-file_number.nii and segmentation-file_number.nii. For example, <tt>'C:\\DataLoction\\0'</tt> can be a @p file_id. Then <tt> C:\\DataLoction </tt> should contain @p volume-0.nii and @p segmetation-0.nii.
+        Calls _load_file to load data and label based on the @p file_id and then extracts samples by calling _get_samples_from_volume()
+        @param file_id <em>string,  </em> a file ID correspondinging to a pair of data file and label
 
+        This function operates as follows:
+        - calls _load_file()
+        - calls _get_samples_from_volume()
 
-        Given the @p file_id, this function
-        - loads data and labels (See _load_file() )
-        - todo _get_batches()
+        @return numpy arrays I (containing input samples) and if mode is not APPLY L (containing according labels)
 
-        @todo Nadia: add more detail how it works, write about _get_batches
         """
         # read and precrocess data, return image and label as 3D numpy matrices
         data, lbl = self._load_file(file_id)
@@ -84,9 +93,9 @@ class SegBasisLoader(DataLoader):
         This function operates as follows:
         - calls _select_indices()
         - calls _get_samples_by_index() for each index
-        - calls _preprocess() on the input samples
+        - calls _augment_samples() on the input samples
 
-        @return numpy arrays I (containing input samples) and L (containing according labels)
+        @return numpy arrays I (containing input samples) and if mode is not APPLY L (containing according labels)
         '''
         indices, sampling_rates = self._select_indices(data, lbl)
 
@@ -150,48 +159,17 @@ class SegBasisLoader(DataLoader):
         @param data <em>numpy array,  </em> input image
         @param label <em>numpy array,  </em> label image
         @param index <em>int,  </em> index of the slices that should be processed
+        @param samples_per_slice <em>int,  </em> how many samples will be taken from this slice
 
         This is for Training.
         This function operates as follows:
-        - Extract current image and label for index.
-        - calls __select_patches() on the current data
-        - calls one_hot_label() on the label samples
+        - based on cfg.random_sampling_mode patch centers are selected.
+        - data and label are then extracted
 
-        @return numpy arrays I (containing input samples) and L (containing according labels)
-        '''
-        if self.data_rank == 3:
-            image = data[:, :, index - self.slice_shift:index + self.slice_shift + 1:cfg.in_between_slice_factor]
-            if self.mode is not self.MODES.APPLY:
-                label = label[:, :, index]
-        else:
-            image = data[:, :, index - self.slice_shift:index + self.slice_shift:1]
-            if self.mode is not self.MODES.APPLY:
-                label = label[:, :, index - self.slice_shift:index + self.slice_shift:1]
-
-        I, label = self._select_patches(image, label, samples_per_slice)
-
-        if self.mode is not self.MODES.APPLY:
-            L = self.__class__.one_hot_label(label)
-            return [I, L]
-        else:
-            return [I, None]
-
-    def _select_patches(self, image, label, samples_per_slice):
-        '''!
-        extracts sample patches from the given image slice
-
-        @param image <em>numpy array,  </em> input image data with config.num_channels channels
-        @param label <em>numpy array,  </em> label image, one channel
-
-        Square patches are extracted from the data. Patch centers are restricted to positions so that the whole
-        patch is covered by the image. If the current slice contains the object in the label image, the patch center is
-        further restricted to mean +/- 3 * std of the object position in each direction.
-        The number of patches taken from each slice is defined by config.samples_per_slice.
-
-        @return numpy arrays I (containing input patches) and L (containing label patches)
+        @return numpy arrays I (containing input samples) and L (containing according labels), if mode is APPLY L is None
         '''
 
-        data_shape = image.shape
+        data_shape = data.shape
         if self.data_rank == 3:
             bb_dim = [self.dshapes[0][0], self.dshapes[0][1]]
         else:
@@ -200,7 +178,7 @@ class SegBasisLoader(DataLoader):
         slice_is_empty = False
 
         if self.mode is not self.MODES.APPLY:
-            n_z = np.nonzero(label)
+            n_z = np.nonzero(label[:, :, index])
 
             if cfg.random_sampling_mode == cfg.SAMPLINGMODES.CONSTRAINED_LABEL:
                 # if there are no lables on the slice, sample uniformly for CONSTRAINED_LABEL
@@ -210,7 +188,7 @@ class SegBasisLoader(DataLoader):
                 slice_is_empty = True
                 if cfg.random_sampling_mode == cfg.SAMPLINGMODES.CONSTRAINED_MUSTD:
                     # if there are no lables on the slice, sample in the body for CONSTRAINED_MUSTD
-                    n_z = np.nonzero(np.greater(image, cfg.norm_min_v))
+                    n_z = np.nonzero(np.greater(data, cfg.norm_min_v))
 
             if cfg.random_sampling_mode == cfg.SAMPLINGMODES.CONSTRAINED_MUSTD:
                 if n_z[0].size > 0:
@@ -219,7 +197,7 @@ class SegBasisLoader(DataLoader):
                     mean_y = np.mean(n_z[1], dtype=np.int32)
                     std_y = np.std(n_z[1], dtype=np.int32) * cfg.patch_shift_factor
 
-                    # ensure that bounding box is inside image
+                    # ensure that bounding box is inside data
                     min_x = min(max(mean_x - std_x, bb_dim[0] // 2), data_shape[0] - bb_dim[0] // 2)
                     max_x = max(min(mean_x + std_x + 1, data_shape[0] - bb_dim[0] // 2), bb_dim[0] // 2)
                     min_y = min(max(mean_y - std_y, bb_dim[1] // 2), data_shape[1] - bb_dim[1] // 2)
@@ -243,93 +221,80 @@ class SegBasisLoader(DataLoader):
             sample_x = np.random.randint(min_x, max_x + 1, samples_per_slice)
             sample_y = np.random.randint(min_y, max_y + 1, samples_per_slice)
 
-            for i in range(samples_per_slice):
-                if len(data_shape) > 3:
-                    I[i] = np.squeeze(image[sample_x[i] - (bb_dim[0] // 2):sample_x[i] + (bb_dim[0] // 2),
-                         sample_y[i] - (bb_dim[1] // 2):sample_y[i] + (bb_dim[1] // 2), :])
-                else:
-                    I[i] = image[sample_x[i] - (bb_dim[0] // 2):sample_x[i] + (bb_dim[0] // 2),
-                                      sample_y[i] - (bb_dim[1] // 2):sample_y[i] + (bb_dim[1] // 2), :]
-
-                if self.mode is not self.MODES.APPLY:
-                    L[i] = label[sample_x[i] - (bb_dim[0] // 2):sample_x[i] + (bb_dim[0] // 2),
-                             sample_y[i] - (bb_dim[1] // 2):sample_y[i] + (bb_dim[1] // 2)]
-
         elif cfg.random_sampling_mode == cfg.SAMPLINGMODES.CONSTRAINED_LABEL:
             # select patch centers from mask points inside the bounding box
             valid_locations = np.nonzero(np.logical_and(np.logical_and(n_z[0] >= min_x, n_z[0] <= max_x),
-                                                        np.logical_and(n_z[1] >= min_y, n_z[1] <= max_y)))
-
-            if len(valid_locations[0]) < samples_per_slice:
-                n_missing_samples = samples_per_slice - len(valid_locations[0])
+                                                        np.logical_and(n_z[1] >= min_y, n_z[1] <= max_y)))[0]
+            # print('   VL:', valid_locations.shape, valid_locations)
+            # If there are not enough centers, select voxels close by
+            if len(valid_locations) < samples_per_slice:
+                n_missing_samples = samples_per_slice - len(valid_locations)
 
                 def find_nearest(array, value):
                     array = np.asarray(array)
                     dist = np.abs(array - value)
                     idx = dist.argmin()
-                    distance = np.int32(array[0] / dist[idx])
+                    distance = min(dist[idx], array[1] - array[0])
                     # don't touch this
-                    distance = distance if distance != 0 else 1 if idx == 0 else -1
+                    distance = distance if distance > 1 else 1
                     return idx, distance
 
                 x_idx, x_dist = find_nearest([min_x, max_x], np.mean(n_z[0]))
                 y_idx, y_dist = find_nearest([min_y, max_y], np.mean(n_z[1]))
 
-                # print('Locations and Distances: ', np.mean(n_z[0]), '->', x_idx, x_dist, [min_x, max_x], '|',
-                #       np.mean(n_z[1]), '->', y_idx, y_dist, [min_y, max_y])
+                print('Locations and Distances: ', np.mean(n_z[0]), '->', x_idx, x_dist, [min_x, max_x], '|',
+                      np.mean(n_z[1]), '->', y_idx, y_dist, [min_y, max_y])
 
                 if x_idx == 0:  # if minimum
-                    sample_x = min_x + np.random.randint(0, x_dist+1, n_missing_samples)
+                    sample_x = min_x + np.random.randint(0, x_dist + 1, n_missing_samples)
                 else:
-                    sample_x = max_x - np.random.randint(0, x_dist+1, n_missing_samples)
+                    sample_x = max_x - np.random.randint(0, x_dist + 1, n_missing_samples)
 
                 if y_idx == 0:
-                    sample_y = min_y + np.random.randint(0, y_dist+1, n_missing_samples)
+                    sample_y = min_y + np.random.randint(0, y_dist + 1, n_missing_samples)
                 else:
-                    sample_y = max_y - np.random.randint(0, y_dist+1, n_missing_samples)
+                    sample_y = max_y - np.random.randint(0, y_dist + 1, n_missing_samples)
 
-                if len(valid_locations[0]) == 0:
-                    n_z = (sample_x, sample_y)
-                else:
-                    n_z = (np.append(n_z[0][valid_locations[0]], sample_x),
-                           np.append(n_z[1][valid_locations[0]], sample_y))
+                sample_x = np.append(sample_x, n_z[0][valid_locations])
+                sample_y = np.append(sample_y, n_z[1][valid_locations])
 
+            # Otherwise select randomly
             else:
-                n_z = (n_z[0][valid_locations[0]], n_z[1][valid_locations[0]])
-
-            sample = np.random.choice(range(0, len(n_z[0])), samples_per_slice, replace=False)
-
-            for i in range(samples_per_slice):
-                # print(n_z[0][sample[i]] - (bb_dim[0] // 2), n_z[0][sample[i]] + (bb_dim[0] // 2),
-                #                       n_z[1][sample[i]] - (bb_dim[1] // 2), n_z[1][sample[i]] + (bb_dim[1] // 2), image.shape[-1])
-                if self.data_rank == 3:
-                    I[i] = image[n_z[0][sample[i]] - (bb_dim[0] // 2):n_z[0][sample[i]] + (bb_dim[0] // 2),
-                                      n_z[1][sample[i]] - (bb_dim[1] // 2):n_z[1][sample[i]] + (bb_dim[1] // 2), :]
-                else:
-                    I[i] = np.expand_dims(np.moveaxis(image[n_z[0][sample[i]] - (bb_dim[0] // 2):
-                                                                n_z[0][sample[i]] + (bb_dim[0] // 2),
-                                                                n_z[1][sample[i]] - (bb_dim[1] // 2):
-                                                                n_z[1][sample[i]] + (bb_dim[1] // 2), :], -1, 0), -1)
-
-                if self.mode is not self.MODES.APPLY:
-                    if self.data_rank == 3:
-                        L[i] = label[n_z[0][sample[i]] - (bb_dim[0] // 2):
-                                        n_z[0][sample[i]] + (bb_dim[0] // 2),
-                                        n_z[1][sample[i]] - (bb_dim[1] // 2):
-                                        n_z[1][sample[i]] + (bb_dim[1] // 2)]
-                    else:
-                        L[i] = np.moveaxis(label[n_z[0][sample[i]] - (bb_dim[0] // 2):
-                                                    n_z[0][sample[i]] + (bb_dim[0] // 2),
-                                                    n_z[1][sample[i]] - (bb_dim[1] // 2):
-                                                    n_z[1][sample[i]] + (bb_dim[1] // 2), :], -1, 0)
+                selection = np.random.choice(valid_locations, samples_per_slice, replace=False)
+                sample_x = n_z[0][selection]
+                sample_y = n_z[1][selection]
 
         else:
-            #TODO: throw error for not allowed mode
+            # TODO: throw error for not allowed mode
             pass
+
+        # Get Sample Data from Volumes
+        for i in range(samples_per_slice):
+            if self.data_rank == 3:
+                I[i] = data[sample_x[i] - (bb_dim[0] // 2):sample_x[i] + (bb_dim[0] // 2),
+                       sample_y[i] - (bb_dim[1] // 2):sample_y[i] + (bb_dim[1] // 2),
+                       index - self.slice_shift:index + self.slice_shift + 1:cfg.in_between_slice_factor]
+            else:
+                I[i] = np.expand_dims(np.moveaxis(data[sample_x[i] - (bb_dim[0] // 2):sample_x[i] + (bb_dim[0] // 2),
+                                  sample_y[i] - (bb_dim[1] // 2):sample_y[i] + (bb_dim[1] // 2),
+                                  index - self.slice_shift:index + self.slice_shift:1], -1, 0), -1)
+
+            if self.mode is not self.MODES.APPLY:
+                if self.data_rank == 3:
+                    L[i] = label[sample_x[i] - (bb_dim[0] // 2): sample_x[i] + (bb_dim[0] // 2),
+                           sample_y[i] - (bb_dim[1] // 2): sample_y[i] + (bb_dim[1] // 2),
+                           index]
+                else:
+                    L[i] = np.moveaxis(label[sample_x[i] - (bb_dim[0] // 2): sample_x[i] + (bb_dim[0] // 2),
+                                       sample_y[i] - (bb_dim[1] // 2): sample_y[i] + (bb_dim[1] // 2),
+                                       index - self.slice_shift:index + self.slice_shift:1], -1, 0)
+
         if self.mode is not self.MODES.APPLY:
+            L = self.__class__.one_hot_label(L)
             return [I, L]
         else:
             return [I, None]
+
 
     @staticmethod
     def one_hot_label(label):
@@ -340,6 +305,7 @@ class SegBasisLoader(DataLoader):
 
         @return two-channel one-hot label as numpy array
         '''
+        # To Do: make this multi channel capeable
         # add empty last dimension
         if label.shape[-1] > 1:
             label = np.expand_dims(label, axis=-1)
@@ -353,7 +319,13 @@ class SegBasisLoader(DataLoader):
     def _augment_samples(self, I, L):
         '''!
         samplewise data augmentation
-        - flipping
+
+        @param I <em>numpy array,  </em> image samples
+        @param L <em>numpy array,  </em> label samples
+
+        Three augmentations are available:
+        - flipping coronal
+        =- flipping sagittal
         - intensity variation
         '''
         if cfg.do_flip_coronal or cfg.do_flip_sagittal or cfg.do_variate_intensities:

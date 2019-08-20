@@ -18,10 +18,6 @@ class SegBasisNet(Network):
 
         self.options['out_channels'] = cfg.num_classes_seg
 
-    def _load_collections(self):
-        self.outputs['probabilities'] = tf.get_collection("probabilities")[0]
-        self.outputs['predictions'] = tf.get_collection("predictions")[0]
-
     def _add_data_summaries(self):
         with tf.device('/cpu:0'):
             with tf.variable_scope('data'):
@@ -33,28 +29,6 @@ class SegBasisNet(Network):
                                      collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
                 tf.summary.histogram('predictions', self.outputs['predictions'], collections=[tf.GraphKeys.SUMMARIES,
                                                                                               'vald_summaries'])
-
-    def _set_up_prediction(self):
-        '''!
-        Sets up predictions
-        '''
-        # Prediction
-        with tf.variable_scope('prediction'):
-            if self.options['out_channels'] == 1:
-                self.outputs['predictions'] = tf.cast(tf.greater_equal(self.outputs['logits'], 0.5), tf.int32)
-            else:
-                # http://dataaspirant.com/2017/03/07/difference-between-softmax-function-and-sigmoid-function/
-                if self.options['out_channels'] > 2 or self.options['loss'] == 'DICE' or self.options['loss'] == 'TVE':
-                    # Dice and Tversky require SoftMax
-                    self.outputs['probabilities'] = tf.nn.softmax(self.outputs['logits'])
-                else:
-                    self.outputs['probabilities'] = tf.nn.sigmoid(self.outputs['logits'])
-
-                self.outputs['predictions'] = tf.cast(tf.argmax(self.outputs['probabilities'], axis=-1), tf.int32)
-
-        # add to collections to make retrievable from graph
-        tf.add_to_collection("probabilities", self.outputs['probabilities'])
-        tf.add_to_collection("predictions", self.outputs['predictions'])
 
     def _get_loss(self):
         '''!
@@ -256,7 +230,6 @@ class SegBasisNet(Network):
             predictions = np.concatenate(predictions)
             self._write_inference_data(predictions, filename, apply_path, version)
 
-
     def _run_train(self, logs_path, folder_name, training_dataset, validation_dataset, op_parallelism_threads=-1,
                    summary_step=10, write_step=1500, l_r=0.001, optimizer='Adam'):
         '''!
@@ -298,6 +271,9 @@ class SegBasisNet(Network):
         checkpoint_manager = tf.train.CheckpointManager(
             checkpoint, directory=os.path.join(train_path, "variables"), max_to_keep=3, checkpoint_name=folder_name)
 
+        train_writer = tf.summary.create_file_writer(os.path.join(logs_path, folder_name, 'train'))
+        valid_writer = tf.summary.create_file_writer(os.path.join(logs_path, folder_name, 'valid'))
+
         epoch_loss_avg = tf.keras.metrics.Mean()
 
         for x_t, y_t in training_dataset:
@@ -315,14 +291,16 @@ class SegBasisNet(Network):
             # if true compute and write summaries
             elif global_step.numpy() % summary_step == 0:
                 print('   Step: ', global_step.numpy(), ' Objective: ', objective_train.numpy(), '(Train)')
+                with train_writer.as_default():
+                    tf.summary.scalar('loss', objective_train, step=global_step)
 
             global_step = global_step + 1
 
-        self._end_of_epoch(checkpoint_manager, global_step, iter_per_epoch, epoch_loss_avg, validation_dataset)
+        self._end_of_epoch(checkpoint_manager, global_step, iter_per_epoch, epoch_loss_avg, validation_dataset, valid_writer)
         print('Done -- Finished training after', global_step.numpy() // iter_per_epoch,
               ' epochs /', global_step.numpy(), 'steps.', ' Average Objective: ', epoch_loss_avg.result().numpy(), '(Train)')
 
-    def _end_of_epoch(self, checkpoint_manager, global_step, iter_per_epoch, epoch_loss_avg, validation_dataset):
+    def _end_of_epoch(self, checkpoint_manager, global_step, iter_per_epoch, epoch_loss_avg, validation_dataset, valid_writer):
         print(' Epoch: ', global_step.numpy() // iter_per_epoch)
         checkpoint_manager.save(checkpoint_number=global_step.numpy() // iter_per_epoch)
         epoch_loss_avg.reset_states()
@@ -334,6 +312,8 @@ class SegBasisNet(Network):
 
         print(' Epoch: ', global_step.numpy() // iter_per_epoch, ' Average Objective: ',
               epoch_loss_avg.result().numpy(), '(Valid)')
+        with valid_writer.as_default():
+            tf.summary.scalar('loss', epoch_loss_avg.result(), step=global_step)
 
     def _select_final_activation(self):
         # http://dataaspirant.com/2017/03/07/difference-between-softmax-function-and-sigmoid-function/
@@ -346,17 +326,6 @@ class SegBasisNet(Network):
             raise ValueError(self.options['loss'],
                              'is not a supported loss function or cannot combined with ',
                              self.options['out_channels'], 'output channels.')
-
-    @staticmethod
-    def _get_optimizer(optimizer, l_r, global_step):
-        if optimizer == 'Adam':
-            return tf.optimizers.Adam(learning_rate=l_r, epsilon=1e-3)
-        elif optimizer == 'Momentum':
-            mom = 0.9
-            learning_rate = tf.train.exponential_decay(l_r, global_step, 6000, 0.96, staircase=True)
-            return tf.train.MomentumOptimizer(learning_rate, momentum=mom)
-        elif optimizer == 'Adadelta':
-            return tf.optimizers.AdamAdadelta(learning_rate=l_r)
 
     def _read_data_for_inference(self, file, mode):
         raise NotImplementedError('not implemented')

@@ -160,6 +160,7 @@ class SegRatioBasisLoader(SegBasisLoader):
         kwargs :
             additional arguments for the '_read_sample function'
 
+
         Returns
         -------
         list
@@ -225,6 +226,36 @@ class SegRatioBasisLoader(SegBasisLoader):
 
         @return slice indices as numpy array
         '''
+
+        def _distribute_samples_accross_indices(slices, number_of_samples):
+            if slices.size > 0:
+                sorted_slice_indices = np.argsort(slices)
+                sorted_slice_indices = sorted_slice_indices[slices[sorted_slice_indices] > 0]
+                if number_of_samples <= sorted_slice_indices.size:
+                    selected_slices = np.random.choice(sorted_slice_indices, number_of_samples,
+                                                       replace=False)  # make sure selection is unique
+                    samples_per_slice = np.ones(selected_slices.size, dtype=np.int)
+                else:
+                    # take at least one sample from each slice and then determin the rest
+                    selected_slices = sorted_slice_indices
+                    samples_per_slice = np.ones(selected_slices.size, dtype=np.int)
+
+                    s_r = int(max(np.floor(number_of_samples / sorted_slice_indices.size), 1))
+                    samples_per_slice = samples_per_slice * s_r
+                    number_of_missing_samples = int(number_of_samples - np.sum(samples_per_slice))
+
+                    # slices at the end of the list have the most center voxels
+                    samples_per_slice[-number_of_missing_samples:] = s_r + 1
+
+                    assert np.sum(samples_per_slice) == number_of_samples
+            else:
+                selected_slices = np.array([])  # if there are no non object slices, pass empty array
+                samples_per_slice = np.array([])
+
+            # print('  Selected Slices: ', selected_slices.size, 'Samples per Slice:', samples_per_slice.size)
+
+            return selected_slices, samples_per_slice
+
         data_shape = data.shape
         if self.data_rank == 3:
             bb_dim = [self.dshapes[0][0], self.dshapes[0][1]]
@@ -236,64 +267,32 @@ class SegRatioBasisLoader(SegBasisLoader):
         max_y = data_shape[1] - bb_dim[1] // 2
         s = lbl.shape[2]  # third dimension is z-axis
         indices = np.arange(0 + self.slice_shift, s - self.slice_shift, 1)
-        # print('---- Full Indix List:', np.min(indices), np.max(indices))
-        valid_patch_centers = lbl[min_x:max_x, min_y:max_y, indices]
-        valid_patch_centers_objects = scipy.ndimage.morphology.binary_erosion(valid_patch_centers)
-        valid_patch_centers_background = np.logical_not(scipy.ndimage.morphology.binary_dilation(valid_patch_centers))
-        print('---- Valid Patch Centers:', valid_patch_centers.size, ' - OB:', np.sum(valid_patch_centers_objects)/valid_patch_centers.size, ' - BG:', np.sum(valid_patch_centers_background)/valid_patch_centers.size)
+        valid_patch_centers_objects = lbl[min_x:max_x, min_y:max_y, indices]
+        valid_patch_centers_background = np.logical_not(valid_patch_centers_objects)
+        # print('---- Valid Patch Centers:', valid_patch_centers_objects.size, ' - OB:',
+        #       np.sum(valid_patch_centers_objects)/valid_patch_centers_objects.size,
+        #       ' - BG:', np.sum(valid_patch_centers_background)/valid_patch_centers_objects.size)
         n_object_per_slice = np.sum(valid_patch_centers_objects, axis=(0, 1))
         n_background_per_slice = np.sum(valid_patch_centers_background, axis=(0, 1))
-        print('---- Centers per Slice:', valid_patch_centers.size, ' - OB:', n_object_per_slice. size, n_object_per_slice, ' - BG:', n_background_per_slice.size, n_background_per_slice)
+        # print('---- Centers per Slice:', valid_patch_centers.size, ' - OB:', n_object_per_slice. size, n_object_per_slice, ' - BG:', n_background_per_slice.size, n_background_per_slice)
         # If the segmentation is not a continuous volume (case 102), a vector from min to max leads to empty slices.
         # -> use unique instead!
         n_object_samples = (samples_per_volume * percent_of_object_samples) // 100
         n_background_samples = samples_per_volume - n_object_samples
         # print('Sample Ratio: ', n_object_samples, n_background_samples)
         # print(' ---- Objects ---- ')
-        object_indices, samples_per_slice_obj = self._distribute_samples_accross_indices(n_object_per_slice, n_object_samples)
+        object_indices, samples_per_slice_obj = _distribute_samples_accross_indices(n_object_per_slice, n_object_samples)
+        object_indices += self.slice_shift
         # print(' ---- Background ---- ')
-        background_indices, samples_per_slice_bkg = self._distribute_samples_accross_indices(n_background_per_slice, n_background_samples)
+        background_indices, samples_per_slice_bkg = _distribute_samples_accross_indices(n_background_per_slice, n_background_samples)
+        background_indices += self.slice_shift
 
-        # To Do: fix indices
-
-        # print('      Slices:', s, 'Number of Indices (Object, Background): ', object_indices.size, background_indices.size)
+        # print('          Slices:', s, self.slice_shift, 'Number of Indices (Object, Background): ', object_indices.size, background_indices.size)
+        # print('            Indices (Object, Background): ', object_indices, background_indices)
+        # print('            Samples per Slice (Object, Background): ', samples_per_slice_obj, samples_per_slice_bkg)
         # print('---- Object Indix List:', np.min(object_indices), np.max(object_indices))
         # print('---- Background Indix List:', np.min(background_indices), np.max(background_indices))
         return object_indices, samples_per_slice_obj, background_indices, samples_per_slice_bkg
-
-    def _distribute_samples_accross_indices(self, slices, number_of_samples):
-        if slices.size > 0:
-            sorted_slice_indices = np.argsort(slices)
-            sorted_slice_indices = sorted_slice_indices[slices[sorted_slice_indices] > 0]
-            if number_of_samples <= slices.size:
-                selected_slices = np.random.choice(sorted_slice_indices, number_of_samples,
-                                             replace=False) # make sure selection is unique
-                samples_per_slice = np.ones(selected_slices.size, dtype=np.int)
-            else:
-                # take at least one sample from each slice and then determin the rest
-                selected_slices = sorted_slice_indices
-                samples_per_slice = np.ones(selected_slices.size, dtype=np.int)
-
-                s_r = int(max(np.floor(number_of_samples / slices.size), 1))
-                samples_per_slice = samples_per_slice * s_r
-                number_of_missing_samples = int(number_of_samples - np.sum(samples_per_slice))
-
-                # print('Already Selected: ', np.sum(samples_per_slice), ' samples from ', selected_slices.size, 'slices with ', s_r)
-
-                samples_per_slice[:number_of_missing_samples] = s_r + 1
-
-                # print('  Current SR: ', s_r + 1, 'Missing S:', number_of_missing_samples)
-
-                assert np.sum(samples_per_slice) == number_of_samples
-        else:
-            selected_slices = np.array([])  # if there are no non object slices, pass empty array
-            samples_per_slice = np.array([])
-
-        # print('  Selected Slices: ', selected_slices.size, 'Samples per Slice:', samples_per_slice.size)
-
-        return selected_slices, samples_per_slice
-
-
 
     def _get_samples_from_volume(self, data, lbl):
         raise NotImplementedError('not implemented')
@@ -314,25 +313,27 @@ class SegRatioBasisLoader(SegBasisLoader):
         '''
         indices_obj, sampling_rates_obj, indices_bkg, sampling_rates_bkg = self._select_indices(data, lbl)
 
-        L_obj = []
-        I_obj = []
+        L_obj = np.zeros((np.sum(sampling_rates_obj), *self.dshapes[1]))
+        I_obj = np.zeros((np.sum(sampling_rates_obj), *self.dshapes[0]))
+        current_index = 0
         for i in range(len(indices_obj)):
-            images, labels = self._get_samples_by_index(data, lbl, indices_obj[i], sampling_rates_obj[i])
-            I_obj.extend(images)
-            L_obj.extend(labels)
+            # print('   Object #', i)
+            I_obj[current_index:current_index+sampling_rates_obj[i]], L_obj[current_index:current_index+sampling_rates_obj[i]]\
+                = self._get_samples_by_index(data, lbl, indices_obj[i], sampling_rates_obj[i])
+            current_index = np.sum(sampling_rates_obj[:i])
 
-        I_obj = np.array(I_obj)
-        L_obj = np.array(L_obj)
-
-        L_bkg = []
-        I_bkg = []
+        lbl = np.logical_not(lbl)
+        L_bkg = np.zeros((np.sum(sampling_rates_bkg), *self.dshapes[1]))
+        I_bkg = np.zeros((np.sum(sampling_rates_bkg), *self.dshapes[0]))
+        current_index = 0
         for i in range(len(indices_bkg)):
-            images, labels = self._get_samples_by_index(data, lbl, indices_bkg[i], sampling_rates_bkg[i])
-            I_bkg.extend(images)
-            L_bkg.extend(labels)
+            # print('   Background #', i)
+            I_bkg[current_index:current_index + sampling_rates_bkg[i]], L_bkg[current_index:current_index +
+                                                                                            sampling_rates_bkg[i]] \
+                = self._get_samples_by_index(data, lbl, indices_bkg[i], sampling_rates_bkg[i])
+            current_index = np.sum(sampling_rates_bkg[:i])
 
-        I_bkg = np.array(I_bkg)
-        L_bkg = np.array(L_bkg)
+        L_bkg = np.logical_not(L_bkg)
 
         if self.mode is self.MODES.TRAIN:
             I_bkg, L_bkg = self._augment_samples(I_bkg, L_bkg)
