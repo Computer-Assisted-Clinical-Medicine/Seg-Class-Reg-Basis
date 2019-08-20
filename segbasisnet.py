@@ -8,6 +8,7 @@ from .NetworkBasis import metric as Metric
 import os
 import multiprocessing
 
+
 class SegBasisNet(Network):
 
     def _set_up_inputs(self):
@@ -18,45 +19,30 @@ class SegBasisNet(Network):
 
         self.options['out_channels'] = cfg.num_classes_seg
 
-    def _add_data_summaries(self):
-        with tf.device('/cpu:0'):
-            with tf.variable_scope('data'):
-                tf.summary.histogram('input', self.inputs['x'], collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-                help_img = self.inputs['y'][:, :, :, 1]
-                for i in range(2, self.options['out_channels']):
-                    help_img = tf.expand_dims(tf.add(help_img, tf.multiply(self.inputs['y'][:, :, :, i], i)), -1)
-                tf.summary.histogram('label', help_img,
-                                     collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-                tf.summary.histogram('predictions', self.outputs['predictions'], collections=[tf.GraphKeys.SUMMARIES,
-                                                                                              'vald_summaries'])
-
     def _get_loss(self):
         '''!
-                Returns loss depending on `self.options['loss']``.
+        Returns loss depending on `self.options['loss']``.
 
-                self.options['loss'] should be in {'DICE', 'TVE', 'CEL', 'WCEL'}.
-                @returns @b loss : tf.float
-                '''
-        # Assert that dimensions match!
-        # assert self.outputs['probabilities'].shape.as_list()[1:-1] == self.inputs['y'].shape.as_list()[1:-1]
-
-        # Loss
+        self.options['loss'] should be in {'DICE', 'TVE', 'CEL', 'WCEL'}.
+        @returns @b loss : function
+        '''
         if self.options['loss'] == 'DICE':
             loss = Loss.dice_loss
 
         elif self.options['loss'] == 'TVE':
-            loss = Loss.tversky_loss(self.outputs['probabilities'], self.inputs['y'], cfg.tversky_alpha, cfg.tversky_beta)
+            loss = Loss.tversky_loss
 
         elif self.options['loss'] == 'GDL':
-            loss = Loss.generalized_dice_loss(self.outputs['probabilities'], self.inputs['y'])
+            loss = Loss.generalized_dice_loss
 
         elif self.options['loss'] == 'CEL':
             if self.options['out_channels'] > 2:
-                loss = Loss.cross_entropy_loss_with_softmax(logits=self.outputs['logits'], labels=self.inputs['y'])
+                loss = Loss.categorical_cross_entropy_loss
             else:
-                loss = Loss.cross_entropy_loss_with_sigmoid(logits=self.outputs['logits'], labels=self.inputs['y'])
+                loss = Loss.binary_cross_entropy_loss
 
         elif self.options['loss'] == 'WCEL':
+            # ToDo: update this
             if self.options['out_channels'] > 2:
                 loss = Loss.weighted_cross_entropy_loss_with_softmax(self.outputs['logits'], self.inputs['y'], self.inputs['x'],
                                                                      cfg.basis_factor, cfg.tissue_factor,
@@ -72,142 +58,6 @@ class SegBasisNet(Network):
             raise ValueError(self.options['loss'], 'is not a supported loss function.')
 
         return loss
-
-    def _set_up_training_image_summaries(self):
-        with tf.device('/cpu:0'):
-            if self.options['in_channels'] > 1:
-                if self.options['in_channels'] > 2:
-                    tf.summary.image('train_img', tf.cast((tf.gather(self.inputs['x'], [0, cfg.batch_size-1])
-                                    [:, :, :, ::self.options['in_channels']//2]+1) * 255/2, tf.uint8),
-                                     2, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-                else:
-                    tf.summary.image('train_img_c1', tf.expand_dims(
-                        tf.cast((tf.gather(self.inputs['x'][:, :, :, 0], [0, cfg.batch_size - 1]) + 1) * 255 / 2, tf.uint8),
-                        axis=-1), 2, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-                    tf.summary.image('train_img_c2',
-                                     tf.expand_dims(
-                                         tf.cast(
-                                             (tf.gather(self.inputs['x'][:, :, :, 1], [0, cfg.batch_size - 1]) + 1) * 255 / 2,
-                                             tf.uint8),
-                                         axis=-1), 2, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-            else:
-                tf.summary.image('train_img', tf.cast(
-                    (tf.gather(self.inputs['x'], [0, cfg.batch_size - 1]) + 1) * 255 / 2,
-                    tf.uint8), 2, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-
-            if self.options['out_channels'] == 2:
-                tf.summary.image('train_seg_lbl', tf.expand_dims(
-                    tf.cast(tf.gather(self.inputs['y'][:, :, :, 1], [0, cfg.batch_size - 1]) * 255, tf.uint8), axis=-1),
-                                 2, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-                tf.summary.image('train_seg_pred', tf.expand_dims(
-                    tf.cast(tf.gather(self.outputs['predictions'], [0, cfg.batch_size - 1]) * 255, tf.uint8), axis=-1),
-                                 2, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-                tf.summary.image('train_seg_log_object',
-                                 tf.expand_dims(tf.gather(self.outputs['logits'][:, :, :, 1], [0, cfg.batch_size - 1]),
-                                                axis=-1),
-                                 2, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-                tf.summary.image('train_seg_prob', tf.expand_dims(
-                    tf.cast(tf.gather(self.outputs['probabilities'][:, :, :, 1], [0, cfg.batch_size - 1]) * 255,
-                            tf.uint8), axis=-1),
-                                 2, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-            else:
-                tf.summary.scalar('OneHotMax-Img', tf.reduce_max(self.inputs['y']), collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-                help_img = self.inputs['y'][:, :, :, 1]
-                for i in range(2, self.options['out_channels']):
-                    help_img = tf.expand_dims(tf.add(help_img, tf.multiply(self.inputs['y'][:, :, :, i], i)), -1)
-                tf.summary.scalar('IntMax-Img', tf.reduce_max(help_img),
-                                  collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-                tf.summary.image('train_seg_lbl', tf.cast(tf.gather(help_img, [0, cfg.batch_size-1]) * (255 // (self.n_classes-1)), tf.uint8), 2,
-                                 collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-                tf.summary.image('train_seg_pred', tf.expand_dims(
-                    tf.cast(tf.gather(self.outputs['predictions'], [0, cfg.batch_size - 1]) * (255 // (self.n_classes-1)),
-                            tf.uint8), axis=-1), 2, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-                tf.summary.image('train_seg_log_object_0',
-                                 tf.expand_dims(tf.gather(self.outputs['logits'][:, :, :, 1], [0, cfg.batch_size - 1]),
-                                                axis=-1),
-                                 2, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-                tf.summary.image('train_seg_log_object_1',
-                                 tf.expand_dims(tf.gather(self.outputs['logits'][:, :, :, 2], [0, cfg.batch_size - 1]),
-                                                axis=-1),
-                                 2, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-                tf.summary.image('train_seg_prob_0', tf.expand_dims(
-                    tf.cast(tf.gather(self.outputs['probabilities'][:, :, :, 1], [0, cfg.batch_size - 1]) * 255,
-                            tf.uint8), axis=-1),
-                                 2, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-                tf.summary.image('train_seg_prob_1', tf.expand_dims(
-                    tf.cast(tf.gather(self.outputs['probabilities'][:, :, :, 2], [0, cfg.batch_size - 1]) * 255,
-                            tf.uint8), axis=-1),
-                                 2, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-
-            tf.summary.image('train_seg_log_background', tf.expand_dims(tf.gather(self.outputs['logits'][:, :, :, 0],
-                        [0, cfg.batch_size - 1]), axis=-1), 2, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-
-    def _set_up_testing_image_summaries(self):
-        with tf.device('/cpu:0'):
-            if self.options['in_channels'] > 1:
-                if self.options['in_channels'] > 2:
-                    tf.summary.image('test_img', tf.cast((tf.gather(self.inputs['x'], [0, cfg.batch_size - 1])
-                                                           [:, :, :, ::self.options['in_channels'] // 2] + 1) * 255 / 2,
-                                                          tf.uint8),
-                                     2, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-                else:
-                    tf.summary.image('test_img_c1', tf.expand_dims(tf.cast((self.inputs['x'][:, :, :, 0] + 1) * 255 / 2,
-                                tf.uint8),axis=-1), 2, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-                    tf.summary.image('test_img_c2',
-                                     tf.expand_dims(tf.cast((self.inputs['x'][:, :, :, 1] + 1) * 255 / 2,
-                                             tf.uint8), axis=-1), 2, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-            else:
-                tf.summary.image('test_img', tf.cast(
-                    (self.inputs['x'] + 1) * 255 / 2,
-                    tf.uint8), 1, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-
-            if self.options['out_channels'] == 2:
-                tf.summary.image('test_seg_pred', tf.expand_dims(tf.cast(self.outputs['predictions'] * 255, tf.uint8), axis=-1),
-                             1)
-                tf.summary.image('test_seg_lbl', tf.expand_dims(tf.cast(self.inputs['y'][:, :, :, 1] * 255, tf.uint8), axis=-1), 1)
-                tf.summary.image('test_seg_prob',
-                             tf.expand_dims(tf.cast(self.outputs['probabilities'][:, :, :, 1] * 255, tf.uint8), axis=-1), 1)
-                tf.summary.image('test_seg_log_object',
-                             tf.expand_dims(self.outputs['logits'][:, :, :, 1], axis=-1), 1)
-            else:
-                tf.summary.scalar('OneHotMax-Img', tf.reduce_max(self.inputs['y']),
-                                  collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-                help_img = self.inputs['y'][:, :, :, 1]
-                for i in range(2, self.options['out_channels']):
-                    help_img = tf.expand_dims(tf.add(help_img, tf.multiply(self.inputs['y'][:, :, :, i], i)), -1)
-                tf.summary.scalar('IntMax-Img', tf.reduce_max(help_img),
-                                  collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-                tf.summary.image('test_seg_lbl',
-                                 tf.cast(help_img * (255 // (self.n_classes - 1)),
-                                         tf.uint8), 1, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-                tf.summary.image('test_seg_pred', tf.expand_dims(
-                    tf.cast(self.outputs['predictions'] * (255 // (self.n_classes - 1)),
-                        tf.uint8), axis=-1), 1, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-                tf.summary.image('test_seg_log_object_0',
-                                 tf.expand_dims(self.outputs['logits'][:, :, :, 1],
-                                                axis=-1),
-                                 1, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-                tf.summary.image('test_seg_log_object_1',
-                                 tf.expand_dims(self.outputs['logits'][:, :, :, 2],
-                                                axis=-1),
-                                 1, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-                tf.summary.image('test_seg_prob_0', tf.expand_dims(
-                    tf.cast(self.outputs['probabilities'][:, :, :, 1] * 255,
-                            tf.uint8), axis=-1), 1, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-                tf.summary.image('test_seg_prob_1', tf.expand_dims(
-                    tf.cast(self.outputs['probabilities'][:, :, :, 2] * 255,
-                            tf.uint8), axis=-1), 1, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-
-            tf.summary.image('test_seg_log_background',
-                             tf.expand_dims(self.outputs['logits'][:, :, :, 0], axis=-1), 1)
-
-    def _set_up_error(self):
-        self.outputs['error'] = []
-        for i in range(1, self.options['out_channels']):
-            self.outputs['error'].append(1 - Metric.dice_coefficient_tf(tf.expand_dims(
-                self.outputs['probabilities'][:, :, :, i], -1), tf.expand_dims(self.inputs['y'][:, :, :, i], -1)))
-            with tf.device('/cpu:0'):
-                tf.summary.scalar('dice_'+str(i), self.outputs['error'][i-1], collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
 
     def _run_apply(self, version, apply_path, application_dataset, filename):
 
