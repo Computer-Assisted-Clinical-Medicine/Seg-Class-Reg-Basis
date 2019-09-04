@@ -315,23 +315,25 @@ class SegRatioBasisLoader(SegBasisLoader):
 
         L_obj = np.zeros((np.sum(sampling_rates_obj), *self.dshapes[1]))
         I_obj = np.zeros((np.sum(sampling_rates_obj), *self.dshapes[0]))
+        # print(L_obj.shape)
         current_index = 0
         for i in range(len(indices_obj)):
-            # print('   Object #', i)
+            # print('   Object #', i, indices_obj[i], sampling_rates_obj[i], ':', current_index)
             I_obj[current_index:current_index+sampling_rates_obj[i]], L_obj[current_index:current_index+sampling_rates_obj[i]]\
                 = self._get_samples_by_index(data, lbl, indices_obj[i], sampling_rates_obj[i])
-            current_index = np.sum(sampling_rates_obj[:i])
+            current_index = np.sum(sampling_rates_obj[:i+1])
 
         lbl = np.logical_not(lbl)
         L_bkg = np.zeros((np.sum(sampling_rates_bkg), *self.dshapes[1]))
         I_bkg = np.zeros((np.sum(sampling_rates_bkg), *self.dshapes[0]))
+        # print(L_bkg.shape)
         current_index = 0
         for i in range(len(indices_bkg)):
-            # print('   Background #', i)
+            # print('   Background #', i, indices_bkg[i], sampling_rates_bkg[i], current_index)
             I_bkg[current_index:current_index + sampling_rates_bkg[i]], L_bkg[current_index:current_index +
                                                                                             sampling_rates_bkg[i]] \
                 = self._get_samples_by_index(data, lbl, indices_bkg[i], sampling_rates_bkg[i])
-            current_index = np.sum(sampling_rates_bkg[:i])
+            current_index = np.sum(sampling_rates_bkg[:i+1])
 
         L_bkg = np.logical_not(L_bkg)
 

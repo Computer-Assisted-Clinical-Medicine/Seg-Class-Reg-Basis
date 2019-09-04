@@ -47,7 +47,7 @@ else:
     train_reader_instances = 1
 
 write_step = 2500
-summary_step = 100
+summary_step = 150
 
 ##### Testing #####
 do_connected_component_analysis = True
@@ -84,7 +84,7 @@ in_between_slice_factor = 2
 min_n_samples = 10
 random_sampling_mode = SAMPLINGMODES.CONSTRAINED_LABEL
 percent_of_object_samples = 50  # %
-samples_per_volume = 400
+samples_per_volume = 200
 samples_per_slice_liver = 2
 samples_per_slice_lesion = 4
 samples_per_slice_bkg = 1

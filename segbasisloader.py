@@ -341,6 +341,7 @@ class SegBasisLoader(DataLoader):
                 if cfg.do_variate_intensities:
                         variation = (np.random.random_sample() * 2.0 * cfg.intensity_variation_interval) - cfg.intensity_variation_interval
                         I[sample] = I[sample] + variation
+                        # ToDo: Check for values outside of interval
         return I, L
 
     def _resample(self, data, label):

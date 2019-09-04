@@ -134,9 +134,9 @@ class UNet(SegBasisNet):
 
         # Add final 1x1 convolutional layer to compute logits
         with tf.name_scope('10_last_layer'):
-            self.outputs['probabilities'] = layer.last(x, np.ones(self.options['rank'], dtype=np.int32), self.options['out_channels'], self.options['strides'],
+            self.outputs['probabilities'] = layer.last(x, self.outputs, np.ones(self.options['rank'], dtype=np.int32), self.options['out_channels'], self.options['strides'],
                                                 self.options['padding'], self.options['dilation_rate'],
-                                                self._select_final_activation(), False, self.options['use_cross_hair'], do_summary=True)
+                                                self._select_final_activation(), False, self.options['regularizer'], self.options['use_cross_hair'], do_summary=True)
             if cfg.VERBOSE:
                 print(' Probabilities has shape ', self.outputs['probabilities'].shape)
                 print(' -------------------------------------')
@@ -273,7 +273,7 @@ class ResNet(SegBasisNet):
 
         # Add final 1x1 convolutional layer to compute logits
         with tf.name_scope('10_last_layer'):
-            self.outputs['probabilities'] = layer.last(x, np.ones(self.options['rank'], dtype=np.int32),
+            self.outputs['probabilities'] = layer.last(x, self.outputs, np.ones(self.options['rank'], dtype=np.int32),
                                                        self.options['out_channels'], self.options['strides'],
                                                        self.options['padding'], self.options['dilation_rate'],
                                                        self._select_final_activation(), False,
