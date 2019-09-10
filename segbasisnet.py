@@ -108,6 +108,8 @@ class SegBasisNet(Network):
         print(train_path)
 
         # save the keras model
+        # tf.saved_model.save(self.model, train_path)
+        # self.model.save(train_path, save_format="tf")
         tf.keras.experimental.export_saved_model(self.model, train_path)
 
         if not hasattr(self, 'optimizer'):
@@ -160,7 +162,7 @@ class SegBasisNet(Network):
         print('Done -- Finished training after', global_step.numpy() // iter_per_epoch,
               ' epochs /', global_step.numpy(), 'steps.', ' Average Objective: ', epoch_objective_avg.result().numpy(),
               '(Train)')
-        self._end_of_epoch(checkpoint_manager, global_step, iter_per_epoch, epoch_objective_avg, validation_dataset, valid_writer)
+        self._end_of_epoch(checkpoint_manager, global_step, iter_per_epoch, validation_dataset, valid_writer)
 
     def _end_of_epoch(self, checkpoint_manager, global_step, iter_per_epoch, validation_dataset, valid_writer):
         print(' Epoch: ', global_step.numpy() // iter_per_epoch)
