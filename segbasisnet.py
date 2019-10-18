@@ -2,11 +2,11 @@ import tensorflow as tf
 import numpy as np
 from time import time
 from . import config as cfg
+from LiverSeg.SegmentationNetworkBasis.NetworkBasis import image
 from .NetworkBasis.network import Network
-from .NetworkBasis import loss as Loss
-from .NetworkBasis import metric as Metric
+from .NetworkBasis import loss
+from .NetworkBasis import metric
 import os
-import multiprocessing
 
 
 class SegBasisNet(Network):
@@ -23,41 +23,39 @@ class SegBasisNet(Network):
         '''!
         Returns loss depending on `self.options['loss']``.
 
-        self.options['loss'] should be in {'DICE', 'TVE', 'CEL', 'WCEL'}.
+        self.options['loss'] should be in {'DICE', 'TVE', 'GDL', 'CEL', 'WCEL'}.
         @returns @b loss : function
         '''
         if self.options['loss'] == 'DICE':
-            loss = Loss.dice_loss
+            return loss.dice_loss
 
         elif self.options['loss'] == 'TVE':
-            loss = Loss.tversky_loss
+            return loss.tversky_loss
 
         elif self.options['loss'] == 'GDL':
-            loss = Loss.generalized_dice_loss
+            return loss.generalized_dice_loss
 
         elif self.options['loss'] == 'CEL':
             if self.options['out_channels'] > 2:
-                loss = Loss.categorical_cross_entropy_loss
+                return loss.categorical_cross_entropy_loss
             else:
-                loss = Loss.binary_cross_entropy_loss
+                return loss.binary_cross_entropy_loss
 
         elif self.options['loss'] == 'WCEL':
             # ToDo: update this
             if self.options['out_channels'] > 2:
-                loss = Loss.weighted_cross_entropy_loss_with_softmax(self.outputs['logits'], self.inputs['y'], self.inputs['x'],
+                return loss.weighted_cross_entropy_loss_with_softmax(self.outputs['logits'], self.inputs['y'], self.inputs['x'],
                                                                      cfg.basis_factor, cfg.tissue_factor,
                                                                      cfg.contour_factor, cfg.tissue_threshold,
                                                                      cfg.max_weight)
             else:
-                loss = Loss.weighted_cross_entropy_loss_with_sigmoid(self.outputs['logits'], self.inputs['y'], self.inputs['x'],
+                return loss.weighted_cross_entropy_loss_with_sigmoid(self.outputs['logits'], self.inputs['y'], self.inputs['x'],
                                                                      cfg.basis_factor, cfg.tissue_factor,
                                                                      cfg.contour_factor, cfg.tissue_threshold,
                                                                      cfg.max_weight)
 
         else:
             raise ValueError(self.options['loss'], 'is not a supported loss function.')
-
-        return loss
 
     def _run_apply(self, version, apply_path, application_dataset, filename):
 
@@ -128,7 +126,7 @@ class SegBasisNet(Network):
         epoch_objective_avg = tf.keras.metrics.Mean()
         epoch_accuracy_avg = tf.keras.metrics.Mean()
 
-        self.outputs['accuracy'] = Metric.dice_coefficient_tf
+        self.outputs['accuracy'] = metric.dice_coefficient_tf
 
         for x_t, y_t in training_dataset:
 
@@ -299,7 +297,7 @@ class SegBasisNet(Network):
     def _select_final_activation(self):
         # http://dataaspirant.com/2017/03/07/difference-between-softmax-function-and-sigmoid-function/
         if self.options['out_channels'] > 2 or self.options['loss'] in ['DICE', 'TVE', 'GDL']:
-            # Dice and Tversky require SoftMax
+            # Dice GDL and Tversky require SoftMax
             return 'softmax'
         elif self.options['out_channels'] == 2 and self.options['loss'] in ['CEL', 'WCEL']:
             return 'sigmoid'
@@ -308,9 +306,35 @@ class SegBasisNet(Network):
                              'is not a supported loss function or cannot combined with ',
                              self.options['out_channels'], 'output channels.')
 
-    def _read_data_for_inference(self, file, mode):
-        raise NotImplementedError('not implemented')
+    @staticmethod
+    def _write_inference_data(predictions, file_name, out_path, version):
+        import SimpleITK as sitk
+        predictions = np.argmax(predictions, -1)
 
-    def _write_inference_data(self, predictions, file_name, out_path, version):
-        raise NotImplementedError('not implemented')
+        folder, file_number = os.path.split(file_name[0])
+        # Use a SimpleITK reader to load the nii images and labels for training
+        data_img = sitk.ReadImage(os.path.join(folder, (cfg.sampe_file_name_prefix + file_number + '.nii')))
+        data_info = image.get_data_info(data_img)
+        if cfg.adapt_resolution:
+            target_info = {}
+            target_info['target_spacing'] = cfg.target_spacing
+            target_info['target_direction'] = cfg.target_direction
+            target_info['target_size'] = cfg.target_size
+            target_info['target_type_image'] = cfg.target_type_image
+            target_info['target_type_label'] = cfg.target_type_image
+            resampled_img = image.resample_sitk_image(data_img, target_info,
+                                                      data_background_value=cfg.data_background_value,
+                                                      do_adapt_resolution=cfg.adapt_resolution,
+                                                      label_background_value=cfg.label_background_value,
+                                                      do_augment=False)
+            data_info['res_spacing'] = cfg.target_spacing
+            data_info['res_origin'] = resampled_img.GetOrigin()
+            data_info['res_direction'] = cfg.target_direction
+        pred_img = image.np_array_to_itk_image(predictions, data_info, cfg.label_background_value,
+                                               cfg.adapt_resolution, cfg.target_type_label)
+        if cfg.do_connected_component_analysis:
+            pred_img = image.extract_largest_connected_component_sitk(pred_img)
+
+        sitk.WriteImage(pred_img,
+                        os.path.join(out_path, ('prediction' + '-' + version + '-' + file_number + '.nii')))
 

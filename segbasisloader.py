@@ -1,5 +1,7 @@
 import numpy as np
+np.seterr(all='raise')
 import SimpleITK as sitk
+import os
 from . import config as cfg
 from .NetworkBasis import image as Image
 from .NetworkBasis.dataloader import DataLoader
@@ -80,8 +82,39 @@ class SegBasisLoader(DataLoader):
         else:
             return [samples]
 
-    def _load_file(self, path):
-        raise NotImplementedError('not implemented')
+    def _load_file(self, file_id):
+        '''!
+        loads nii data file and nii labels file given the @p file_id
+
+        @param file_id <em>string,  </em> should have the format <tt> 'Location\\file_number'</tt>. The @p Location must contain the data file with the @p file_number named as @p volume-file_number.nii and the data file with the @p file_number named as @p segmentation-file_number.nii to be loaded. For example, <tt>'C:\\DataLoction\\0'</tt> can be a @p file_id. Then <tt> C:\\DataLoction </tt> should contain @p volume-0.nii and @p segmetation-0.nii.
+
+        Given the @p file_id, this function
+        - Generates the location and file number for the data and label files.
+        - Reads data and labels files using a SimpleITK reader.
+        - Resamples (With augmentation if <tt>  self.mode </tt> is @p 'train'). See resample().
+        - Combines liver and tumor annotations into one label.
+        - Generates data and labels numpy arrays from nii files.
+        - Moves z axis to last dimension.
+
+        @return data and labels as numpy arrays
+        '''
+        file_id = str(file_id, 'utf-8')
+        folder, file_number = os.path.split(file_id)
+        print('        Loading ', folder, file_number, ' (', self.mode, ')')
+        # Use a SimpleITK reader to load the nii images and labels for training
+        data_img = sitk.ReadImage(os.path.join(folder, (cfg.sampe_file_name_prefix + file_number + '.nii')))
+        label_img = sitk.ReadImage(os.path.join(folder, (cfg.label_file_name_prefix + file_number + '.nii')))
+        data_img, label_img = self.adapt_to_task(data_img, label_img)
+        data_img, label_img = self._resample(data_img, label_img)
+        data = sitk.GetArrayFromImage(data_img)
+        data = self.normalize(data)
+        lbl = sitk.GetArrayFromImage(label_img)
+        # move z axis to last index
+        data = np.moveaxis(data, 0, -1)
+        lbl = np.moveaxis(lbl, 0, -1)
+        self._check_images(data, lbl)
+
+        return data, lbl
 
     def _get_samples_from_volume(self, data, lbl):
         '''!
@@ -106,7 +139,7 @@ class SegBasisLoader(DataLoader):
                 images, _ = self._get_samples_by_index(data, lbl, indices[i], samples_per_slice=1)
                 I[i] = images
 
-            print('   Image Samples Shape: ', I.shape)
+            print('   image Samples Shape: ', I.shape)
             return [I, None]
 
         else:
@@ -124,7 +157,7 @@ class SegBasisLoader(DataLoader):
             if self.mode is self.MODES.TRAIN:
                 I, L = self._augment_samples(I, L)
 
-            print('   Image Samples Shape: ', I.shape)
+            print('   image Samples Shape: ', I.shape)
             print('   Label Samples Shape: ', L.shape)
 
             return [I, L]
@@ -188,7 +221,12 @@ class SegBasisLoader(DataLoader):
                 slice_is_empty = True
                 if cfg.random_sampling_mode == cfg.SAMPLINGMODES.CONSTRAINED_MUSTD:
                     # if there are no lables on the slice, sample in the body for CONSTRAINED_MUSTD
-                    n_z = np.nonzero(np.greater(data, cfg.norm_min_v))
+                    print('This is where it brakes.')
+                    if cfg.normalizing_method == cfg.NORMALIZING.WINDOW:
+                        n_z = np.nonzero(np.greater(data, cfg.norm_min_v))
+                    elif cfg.normalizing_method == cfg.NORMALIZING.MEAN_STD:
+                        n_z = np.nonzero(np.greater(data, 0))
+                        print(n_z)
 
             if cfg.random_sampling_mode == cfg.SAMPLINGMODES.CONSTRAINED_MUSTD:
                 if n_z[0].size > 0:
@@ -242,8 +280,8 @@ class SegBasisLoader(DataLoader):
                 x_idx, x_dist = find_nearest([min_x, max_x], np.mean(n_z[0]))
                 y_idx, y_dist = find_nearest([min_y, max_y], np.mean(n_z[1]))
 
-                print('Locations and Distances: ', np.mean(n_z[0]), '->', x_idx, x_dist, [min_x, max_x], '|',
-                      np.mean(n_z[1]), '->', y_idx, y_dist, [min_y, max_y])
+                # print('Locations and Distances: ', np.mean(n_z[0]), '->', x_idx, x_dist, [min_x, max_x], '|',
+                #       np.mean(n_z[1]), '->', y_idx, y_dist, [min_y, max_y])
 
                 if x_idx == 0:  # if minimum
                     sample_x = min_x + np.random.randint(0, x_dist + 1, n_missing_samples)
@@ -325,7 +363,7 @@ class SegBasisLoader(DataLoader):
 
         Three augmentations are available:
         - flipping coronal
-        =- flipping sagittal
+        - flipping sagittal
         - intensity variation
         '''
         if cfg.do_flip_coronal or cfg.do_flip_sagittal or cfg.do_variate_intensities:
@@ -396,8 +434,17 @@ class SegBasisLoader(DataLoader):
             img = (img * 2) - 1
         elif cfg.normalizing_method == cfg.NORMALIZING.MEAN_STD:
             img = img - np.mean(img)
+
             std = np.std(img)
             img = img / (std if std != 0 else eps)
+
+            # np.seterr(all='raise')  # To catch invalid value in std warning
+            # try:
+            #     std = np.std(img)
+            #     img = img / (std if std != 0 else eps)
+            # except FloatingPointError as err:
+            #     img = img / eps
+            #     print(err, 'Replaced it with eps.')
         return img
 
     @staticmethod
@@ -406,10 +453,10 @@ class SegBasisLoader(DataLoader):
         This method calls the normalize method on SimpleITK Images.
         It firstly extracts the data from SitkImage class,
         secondly applies the normalization and
-        thirdly rebuilds the Data as SitkImage class and copies the Image information (spacing and so on)
+        thirdly rebuilds the Data as SitkImage class and copies the image information (spacing and so on)
 
-        :param img_data: image data to be normalized as SimpleITK.Image
-        :return: SimpleITK.Image
+        :param img_data: image data to be normalized as SimpleITK.image
+        :return: SimpleITK.image
         """
         img = sitk.GetArrayFromImage(img_data)
         img = SegBasisLoader.normalize(img)

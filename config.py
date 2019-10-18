@@ -27,6 +27,9 @@ class ORGANS(Enum):
     TUMORS = 'tumors'
     LIVERANDTUMORS = 'liver+tumors'
 
+sampe_file_name_prefix = 'ct-volume-'
+label_file_name_prefix = 'liver-segmentation-'
+
 ##### Mode #####
 VERBOSE = True
 
@@ -85,7 +88,7 @@ min_n_samples = 10
 random_sampling_mode = SAMPLINGMODES.CONSTRAINED_LABEL
 percent_of_object_samples = 50  # %
 samples_per_volume = 200
-samples_per_slice_liver = 2
+samples_per_slice_object = 2
 samples_per_slice_lesion = 4
 samples_per_slice_bkg = 1
 samples_per_slice_uni = 1

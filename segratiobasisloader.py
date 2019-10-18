@@ -145,7 +145,7 @@ class SegRatioBasisLoader(SegBasisLoader):
             # ds_obj, ds_bkg = ds.map(split)
             return ds_obj, ds_bkg
 
-    def _read_wrapper(self, id_data_set, **kwargs):
+    def _read_wrapper(self, id_data_set):
         # this has been adapted from https://github.com/DLTK/DLTK
 
         """!
@@ -157,8 +157,6 @@ class SegRatioBasisLoader(SegBasisLoader):
         ----------
         id_data_set : list
             list of tf.Tensors from the id_list queue. Provides an identifier for the examples to read.
-        kwargs :
-            additional arguments for the '_read_sample function'
 
 
         Returns
@@ -209,7 +207,7 @@ class SegRatioBasisLoader(SegBasisLoader):
         return ex
 
     def _select_indices(self, data, lbl):
-        raise NotImplementedError('not implemented')
+        return self._select_ratio_indices(data, lbl, cfg.samples_per_volume, cfg.percent_of_object_samples)
 
     def _select_ratio_indices(self, data, lbl, samples_per_volume, percent_of_object_samples):
         '''!
@@ -295,9 +293,9 @@ class SegRatioBasisLoader(SegBasisLoader):
         return object_indices, samples_per_slice_obj, background_indices, samples_per_slice_bkg
 
     def _get_samples_from_volume(self, data, lbl):
-        raise NotImplementedError('not implemented')
+        return self._get_ratio_samples_from_volume(data, lbl)
 
-    def _get_ratio_samples_from_volume(self, data, lbl, n_object_samples):
+    def _get_ratio_samples_from_volume(self, data, lbl):
         '''!
         Get batches/samples for training from image and label data.
 
@@ -341,7 +339,7 @@ class SegRatioBasisLoader(SegBasisLoader):
             I_bkg, L_bkg = self._augment_samples(I_bkg, L_bkg)
             I_obj, L_obj = self._augment_samples(I_obj, L_obj)
 
-        print('          Image Shape: ', I_obj.shape, I_bkg.shape)
+        print('          image Shape: ', I_obj.shape, I_bkg.shape)
         print('          Label Shape: ', L_obj.shape, L_bkg.shape)
 
         return [I_obj, L_obj], [I_bkg, L_bkg]
