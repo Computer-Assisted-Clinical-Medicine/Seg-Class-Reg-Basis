@@ -265,7 +265,7 @@ class SegRatioBasisLoader(SegBasisLoader):
         max_y = data_shape[1] - bb_dim[1] // 2
         s = lbl.shape[2]  # third dimension is z-axis
         indices = np.arange(0 + self.slice_shift, s - self.slice_shift, 1)
-        valid_patch_centers_objects = lbl[min_x:max_x, min_y:max_y, indices]
+        valid_patch_centers_objects = (lbl > 0)[min_x:max_x, min_y:max_y, indices]
         valid_patch_centers_background = np.logical_not(valid_patch_centers_objects)
         # print('---- Valid Patch Centers:', valid_patch_centers_objects.size, ' - OB:',
         #       np.sum(valid_patch_centers_objects)/valid_patch_centers_objects.size,
@@ -318,10 +318,9 @@ class SegRatioBasisLoader(SegBasisLoader):
         for i in range(len(indices_obj)):
             # print('   Object #', i, indices_obj[i], sampling_rates_obj[i], ':', current_index)
             I_obj[current_index:current_index+sampling_rates_obj[i]], L_obj[current_index:current_index+sampling_rates_obj[i]]\
-                = self._get_samples_by_index(data, lbl, indices_obj[i], sampling_rates_obj[i])
+                = self._get_samples_by_index(data, lbl, indices_obj[i], sampling_rates_obj[i], object_sampling=True)
             current_index = np.sum(sampling_rates_obj[:i+1])
 
-        lbl = np.logical_not(lbl)
         L_bkg = np.zeros((np.sum(sampling_rates_bkg), *self.dshapes[1]))
         I_bkg = np.zeros((np.sum(sampling_rates_bkg), *self.dshapes[0]))
         # print(L_bkg.shape)
@@ -330,16 +329,14 @@ class SegRatioBasisLoader(SegBasisLoader):
             # print('   Background #', i, indices_bkg[i], sampling_rates_bkg[i], current_index)
             I_bkg[current_index:current_index + sampling_rates_bkg[i]], L_bkg[current_index:current_index +
                                                                                             sampling_rates_bkg[i]] \
-                = self._get_samples_by_index(data, lbl, indices_bkg[i], sampling_rates_bkg[i])
+                = self._get_samples_by_index(data, lbl, indices_bkg[i], sampling_rates_bkg[i], object_sampling=False)
             current_index = np.sum(sampling_rates_bkg[:i+1])
-
-        L_bkg = np.logical_not(L_bkg)
 
         if self.mode is self.MODES.TRAIN:
             I_bkg, L_bkg = self._augment_samples(I_bkg, L_bkg)
             I_obj, L_obj = self._augment_samples(I_obj, L_obj)
 
-        print('          image Shape: ', I_obj.shape, I_bkg.shape)
-        print('          Label Shape: ', L_obj.shape, L_bkg.shape)
+        print('          Image Samples Shape: ', I_obj.shape, I_bkg.shape)
+        print('          Label Samples Shape: ', L_obj.shape, L_bkg.shape)
 
         return [I_obj, L_obj], [I_bkg, L_bkg]

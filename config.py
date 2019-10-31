@@ -28,7 +28,7 @@ class ORGANS(Enum):
     LIVERANDTUMORS = 'liver+tumors'
 
 sampe_file_name_prefix = 'ct-volume-'
-label_file_name_prefix = 'liver-segmentation-'
+label_file_name_prefix = 'vessel-segmentation-'
 
 ##### Mode #####
 VERBOSE = True
@@ -49,8 +49,7 @@ else:
     batch_capacity_train = 400
     train_reader_instances = 1
 
-write_step = 2500
-summary_step = 150
+summary_steps_per_epoch = 5
 
 ##### Testing #####
 do_connected_component_analysis = True
@@ -61,7 +60,7 @@ summaries_per_case = 10
 organ = ORGANS.LIVER
 num_channels = 3
 num_slices = 1
-num_classes_seg = 2
+num_classes_seg = 3
 num_files = -1
 train_dim = 256
 train_input_shape = [train_dim, train_dim, num_channels]
@@ -121,8 +120,8 @@ max_weight = 1.2
 tissue_threshold = -0.9
 
 # Preprocessing
-norm_min_v = -200
-norm_max_v = 250
+norm_min_v = -150
+norm_max_v = 350
 norm_eps = 1e-5
 
 ##### Network #####

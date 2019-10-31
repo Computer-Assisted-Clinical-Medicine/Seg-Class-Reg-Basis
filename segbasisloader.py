@@ -139,7 +139,7 @@ class SegBasisLoader(DataLoader):
                 images, _ = self._get_samples_by_index(data, lbl, indices[i], samples_per_slice=1)
                 I[i] = images
 
-            print('   image Samples Shape: ', I.shape)
+            print('   Image Samples Shape: ', I.shape)
             return [I, None]
 
         else:
@@ -157,7 +157,7 @@ class SegBasisLoader(DataLoader):
             if self.mode is self.MODES.TRAIN:
                 I, L = self._augment_samples(I, L)
 
-            print('   image Samples Shape: ', I.shape)
+            print('   Image Samples Shape: ', I.shape)
             print('   Label Samples Shape: ', L.shape)
 
             return [I, L]
@@ -185,7 +185,7 @@ class SegBasisLoader(DataLoader):
         else:
             return np.random.permutation(indices), np.ones(indices.size, dtype=np.int) * cfg.samples_per_slice_uni
 
-    def _get_samples_by_index(self, data, label, index, samples_per_slice=cfg.samples_per_slice_uni):
+    def _get_samples_by_index(self, data, label, index, samples_per_slice=cfg.samples_per_slice_uni, object_sampling=True):
         '''!
         Get samples from index slice.
 
@@ -211,7 +211,17 @@ class SegBasisLoader(DataLoader):
         slice_is_empty = False
 
         if self.mode is not self.MODES.APPLY:
-            n_z = np.nonzero(label[:, :, index])
+            if object_sampling:
+                if cfg.normalizing_method == cfg.NORMALIZING.WINDOW:
+                    n_z = np.nonzero(label[:, :, index] * np.greater(data[:, :, index], -1))  # do not use air
+                else:
+                    n_z = np.nonzero(label[:, :, index])
+            else:
+                if cfg.normalizing_method == cfg.NORMALIZING.WINDOW:
+                    n_z = np.where(
+                        label[:, :, index] * np.greater(data[:, :, index], -1) == 0)  # do not use air
+                else:
+                    n_z = np.where(label[:, :, index] == 0)
 
             if cfg.random_sampling_mode == cfg.SAMPLINGMODES.CONSTRAINED_LABEL:
                 # if there are no lables on the slice, sample uniformly for CONSTRAINED_LABEL
@@ -221,12 +231,12 @@ class SegBasisLoader(DataLoader):
                 slice_is_empty = True
                 if cfg.random_sampling_mode == cfg.SAMPLINGMODES.CONSTRAINED_MUSTD:
                     # if there are no lables on the slice, sample in the body for CONSTRAINED_MUSTD
-                    print('This is where it brakes.')
+                    # print('This is where it brakes.')
                     if cfg.normalizing_method == cfg.NORMALIZING.WINDOW:
-                        n_z = np.nonzero(np.greater(data, cfg.norm_min_v))
+                        n_z = np.nonzero(np.greater(data[:, :, index], cfg.norm_min_v))
                     elif cfg.normalizing_method == cfg.NORMALIZING.MEAN_STD:
-                        n_z = np.nonzero(np.greater(data, 0))
-                        print(n_z)
+                        n_z = np.nonzero(np.greater(data[:, :, index], 0))
+                        # print(n_z)
 
             if cfg.random_sampling_mode == cfg.SAMPLINGMODES.CONSTRAINED_MUSTD:
                 if n_z[0].size > 0:
@@ -343,16 +353,22 @@ class SegBasisLoader(DataLoader):
 
         @return two-channel one-hot label as numpy array
         '''
-        # To Do: make this multi channel capeable
         # add empty last dimension
         if label.shape[-1] > 1:
             label = np.expand_dims(label, axis=-1)
-        # Todo: add empty first dimension if single sample
-        # if label.ndim < 3:
-        #     label = np.expand_dims(label, axis=0)
 
-        invert_label = 1 - label  # complementary binary mask
-        return np.concatenate([invert_label, label], axis=-1)  # fuse
+        if cfg.num_classes_seg == 2:
+            # Todo: add empty first dimension if single sample
+            # if label.ndim < 3:
+            #     label = np.expand_dims(label, axis=0)
+
+            invert_label = 1 - label  # complementary binary mask
+            return np.concatenate([invert_label, label], axis=-1)  # fuse
+        else:
+            label_list = []
+            for i in range(cfg.num_classes_seg):
+                label_list.append(label == i)
+            return np.concatenate(label_list, axis=-1)  # fuse
 
     def _augment_samples(self, I, L):
         '''!
@@ -379,7 +395,11 @@ class SegBasisLoader(DataLoader):
                 if cfg.do_variate_intensities:
                         variation = (np.random.random_sample() * 2.0 * cfg.intensity_variation_interval) - cfg.intensity_variation_interval
                         I[sample] = I[sample] + variation
-                        # ToDo: Check for values outside of interval
+                        if cfg.normalizing_method == cfg.NORMALIZING.WINDOW:
+                            flags = I[sample] < -1
+                            I[sample][flags] = -1
+                            flags = I[sample] > 1
+                            I[sample][flags] = 1
         return I, L
 
     def _resample(self, data, label):

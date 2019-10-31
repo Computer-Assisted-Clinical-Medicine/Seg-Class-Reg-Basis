@@ -40,13 +40,16 @@ class UNet(SegBasisNet):
                  regularize, do_batch_normalization, do_bias,
                  activation, upscale, downscale, res_connect, skip_connect, cross_hair)
 
+    def __str__(self):
+        return 'UNet'
+
     def _build_model(self):
         '''!
         Builds U-Net
 
         '''
         ## Name of the network
-        self.options['name'] = 'UNet'
+        self.options['name'] = self.__str__()
         self.options['n_filters_per_block'] = [*self.options['n_filters'], *self.options['n_filters'][-2::-1]]
         self.options['n_blocks'] = len(self.options['n_filters_per_block'])
 
@@ -133,7 +136,7 @@ class UNet(SegBasisNet):
                     print(' -------------------------------------')
 
         # Add final 1x1 convolutional layer to compute logits
-        with tf.name_scope('10_last_layer'):
+        with tf.name_scope('9_last_layer' + str(cfg.num_classes_seg)):
             self.outputs['probabilities'] = layer.last(x, self.outputs, np.ones(self.options['rank'], dtype=np.int32), self.options['out_channels'], self.options['strides'],
                                                 self.options['padding'], self.options['dilation_rate'],
                                                 self._select_final_activation(), False, self.options['regularizer'], self.options['use_cross_hair'], do_summary=True)
@@ -272,7 +275,7 @@ class ResNet(SegBasisNet):
                     print(' -------------------------------------')
 
         # Add final 1x1 convolutional layer to compute logits
-        with tf.name_scope('10_last_layer'):
+        with tf.name_scope('9_last_layer'+ str(cfg.num_classes_seg)):
             self.outputs['probabilities'] = layer.last(x, self.outputs, np.ones(self.options['rank'], dtype=np.int32),
                                                        self.options['out_channels'], self.options['strides'],
                                                        self.options['padding'], self.options['dilation_rate'],
@@ -318,13 +321,16 @@ class FCN(SegBasisNet):
                  regularize, do_batch_normalization, do_bias,
                  activation, upscale, downscale, res_connect, skip_connect, cross_hair)
 
+    def __str__(self):
+        return 'FCN'
+
     def _build_model(self):
         '''!
         Builds FCN
 
         '''
         ## Name of the network
-        self.options['name'] = 'FCN'
+        self.options['name'] = self.__str__()
 
         if cfg.VERBOSE:
             self._print_init()
@@ -347,22 +353,19 @@ class FCN(SegBasisNet):
                     print(' -------------------------------------')
 
         # Add final 1x1 convolutional layer to compute logits
-        with tf.name_scope('10_last_layer'):
+        with tf.name_scope('4_last_layer'+ str(cfg.num_classes_seg)):
             self.outputs['probabilities'] = layer.last(x, self.outputs,
                                                        np.ones(self.options['rank'], dtype=np.int32),
                                                        self.options['out_channels'],
                                                        self.options['strides'],
                                                        self.options['padding'],
                                                        self.options['dilation_rate'],
-                                                       'sigmoid', False,
+                                                       self._select_final_activation(), False,
                                                        self.options['regularizer'],
                                                        self.options['use_cross_hair'], do_summary=True)
             if cfg.VERBOSE:
                 print(' Probabilities has shape ', self.outputs['probabilities'].shape)
                 print(' -------------------------------------')
-
-        # Add final 1x1 convolutional layer to compute logits
-        # To Do: softmax activation
 
         return tf.keras.Model(inputs=self.inputs['x'], outputs=self.outputs['probabilities'])
 
@@ -400,13 +403,16 @@ class VNet(SegBasisNet):
                  regularize, do_batch_normalization, do_bias,
                  activation, upscale, downscale, res_connect, skip_connect, cross_hair)
 
+    def __str__(self):
+        return 'VNet'
+
     def _build_model(self):
         '''!
         Builds V-Net
 
         '''
         ## Name of the network
-        self.options['name'] = 'VNet'
+        self.options['name'] = self.__str__()
         self.options['n_filters_per_block'] = [*self.options['n_filters'], *self.options['n_filters'][-2::-1]]
         self.options['n_blocks'] = len(self.options['n_filters_per_block'])
 
@@ -531,7 +537,7 @@ class VNet(SegBasisNet):
                     print(' -------------------------------------')
 
         # Add final 1x1 convolutional layer to compute logits
-        with tf.name_scope('10_last_layer'):
+        with tf.name_scope('9_last_layer'+ str(cfg.num_classes_seg)):
             self.outputs['probabilities'] = layer.last(x, self.outputs, np.ones(self.options['rank'], dtype=np.int32), self.options['out_channels'], self.options['strides'],
                                                 self.options['padding'], self.options['dilation_rate'],
                                                 self._select_final_activation(), False, self.options['regularizer'], self.options['use_cross_hair'], do_summary=True)

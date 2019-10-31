@@ -2,7 +2,7 @@ import tensorflow as tf
 import numpy as np
 from time import time
 from . import config as cfg
-from LiverSeg.SegmentationNetworkBasis.NetworkBasis import image
+from .NetworkBasis import image
 from .NetworkBasis.network import Network
 from .NetworkBasis import loss
 from .NetworkBasis import metric
@@ -78,8 +78,8 @@ class SegBasisNet(Network):
             predictions = np.concatenate(predictions)
             self._write_inference_data(predictions, filename, apply_path, version)
 
-    def _run_train(self, logs_path, folder_name, training_dataset, validation_dataset, op_parallelism_threads=-1,
-                   summary_step=10, write_step=1500, l_r=0.001, optimizer='Adam'):
+    def _run_train(self, logs_path, folder_name, training_dataset, validation_dataset,
+                   summary_steps_per_epoch, l_r=0.001, optimizer='Adam'):
         '''!
         Sets up and runs training session
         @param  logs_path               : str; path to logs
@@ -89,13 +89,13 @@ class SegBasisNet(Network):
         @param  training_iterator       : tf.iterator
         @param  validation_iterator     : tf.iterator
         @param  summary_step            : int
-        @param  write_step              : int
         @param  l_r                     : float; Learning Rate for the optimizer
         @param  optimizer               : {'Adam', 'Momentum', 'Adadelta'}; Optimizer.
         '''
 
         iter_per_epoch = cfg.samples_per_volume * cfg.num_files // cfg.batch_size
         print('Iter per Epoch', iter_per_epoch)
+        summary_step = 20 #iter_per_epoch // summary_steps_per_epoch
 
         if self.options['do_finetune']:
             folder_name = folder_name + '-f'
@@ -210,94 +210,65 @@ class SegBasisNet(Network):
 
             with tf.name_scope('01_Input_and_Predictions'):
                 if self.options['rank'] == 2:
-                    if self.options['in_channels'] > 1:
-                        if self.options['in_channels'] > 2:
-                            tf.summary.image('train_img', tf.cast((tf.gather(x, [0, cfg.batch_size - 1])
-                                                                   [:, :, :, ::self.options['in_channels'] // 2] + 1) * 255 / 2,
-                                                                  tf.uint8), global_step, max_image_output)
-                        else:
-                            tf.summary.image('train_img_c1', tf.expand_dims(
-                                tf.cast((tf.gather(x[:, :, :, 0], [0, cfg.batch_size - 1]) + 1) * 255 / 2,
-                                        tf.uint8), axis=-1), global_step, max_image_output)
-                            tf.summary.image('train_img_c2',
-                                             tf.expand_dims(
-                                                 tf.cast(
-                                                     (tf.gather(x[:, :, :, 1],
-                                                                [0, cfg.batch_size - 1]) + 1) * 255 / 2,
-                                                     tf.uint8), axis=-1), global_step, max_image_output)
-                    else:
+                    if self.options['in_channels'] == 1:
                         tf.summary.image('train_img', tf.cast((tf.gather(x, [0, cfg.batch_size - 1]) + 1) * 255 / 2,
-                            tf.uint8), global_step, max_image_output)
+                                                              tf.uint8), global_step, max_image_output)
+                    else:
+                        for c in range(self.options['in_channels']):
+                            tf.summary.image('train_img_c'+str(c), tf.expand_dims(tf.cast(
+                                (tf.gather(x[:, :, :, c], [0, cfg.batch_size - 1]) + 1) * 255 / 2,
+                                tf.uint8), axis=-1), global_step, max_image_output)
 
-                    if self.options['out_channels'] == 2:
-                        tf.summary.image('train_seg_lbl', tf.expand_dims(
-                            tf.cast(tf.gather(y[:, :, :, 1], [0, cfg.batch_size - 1]) * 255, tf.uint8), axis=-1), global_step, max_image_output)
-                        tf.summary.image('train_seg_prob', tf.expand_dims(
-                            tf.cast(tf.gather(probabilities[:, :, :, 1], [0, cfg.batch_size - 1]) * 255, tf.uint8), axis=-1), global_step, max_image_output)
-                        tf.summary.image('train_seg_pred', tf.expand_dims(
-                            tf.cast(tf.gather(predictions, [0, cfg.batch_size - 1]) * 255, tf.uint8),
-                            axis=-1), global_step, max_image_output)
+                    tf.summary.image('train_seg_lbl', tf.expand_dims(tf.cast(tf.argmax(
+                        tf.gather(y, [0, cfg.batch_size - 1])
+                        , -1) * (255 // (cfg.num_classes_seg - 1)), tf.uint8), axis=-1), global_step, max_image_output)
+                    tf.summary.image('train_seg_pred', tf.expand_dims(tf.cast(tf.argmax(
+                        tf.gather(predictions, [0, cfg.batch_size - 1])
+                        , -1) * (255 // (cfg.num_classes_seg - 1)), tf.uint8), axis=-1), global_step, max_image_output)
+
                 else:
                     if self.options['in_channels'] == 1:
-                        tf.summary.image('train_img', tf.cast((tf.gather(x[:, self.inputs['x'].shape[1] // 2, :, :], [0, cfg.batch_size - 1]) + 1) * 255 / 2,
-                                                              tf.uint8), global_step, max_image_output)
-                    if self.options['out_channels'] == 2:
-                        tf.summary.image('train_seg_lbl', tf.expand_dims(
-                            tf.cast(tf.gather(tf.squeeze(y[:, self.inputs['x'].shape[1] // 2, :, :, 1]), [0, cfg.batch_size - 1]) * 255, tf.uint8), axis=-1),
-                                         global_step, max_image_output)
-                        tf.summary.image('train_seg_prob', tf.expand_dims(
-                            tf.cast(tf.gather(probabilities[:, self.inputs['x'].shape[1] // 2, :, :, 1], [0, cfg.batch_size - 1]) * 255, tf.uint8),
-                            axis=-1), global_step, max_image_output)
-                        tf.summary.image('train_seg_pred', tf.expand_dims(
-                            tf.cast(tf.gather(predictions[:, self.inputs['x'].shape[1] // 2, :], [0, cfg.batch_size - 1]) * 255, tf.uint8),
-                            axis=-1), global_step, max_image_output)
+                        tf.summary.image('train_img', tf.cast(
+                            (tf.gather(x[:, self.inputs['x'].shape[1] // 2, :, :], [0, cfg.batch_size - 1]) + 1) * 255 / 2,
+                            tf.uint8), global_step, max_image_output)
+                    else:
+                        pass
 
+                    tf.summary.image('train_seg_lbl', tf.expand_dims(tf.cast(tf.argmax(
+                        tf.gather(y[:, self.inputs['x'].shape[1] // 2], [0, cfg.batch_size - 1]),
+                        -1) * (255 // (cfg.num_classes_seg - 1)), tf.uint8), axis=-1), global_step, max_image_output)
 
-                #
-                # else:
-                #     tf.summary.scalar('OneHotMax-Img', tf.reduce_max(self.inputs['y']),
-                #                       collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-                #     help_img = self.inputs['y'][:, :, :, 1]
-                #     for i in range(2, self.options['out_channels']):
-                #         help_img = tf.expand_dims(tf.add(help_img, tf.multiply(self.inputs['y'][:, :, :, i], i)), -1)
-                #     tf.summary.scalar('IntMax-Img', tf.reduce_max(help_img),
-                #                       collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-                #     tf.summary.image('train_seg_lbl',
-                #                      tf.cast(tf.gather(help_img, [0, cfg.batch_size - 1]) * (255 // (self.n_classes - 1)),
-                #                              tf.uint8), 2,
-                #                      collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-                #     tf.summary.image('train_seg_pred', tf.expand_dims(
-                #         tf.cast(
-                #             tf.gather(self.outputs['probabilitiess'], [0, cfg.batch_size - 1]) * (255 // (self.n_classes - 1)),
-                #             tf.uint8), axis=-1), 2, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-                #     tf.summary.image('train_seg_log_object_0',
-                #                      tf.expand_dims(tf.gather(self.outputs['logits'][:, :, :, 1], [0, cfg.batch_size - 1]),
-                #                                     axis=-1),
-                #                      2, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-                #     tf.summary.image('train_seg_log_object_1',
-                #                      tf.expand_dims(tf.gather(self.outputs['logits'][:, :, :, 2], [0, cfg.batch_size - 1]),
-                #                                     axis=-1),
-                #                      2, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-                #     tf.summary.image('train_seg_prob_0', tf.expand_dims(
-                #         tf.cast(tf.gather(self.outputs['probabilities'][:, :, :, 1], [0, cfg.batch_size - 1]) * 255,
-                #                 tf.uint8), axis=-1),
-                #                      2, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-                #     tf.summary.image('train_seg_prob_1', tf.expand_dims(
-                #         tf.cast(tf.gather(self.outputs['probabilities'][:, :, :, 2], [0, cfg.batch_size - 1]) * 255,
-                #                 tf.uint8), axis=-1),
-                #                      2, collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
-                #
-                #     tf.summary.image('train_seg_log_background', tf.expand_dims(tf.gather(self.outputs['logits'][:, :, :, 0],
-                #                                                                       [0, cfg.batch_size - 1]), axis=-1), 2,
-                #                  collections=[tf.GraphKeys.SUMMARIES, 'vald_summaries'])
+                    tf.summary.image('train_seg_pred', tf.expand_dims(tf.cast(
+                            tf.gather(predictions[:, self.inputs['x'].shape[1] // 2], [0, cfg.batch_size - 1])
+                            * (255 // (cfg.num_classes_seg - 1)), tf.uint8), axis=-1), global_step, max_image_output)
 
-            with tf.name_scope('02_Logits_and_Probabilities'):
-                pass
+            with tf.name_scope('02_Probabilities'):
+                if self.options['rank'] == 2:
+                    for c in range(cfg.num_classes_seg):
+                        tf.summary.image('train_seg_prob_' + str(c), tf.expand_dims(tf.cast(
+                            tf.gather(probabilities[:, :, :, c], [0, cfg.batch_size - 1])
+                            * 255, tf.uint8), axis=-1), global_step, max_image_output)
+                else:
+                    for c in range(cfg.num_classes_seg):
+                        tf.summary.image('train_seg_prob_class' + str(c), tf.expand_dims(tf.cast(
+                            tf.gather(probabilities[:, self.inputs['x'].shape[1] // 2, :, :, c],
+                                      [0, cfg.batch_size - 1])
+                            * 255, tf.uint8), axis=-1), global_step, max_image_output)
+
+            with tf.name_scope('03_Class_Labels'):
+                if self.options['rank'] == 2:
+                    pass
+                else:
+                    for c in range(cfg.num_classes_seg):
+                        tf.summary.image('train_seg_lbl' + str(c), tf.expand_dims(tf.cast(
+                            tf.gather(y[:, self.inputs['x'].shape[1] // 2, :, :, c], [0, cfg.batch_size - 1])
+                            * 255, tf.uint8), axis=-1), global_step, max_image_output)
+
 
     def _select_final_activation(self):
         # http://dataaspirant.com/2017/03/07/difference-between-softmax-function-and-sigmoid-function/
         if self.options['out_channels'] > 2 or self.options['loss'] in ['DICE', 'TVE', 'GDL']:
-            # Dice GDL and Tversky require SoftMax
+            # Dice, GDL and Tversky require SoftMax
             return 'softmax'
         elif self.options['out_channels'] == 2 and self.options['loss'] in ['CEL', 'WCEL']:
             return 'sigmoid'
