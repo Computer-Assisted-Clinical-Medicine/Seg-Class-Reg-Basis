@@ -13,11 +13,15 @@ class SegBasisNet(Network):
 
     def _set_up_inputs(self):
         if self.options['is_training']:
-            self.inputs['x'] = tf.keras.Input(shape=cfg.train_input_shape, batch_size=cfg.batch_size, dtype=cfg.dtype)
+            self.inputs['x'] = tf.keras.Input(shape=cfg.train_input_shape, batch_size=cfg.batch_size_train, dtype=cfg.dtype)
         else:
-            self.inputs['x'] = tf.keras.Input(shape=cfg.cfg.test_data_shape, batch_size=cfg.batch_size, dtype=cfg.dtype)
+            self.inputs['x'] = tf.keras.Input(shape=cfg.test_data_shape, batch_size=cfg.batch_size_test, dtype=cfg.dtype)
 
         self.options['out_channels'] = cfg.num_classes_seg
+
+    @staticmethod
+    def _get_test_size():
+        return cfg.test_data_shape
 
     def _get_loss(self):
         '''!
@@ -34,6 +38,9 @@ class SegBasisNet(Network):
 
         elif self.options['loss'] == 'GDL':
             return loss.generalized_dice_loss
+
+        elif self.options['loss'] == 'WDL':
+            return loss.weighted_dice_loss
 
         elif self.options['loss'] == 'CEL':
             if self.options['out_channels'] > 2:
@@ -66,7 +73,7 @@ class SegBasisNet(Network):
         start_time = time()
 
         for x in application_dataset:
-            prediction = self.model(x)
+            prediction = self.model(x, training=False)
             predictions.append(prediction)
 
         end_time = time()
@@ -93,7 +100,7 @@ class SegBasisNet(Network):
         @param  optimizer               : {'Adam', 'Momentum', 'Adadelta'}; Optimizer.
         '''
 
-        iter_per_epoch = cfg.samples_per_volume * cfg.num_files // cfg.batch_size
+        iter_per_epoch = cfg.samples_per_volume * cfg.num_files // cfg.batch_size_train
         print('Iter per Epoch', iter_per_epoch)
         summary_step = 20 #iter_per_epoch // summary_steps_per_epoch
 
@@ -104,11 +111,15 @@ class SegBasisNet(Network):
 
         train_path = os.path.join(logs_path, folder_name, 'model')
         print(train_path)
+        if not os.path.exists(train_path):
+            os.makedirs(train_path)
 
         # save the keras model
-        # tf.saved_model.save(self.model, train_path)
+        self.model.save(os.path.join(train_path, 'keras_model.h5'))
+        # save('path_to_my_model')
+        # tf.keras.models.save_model(self.model, , save_format="tf")
         # self.model.save(train_path, save_format="tf")
-        tf.keras.experimental.export_saved_model(self.model, train_path)
+        # tf.keras.experimental.export_saved_model(self.model, train_path)
 
         if not hasattr(self, 'optimizer'):
             self.optimizer = self._get_optimizer(optimizer, l_r, global_step)
@@ -116,7 +127,7 @@ class SegBasisNet(Network):
         # save checkpoints in the variables folder of the keras model
         checkpoint = tf.train.Checkpoint(optimizer=self.optimizer, model=self.model)
         checkpoint_manager = tf.train.CheckpointManager(
-            checkpoint, directory=os.path.join(train_path, "variables"), max_to_keep=3, checkpoint_name=folder_name)
+            checkpoint, directory=train_path, max_to_keep=3, checkpoint_name=folder_name)
 
         train_writer = tf.summary.create_file_writer(os.path.join(logs_path, folder_name, 'train'))
         with train_writer.as_default():
@@ -169,7 +180,7 @@ class SegBasisNet(Network):
         epoch_accuracy_avg = tf.keras.metrics.Mean()
 
         for x_v, y_v in validation_dataset:
-            prediction = self.model(x_v)
+            prediction = self.model(x_v, training=False)
             if self.options['regularize'][0]:
                 self.outputs['reg'] = tf.add_n(self.model.losses)
                 objective_validation = self.outputs['loss'](prediction, y_v) + self.outputs['reg']
@@ -211,48 +222,48 @@ class SegBasisNet(Network):
             with tf.name_scope('01_Input_and_Predictions'):
                 if self.options['rank'] == 2:
                     if self.options['in_channels'] == 1:
-                        tf.summary.image('train_img', tf.cast((tf.gather(x, [0, cfg.batch_size - 1]) + 1) * 255 / 2,
+                        tf.summary.image('train_img', tf.cast((tf.gather(x, [0, cfg.batch_size_train - 1]) + 1) * 255 / 2,
                                                               tf.uint8), global_step, max_image_output)
                     else:
                         for c in range(self.options['in_channels']):
                             tf.summary.image('train_img_c'+str(c), tf.expand_dims(tf.cast(
-                                (tf.gather(x[:, :, :, c], [0, cfg.batch_size - 1]) + 1) * 255 / 2,
+                                (tf.gather(x[:, :, :, c], [0, cfg.batch_size_train - 1]) + 1) * 255 / 2,
                                 tf.uint8), axis=-1), global_step, max_image_output)
 
                     tf.summary.image('train_seg_lbl', tf.expand_dims(tf.cast(tf.argmax(
-                        tf.gather(y, [0, cfg.batch_size - 1])
+                        tf.gather(y, [0, cfg.batch_size_train - 1])
                         , -1) * (255 // (cfg.num_classes_seg - 1)), tf.uint8), axis=-1), global_step, max_image_output)
-                    tf.summary.image('train_seg_pred', tf.expand_dims(tf.cast(tf.argmax(
-                        tf.gather(predictions, [0, cfg.batch_size - 1])
-                        , -1) * (255 // (cfg.num_classes_seg - 1)), tf.uint8), axis=-1), global_step, max_image_output)
+                    tf.summary.image('train_seg_pred', tf.expand_dims(tf.cast(
+                        tf.gather(predictions, [0, cfg.batch_size_train - 1])
+                        * (255 // (cfg.num_classes_seg - 1)), tf.uint8), axis=-1), global_step, max_image_output)
 
                 else:
                     if self.options['in_channels'] == 1:
                         tf.summary.image('train_img', tf.cast(
-                            (tf.gather(x[:, self.inputs['x'].shape[1] // 2, :, :], [0, cfg.batch_size - 1]) + 1) * 255 / 2,
+                            (tf.gather(x[:, self.inputs['x'].shape[1] // 2, :, :], [0, cfg.batch_size_train - 1]) + 1) * 255 / 2,
                             tf.uint8), global_step, max_image_output)
                     else:
                         pass
 
                     tf.summary.image('train_seg_lbl', tf.expand_dims(tf.cast(tf.argmax(
-                        tf.gather(y[:, self.inputs['x'].shape[1] // 2], [0, cfg.batch_size - 1]),
+                        tf.gather(y[:, self.inputs['x'].shape[1] // 2], [0, cfg.batch_size_train - 1]),
                         -1) * (255 // (cfg.num_classes_seg - 1)), tf.uint8), axis=-1), global_step, max_image_output)
 
                     tf.summary.image('train_seg_pred', tf.expand_dims(tf.cast(
-                            tf.gather(predictions[:, self.inputs['x'].shape[1] // 2], [0, cfg.batch_size - 1])
+                            tf.gather(predictions[:, self.inputs['x'].shape[1] // 2], [0, cfg.batch_size_train - 1])
                             * (255 // (cfg.num_classes_seg - 1)), tf.uint8), axis=-1), global_step, max_image_output)
 
             with tf.name_scope('02_Probabilities'):
                 if self.options['rank'] == 2:
                     for c in range(cfg.num_classes_seg):
                         tf.summary.image('train_seg_prob_' + str(c), tf.expand_dims(tf.cast(
-                            tf.gather(probabilities[:, :, :, c], [0, cfg.batch_size - 1])
+                            tf.gather(probabilities[:, :, :, c], [0, cfg.batch_size_train - 1])
                             * 255, tf.uint8), axis=-1), global_step, max_image_output)
                 else:
                     for c in range(cfg.num_classes_seg):
                         tf.summary.image('train_seg_prob_class' + str(c), tf.expand_dims(tf.cast(
                             tf.gather(probabilities[:, self.inputs['x'].shape[1] // 2, :, :, c],
-                                      [0, cfg.batch_size - 1])
+                                      [0, cfg.batch_size_train - 1])
                             * 255, tf.uint8), axis=-1), global_step, max_image_output)
 
             with tf.name_scope('03_Class_Labels'):
@@ -261,7 +272,7 @@ class SegBasisNet(Network):
                 else:
                     for c in range(cfg.num_classes_seg):
                         tf.summary.image('train_seg_lbl' + str(c), tf.expand_dims(tf.cast(
-                            tf.gather(y[:, self.inputs['x'].shape[1] // 2, :, :, c], [0, cfg.batch_size - 1])
+                            tf.gather(y[:, self.inputs['x'].shape[1] // 2, :, :, c], [0, cfg.batch_size_train - 1])
                             * 255, tf.uint8), axis=-1), global_step, max_image_output)
 
 

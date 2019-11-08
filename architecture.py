@@ -31,7 +31,7 @@ class UNet(SegBasisNet):
     '''
 
     def __init__(self, loss, is_training=True, do_finetune=False, model_path="",
-                 n_filters=[64, 128, 256, 512, 1024], kernel_dims=3, n_convolutions=[2, 3, 2], drop_out=[False, 0.2],
+                 n_filters=[32, 64, 128, 256, 512], kernel_dims=3, n_convolutions=[2, 3, 2], drop_out=[False, 0.2],
                  regularize=[True, 'L2', 0.00001], do_batch_normalization=False, do_bias=True,
                  activation='relu', upscale='TRANS_CONV', downscale='MAX_POOL', res_connect=False, skip_connect=True,
                  cross_hair=False):
@@ -40,7 +40,8 @@ class UNet(SegBasisNet):
                  regularize, do_batch_normalization, do_bias,
                  activation, upscale, downscale, res_connect, skip_connect, cross_hair)
 
-    def __str__(self):
+    @staticmethod
+    def get_name():
         return 'UNet'
 
     def _build_model(self):
@@ -49,7 +50,7 @@ class UNet(SegBasisNet):
 
         '''
         ## Name of the network
-        self.options['name'] = self.__str__()
+        self.options['name'] = self.get_name()
         self.options['n_filters_per_block'] = [*self.options['n_filters'], *self.options['n_filters'][-2::-1]]
         self.options['n_blocks'] = len(self.options['n_filters_per_block'])
 
@@ -315,13 +316,14 @@ class FCN(SegBasisNet):
                  n_filters=[5, 10, 20, 50, 1], kernel_dims=[3, 5, 5, 3], n_convolutions=1, drop_out=[False, 0.2],
                  regularize=[True, 'L2', 0.00001], do_batch_normalization=False, do_bias=True,
                  activation='relu', upscale=None, downscale=None, res_connect=False, skip_connect=False,
-                 cross_hair=False):
+                 cross_hair=True):
             super(FCN, self).__init__(loss, is_training, do_finetune, model_path,
                  n_filters, kernel_dims, n_convolutions, drop_out,
                  regularize, do_batch_normalization, do_bias,
                  activation, upscale, downscale, res_connect, skip_connect, cross_hair)
 
-    def __str__(self):
+    @staticmethod
+    def get_name():
         return 'FCN'
 
     def _build_model(self):
@@ -330,7 +332,7 @@ class FCN(SegBasisNet):
 
         '''
         ## Name of the network
-        self.options['name'] = self.__str__()
+        self.options['name'] = self.get_name()
 
         if cfg.VERBOSE:
             self._print_init()
@@ -403,7 +405,8 @@ class VNet(SegBasisNet):
                  regularize, do_batch_normalization, do_bias,
                  activation, upscale, downscale, res_connect, skip_connect, cross_hair)
 
-    def __str__(self):
+    @staticmethod
+    def get_name():
         return 'VNet'
 
     def _build_model(self):
@@ -412,7 +415,7 @@ class VNet(SegBasisNet):
 
         '''
         ## Name of the network
-        self.options['name'] = self.__str__()
+        self.options['name'] = self.get_name()
         self.options['n_filters_per_block'] = [*self.options['n_filters'], *self.options['n_filters'][-2::-1]]
         self.options['n_blocks'] = len(self.options['n_filters_per_block'])
 

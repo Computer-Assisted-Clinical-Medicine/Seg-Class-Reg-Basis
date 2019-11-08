@@ -45,11 +45,13 @@ class SegBasisLoader(DataLoader):
         elif self.data_rank == 4:
             print('    Rank of input shape is', self.data_rank, '. Loading 3D samples.')
             # In 3D this parameter describes the z extend of teh sample.
-            self.slice_shift = self.dshapes[0][0] // 2
-            print(self.slice_shift)
+            if self.mode is self.MODES.APPLY:
+                print("Slice shift will we be set dynamically.")
+            else:
+                self.slice_shift = self.dshapes[0][0] // 2
+                print(self.slice_shift)
         else:
             raise Exception('rank = \'{}\' is not supported'.format(self.data_rank))
-
 
     def _set_up_capacities(self):
         """!
@@ -133,7 +135,10 @@ class SegBasisLoader(DataLoader):
         indices, sampling_rates = self._select_indices(data, lbl)
 
         if self.mode is self.MODES.APPLY:
-            I = np.zeros((len(indices), *self.dshapes[0]))
+            if self.data_rank == 4:
+                I = np.zeros((1, self.slice_shift * 2, *self.dshapes[0][1:]))
+            else:
+                I = np.zeros((len(indices), *self.dshapes[0]))
 
             for i in range(len(indices)):
                 images, _ = self._get_samples_by_index(data, lbl, indices[i], samples_per_slice=1)
@@ -179,11 +184,15 @@ class SegBasisLoader(DataLoader):
         @return slice indices as numpy array
         '''
         s = lbl.shape[2]  # third dimension is z-axis
-        indices = np.arange(0 + self.slice_shift, s - self.slice_shift, 1)
-        if self.mode == self.MODES.APPLY:
-            return indices, np.ones(indices.size, dtype=np.int)
+        if self.data_rank == 4 and self.mode == self.MODES.APPLY:
+            self.slice_shift = s // 2
+            return [s // 2], np.ones(1, dtype=np.int)
         else:
-            return np.random.permutation(indices), np.ones(indices.size, dtype=np.int) * cfg.samples_per_slice_uni
+            indices = np.arange(0 + self.slice_shift, s - self.slice_shift, 1)
+            if self.mode == self.MODES.APPLY:
+                return indices, np.ones(indices.size, dtype=np.int)
+            else:
+                return np.random.permutation(indices), np.ones(indices.size, dtype=np.int) * cfg.samples_per_slice_uni
 
     def _get_samples_by_index(self, data, label, index, samples_per_slice=cfg.samples_per_slice_uni, object_sampling=True):
         '''!
@@ -259,7 +268,10 @@ class SegBasisLoader(DataLoader):
             min_y = bb_dim[1] // 2
             max_y = data_shape[1] - bb_dim[1] // 2
 
-        I = np.zeros((samples_per_slice, *self.dshapes[0]))
+        if self.mode is self.MODES.APPLY and self.data_rank == 4:
+            I = np.zeros((1, self.slice_shift * 2,  *self.dshapes[0][1:]))
+        else:
+            I = np.zeros((samples_per_slice, *self.dshapes[0]))
 
         if self.mode is not self.MODES.APPLY:
             L = np.zeros((samples_per_slice, *self.dshapes[1][:-1]))

@@ -36,7 +36,7 @@ VERBOSE = True
 if socket.gethostname() == 'ckm4cad':
     ONSERVER = True
     op_parallelism_threads = 6
-    batch_size = 16
+    batch_size_train = 16
     training_epochs = 20
     batch_capacity_train = 4000
     train_reader_instances = 2
@@ -44,7 +44,7 @@ if socket.gethostname() == 'ckm4cad':
 else:
     ONSERVER = False
     op_parallelism_threads = 3
-    batch_size = 4
+    batch_size_train = 4
     training_epochs = 1
     batch_capacity_train = 400
     train_reader_instances = 1
@@ -53,7 +53,7 @@ summary_steps_per_epoch = 5
 
 ##### Testing #####
 do_connected_component_analysis = True
-test_size = 1
+batch_size_test = 1
 summaries_per_case = 10
 
 ##### Data #####
@@ -86,7 +86,7 @@ in_between_slice_factor = 2
 min_n_samples = 10
 random_sampling_mode = SAMPLINGMODES.CONSTRAINED_LABEL
 percent_of_object_samples = 50  # %
-samples_per_volume = 200
+samples_per_volume = 40
 samples_per_slice_object = 2
 samples_per_slice_lesion = 4
 samples_per_slice_bkg = 1

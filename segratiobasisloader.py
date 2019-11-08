@@ -77,8 +77,8 @@ class SegRatioBasisLoader(SegBasisLoader):
                     ds_bkg = ds_bkg.shuffle(buffer_size=bkg_buffer_part, seed=self.seed)
 
                     # no smaller final batch
-                    obj_batch_part = cfg.batch_size * cfg.percent_of_object_samples // 100
-                    bkg_batch_part = cfg.batch_size - obj_batch_part
+                    obj_batch_part = cfg.batch_size_train * cfg.percent_of_object_samples // 100
+                    bkg_batch_part = cfg.batch_size_train - obj_batch_part
                     ds_obj = ds_obj.batch(batch_size=obj_batch_part, drop_remainder=True)
                     ds_bkg = ds_bkg.batch(batch_size=bkg_batch_part, drop_remainder=True)
 
