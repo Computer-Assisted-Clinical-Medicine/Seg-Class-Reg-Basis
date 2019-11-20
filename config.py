@@ -27,8 +27,9 @@ class ORGANS(Enum):
     TUMORS = 'tumors'
     LIVERANDTUMORS = 'liver+tumors'
 
-sampe_file_name_prefix = 'ct-volume-'
-label_file_name_prefix = 'vessel-segmentation-'
+prediction_file_name_prefix = 'ct-volume-'
+sample_file_name_prefix = 'ct-volume-'
+label_file_name_prefix = 'vessel-segmentation_revised-'
 
 ##### Mode #####
 VERBOSE = True
@@ -52,7 +53,7 @@ else:
 summary_steps_per_epoch = 5
 
 ##### Testing #####
-do_connected_component_analysis = True
+do_connected_component_analysis = False
 batch_size_test = 1
 summaries_per_case = 10
 
@@ -86,7 +87,7 @@ in_between_slice_factor = 2
 min_n_samples = 10
 random_sampling_mode = SAMPLINGMODES.CONSTRAINED_LABEL
 percent_of_object_samples = 50  # %
-samples_per_volume = 40
+samples_per_volume = 80
 samples_per_slice_object = 2
 samples_per_slice_lesion = 4
 samples_per_slice_bkg = 1

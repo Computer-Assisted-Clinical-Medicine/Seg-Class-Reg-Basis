@@ -37,19 +37,22 @@ class SegBasisLoader(DataLoader):
 
         # Automatically determin data dimension
         if self.data_rank == 3:
-            print('    Rank of input shape is', self.data_rank, '. Loading 2D samples.')
             # In 2D this parameter describes how many slices are additionally loaded.
             # They will be interpreted as channels.
             # Using in_between_slice_factor slices will be skipped.
             self.slice_shift = ((self.n_channels - 1) // 2) * cfg.in_between_slice_factor
+            print('    Rank of input shape is', self.data_rank, '. Loading 2D samples with SS=', self.slice_shift)
+
         elif self.data_rank == 4:
-            print('    Rank of input shape is', self.data_rank, '. Loading 3D samples.')
-            # In 3D this parameter describes the z extend of teh sample.
-            if self.mode is self.MODES.APPLY:
-                print("Slice shift will we be set dynamically.")
-            else:
-                self.slice_shift = self.dshapes[0][0] // 2
-                print(self.slice_shift)
+            # In 3D this parameter describes the z extend of the sample.
+            # if self.mode is self.MODES.APPLY:
+            #     print("Slice shift will we be set dynamically.")
+            # else:
+            #     self.slice_shift = self.dshapes[0][0] // 2
+            #     print(self.slice_shift)
+            self.slice_shift = self.dshapes[0][0] // 2
+            print('    Rank of input shape is', self.data_rank, '. Loading 3D samples with SS=', self.slice_shift)
+
         else:
             raise Exception('rank = \'{}\' is not supported'.format(self.data_rank))
 
@@ -104,7 +107,7 @@ class SegBasisLoader(DataLoader):
         folder, file_number = os.path.split(file_id)
         print('        Loading ', folder, file_number, ' (', self.mode, ')')
         # Use a SimpleITK reader to load the nii images and labels for training
-        data_img = sitk.ReadImage(os.path.join(folder, (cfg.sampe_file_name_prefix + file_number + '.nii')))
+        data_img = sitk.ReadImage(os.path.join(folder, (cfg.sample_file_name_prefix + file_number + '.nii')))
         label_img = sitk.ReadImage(os.path.join(folder, (cfg.label_file_name_prefix + file_number + '.nii')))
         data_img, label_img = self.adapt_to_task(data_img, label_img)
         data_img, label_img = self._resample(data_img, label_img)
@@ -115,6 +118,10 @@ class SegBasisLoader(DataLoader):
         data = np.moveaxis(data, 0, -1)
         lbl = np.moveaxis(lbl, 0, -1)
         self._check_images(data, lbl)
+        if self.mode is self.MODES.APPLY:
+            data = Image.pad_image(data, 'edge', self.slice_shift)
+            lbl = Image.pad_image(lbl, 'constant', self.slice_shift, cfg.label_background_value)
+        # self._check_images(data, lbl)
 
         return data, lbl
 
@@ -135,10 +142,7 @@ class SegBasisLoader(DataLoader):
         indices, sampling_rates = self._select_indices(data, lbl)
 
         if self.mode is self.MODES.APPLY:
-            if self.data_rank == 4:
-                I = np.zeros((1, self.slice_shift * 2, *self.dshapes[0][1:]))
-            else:
-                I = np.zeros((len(indices), *self.dshapes[0]))
+            I = np.zeros((len(indices), *self.dshapes[0]))
 
             for i in range(len(indices)):
                 images, _ = self._get_samples_by_index(data, lbl, indices[i], samples_per_slice=1)
@@ -185,8 +189,13 @@ class SegBasisLoader(DataLoader):
         '''
         s = lbl.shape[2]  # third dimension is z-axis
         if self.data_rank == 4 and self.mode == self.MODES.APPLY:
-            self.slice_shift = s // 2
-            return [s // 2], np.ones(1, dtype=np.int)
+            least_number_of_samples = np.int(np.ceil((s - 2 * self.slice_shift)/(self.slice_shift * 2)))
+            number_of_samples = 2 * least_number_of_samples - 1
+            center = s // 2
+            indices = np.arange(center - (number_of_samples // 2) * self.slice_shift,
+                                center + (number_of_samples // 2 + 1) * self.slice_shift, self.slice_shift, dtype=np.int)
+            print('M: ', number_of_samples, 'S: ', s, 'Indices: ', indices)
+            return indices, np.ones(indices.size, dtype=np.int)
         else:
             indices = np.arange(0 + self.slice_shift, s - self.slice_shift, 1)
             if self.mode == self.MODES.APPLY:
@@ -268,10 +277,8 @@ class SegBasisLoader(DataLoader):
             min_y = bb_dim[1] // 2
             max_y = data_shape[1] - bb_dim[1] // 2
 
-        if self.mode is self.MODES.APPLY and self.data_rank == 4:
-            I = np.zeros((1, self.slice_shift * 2,  *self.dshapes[0][1:]))
-        else:
-            I = np.zeros((samples_per_slice, *self.dshapes[0]))
+
+        I = np.zeros((samples_per_slice, *self.dshapes[0]))
 
         if self.mode is not self.MODES.APPLY:
             L = np.zeros((samples_per_slice, *self.dshapes[1][:-1]))

@@ -31,7 +31,7 @@ class UNet(SegBasisNet):
     '''
 
     def __init__(self, loss, is_training=True, do_finetune=False, model_path="",
-                 n_filters=[32, 64, 128, 256, 512], kernel_dims=3, n_convolutions=[2, 3, 2], drop_out=[False, 0.2],
+                 n_filters=[8, 16, 32, 64, 128], kernel_dims=3, n_convolutions=[2, 3, 2], drop_out=[False, 0.2],
                  regularize=[True, 'L2', 0.00001], do_batch_normalization=False, do_bias=True,
                  activation='relu', upscale='TRANS_CONV', downscale='MAX_POOL', res_connect=False, skip_connect=True,
                  cross_hair=False):
@@ -313,7 +313,7 @@ class FCN(SegBasisNet):
     '''
 
     def __init__(self, loss, is_training=True, do_finetune=False, model_path="",
-                 n_filters=[5, 10, 20, 50, 1], kernel_dims=[3, 5, 5, 3], n_convolutions=1, drop_out=[False, 0.2],
+                 n_filters=[4, 8, 16, 32, 1], kernel_dims=[3, 5, 5, 3], n_convolutions=1, drop_out=[False, 0.2],
                  regularize=[True, 'L2', 0.00001], do_batch_normalization=False, do_bias=True,
                  activation='relu', upscale=None, downscale=None, res_connect=False, skip_connect=False,
                  cross_hair=True):
@@ -396,7 +396,7 @@ class VNet(SegBasisNet):
     '''
 
     def __init__(self, loss, is_training=True, do_finetune=False, model_path="",
-                 n_filters=[16, 32, 64, 128, 256], kernel_dims=5, n_convolutions=[1, 2, 3, 2, 1], drop_out=[True, 0.2],
+                 n_filters=[8, 16, 32, 64, 128], kernel_dims=5, n_convolutions=[1, 2, 3, 2, 1], drop_out=[True, 0.2],
                  regularize=[True, 'L2', 0.00001], do_batch_normalization=True, do_bias=False,
                  activation='leaky_relu', upscale='TRANS_CONV', downscale='STRIDE', res_connect=True, skip_connect=True,
                  cross_hair=False):
@@ -429,7 +429,12 @@ class VNet(SegBasisNet):
             x = tf.keras.layers.BatchNormalization()(x)
 
         else:
-            raise NotImplementedError('more than one channel: not implemented')
+            x = layer.convolutional(x, np.ones(self.options['rank'], dtype=np.int32),
+                    self.options['n_filters_per_block'][0], self.options['strides'],
+                    self.options['padding'], self.options['dilation_rate'],
+                    self.options['activation'], False, True, [False, 0.0],
+                    self.options['regularizer'], self.options['use_cross_hair'],
+                    do_summary=True)
 
         # Encoding
         for block_index in range(0, 1):

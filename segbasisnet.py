@@ -12,11 +12,7 @@ import os
 class SegBasisNet(Network):
 
     def _set_up_inputs(self):
-        if self.options['is_training']:
-            self.inputs['x'] = tf.keras.Input(shape=cfg.train_input_shape, batch_size=cfg.batch_size_train, dtype=cfg.dtype)
-        else:
-            self.inputs['x'] = tf.keras.Input(shape=cfg.test_data_shape, batch_size=cfg.batch_size_test, dtype=cfg.dtype)
-
+        self.inputs['x'] = tf.keras.Input(shape=cfg.train_input_shape, batch_size=cfg.batch_size_train, dtype=cfg.dtype)
         self.options['out_channels'] = cfg.num_classes_seg
 
     @staticmethod
@@ -76,14 +72,47 @@ class SegBasisNet(Network):
             prediction = self.model(x, training=False)
             predictions.append(prediction)
 
+        if self.options['rank'] == 3:
+            m = len(predictions)
+            extend_z = cfg.test_label_shape[0] * np.int(np.ceil(m/2))
+
+            probability_map = np.zeros((extend_z, *cfg.test_label_shape[1:3], self.options['out_channels']))
+            # weight_map = np.zeros((extend_z, *cfg.test_label_shape[1:3], self.options['out_channels']))
+            basic_weights = np.ones(predictions[0].shape, dtype=np.float)
+            part_length = cfg.test_label_shape[0] // 2
+            weight_factors = np.linspace(0, 1, part_length)
+            weight_factors = np.concatenate([weight_factors, np.flip(weight_factors)])
+            for i in range(cfg.test_label_shape[0]):
+                basic_weights[:, i] = weight_factors[i]
+
+            for p in range(0, m):
+                if p == 0:
+                    # The first half of the first prediction gets weighted with 1, the rest with 0.5
+                    weights = basic_weights.copy()
+                    weights[:, :part_length] = 1.0
+                elif p == m-1:
+                    # The second half of the last prediction gets weighted with 1, the rest with 0.5
+                    weights = basic_weights.copy()
+                    weights[:, part_length:] = 1.0
+                else:
+                    weights = basic_weights.copy()
+
+                probability_map[p * part_length: p * part_length + cfg.test_label_shape[0]] += np.squeeze(np.multiply(weights, predictions[p]))
+                # weight_map[p * part_length: p * part_length + cfg.test_label_shape[0]] += np.squeeze(weights)
+
+                # import matplotlib.pyplot as plt
+                # plt.imshow(probability_map[:, :, 250, 2], interpolation='none', cmap='gray')
+                # plt.imshow(weight_map[:, :, 250, 2], interpolation='none', cmap='gray')
+                pass
+        else:
+            probability_map = np.concatenate(predictions)
+
         end_time = time()
 
         with tf.device('/cpu:0'):
             elapsed_time = end_time - start_time
             print('  Elapsed Time (Seconds): ', elapsed_time)
-
-            predictions = np.concatenate(predictions)
-            self._write_inference_data(predictions, filename, apply_path, version)
+            self._write_inference_data(probability_map, filename, apply_path, version)
 
     def _run_train(self, logs_path, folder_name, training_dataset, validation_dataset,
                    summary_steps_per_epoch, l_r=0.001, optimizer='Adam'):
@@ -102,7 +131,7 @@ class SegBasisNet(Network):
 
         iter_per_epoch = cfg.samples_per_volume * cfg.num_files // cfg.batch_size_train
         print('Iter per Epoch', iter_per_epoch)
-        summary_step = 20 #iter_per_epoch // summary_steps_per_epoch
+        summary_step = iter_per_epoch // summary_steps_per_epoch
 
         if self.options['do_finetune']:
             folder_name = folder_name + '-f'
@@ -214,7 +243,7 @@ class SegBasisNet(Network):
                 tf.summary.histogram('train_img', x, global_step, buckets=histo_buckets)
                 tf.summary.histogram('label_img', y, global_step, buckets=histo_buckets)
 
-            with tf.name_scope('03_Output_Statistics'):
+            with tf.name_scope('04_Output_Statistics'):
                 # tf.summary.histogram('logits', self.outputs['logits'], global_step, buckets=histo_buckets)
                 tf.summary.histogram('probabilities', probabilities, global_step, buckets=histo_buckets)
                 tf.summary.histogram('predictions', predictions, global_step, buckets=histo_buckets)
@@ -295,7 +324,7 @@ class SegBasisNet(Network):
 
         folder, file_number = os.path.split(file_name[0])
         # Use a SimpleITK reader to load the nii images and labels for training
-        data_img = sitk.ReadImage(os.path.join(folder, (cfg.sampe_file_name_prefix + file_number + '.nii')))
+        data_img = sitk.ReadImage(os.path.join(folder, (cfg.sample_file_name_prefix + file_number + '.nii')))
         data_info = image.get_data_info(data_img)
         if cfg.adapt_resolution:
             target_info = {}
@@ -309,9 +338,23 @@ class SegBasisNet(Network):
                                                       do_adapt_resolution=cfg.adapt_resolution,
                                                       label_background_value=cfg.label_background_value,
                                                       do_augment=False)
+
+            if len(predictions.shape) == 4:
+                z_original = resampled_img.GetSize()[-1]
+                padded_extend = z_original + cfg.test_label_shape[0]
+                least_number_of_samples = np.int(np.ceil(z_original / cfg.test_label_shape[0]))
+                number_of_samples = 2 * least_number_of_samples - 1
+                stiched_extend = np.ceil(number_of_samples/2) * cfg.test_label_shape[0]
+                center = np.int(z_original//2 + cfg.test_label_shape[0] // 2 - (padded_extend - stiched_extend) // 2)
+                if (z_original % 2) == 0:
+                    predictions = predictions[center - (z_original // 2) + 1:]
+                else:
+                    predictions = predictions[center - (z_original // 2):]
+
             data_info['res_spacing'] = cfg.target_spacing
             data_info['res_origin'] = resampled_img.GetOrigin()
             data_info['res_direction'] = cfg.target_direction
+
         pred_img = image.np_array_to_itk_image(predictions, data_info, cfg.label_background_value,
                                                cfg.adapt_resolution, cfg.target_type_label)
         if cfg.do_connected_component_analysis:
