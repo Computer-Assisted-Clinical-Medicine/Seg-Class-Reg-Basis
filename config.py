@@ -22,12 +22,13 @@ class NORMALIZING(Enum):
     PERCENT5 = 2
 
 
-class ORGANS(Enum):
-    LIVER = 'liver'
-    TUMORS = 'tumors'
-    LIVERANDTUMORS = 'liver+tumors'
 
-prediction_file_name_prefix = 'ct-volume-'
+train_csv = 'train.csv'
+fine_csv = 'fine.csv'
+vald_csv = 'vald.csv'
+test_csv = 'test.csv'
+
+prediction_file_name_prefix = 'prediction-'
 sample_file_name_prefix = 'ct-volume-'
 label_file_name_prefix = 'vessel-segmentation_revised-'
 
@@ -58,7 +59,6 @@ batch_size_test = 1
 summaries_per_case = 10
 
 ##### Data #####
-organ = ORGANS.LIVER
 num_channels = 3
 num_slices = 1
 num_classes_seg = 3

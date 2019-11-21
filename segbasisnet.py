@@ -145,22 +145,18 @@ class SegBasisNet(Network):
 
         # save the keras model
         self.model.save(os.path.join(train_path, 'keras_model.h5'))
-        # save('path_to_my_model')
-        # tf.keras.models.save_model(self.model, , save_format="tf")
-        # self.model.save(train_path, save_format="tf")
-        # tf.keras.experimental.export_saved_model(self.model, train_path)
 
         if not hasattr(self, 'optimizer'):
             self.optimizer = self._get_optimizer(optimizer, l_r, global_step)
 
-        # save checkpoints in the variables folder of the keras model
+        # save checkpoints
         checkpoint = tf.train.Checkpoint(optimizer=self.optimizer, model=self.model)
         checkpoint_manager = tf.train.CheckpointManager(
             checkpoint, directory=train_path, max_to_keep=3, checkpoint_name=folder_name)
 
         train_writer = tf.summary.create_file_writer(os.path.join(logs_path, folder_name, 'train'))
-        with train_writer.as_default():
-            tf.summary.trace_export(name="architecture", step=global_step, profiler_outdir=os.path.join(logs_path, folder_name, 'train'))
+        # with train_writer.as_default():
+        #     tf.summary.trace_export(name="architecture", step=global_step, profiler_outdir=os.path.join(logs_path, folder_name, 'train'))
         valid_writer = tf.summary.create_file_writer(os.path.join(logs_path, folder_name, 'valid'))
 
         epoch_objective_avg = tf.keras.metrics.Mean()
@@ -303,7 +299,6 @@ class SegBasisNet(Network):
                         tf.summary.image('train_seg_lbl' + str(c), tf.expand_dims(tf.cast(
                             tf.gather(y[:, self.inputs['x'].shape[1] // 2, :, :, c], [0, cfg.batch_size_train - 1])
                             * 255, tf.uint8), axis=-1), global_step, max_image_output)
-
 
     def _select_final_activation(self):
         # http://dataaspirant.com/2017/03/07/difference-between-softmax-function-and-sigmoid-function/
