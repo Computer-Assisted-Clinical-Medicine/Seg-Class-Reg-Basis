@@ -554,4 +554,3 @@ class VNet(SegBasisNet):
                 print(' -------------------------------------')
 
         return tf.keras.Model(inputs=self.inputs['x'], outputs=self.outputs['probabilities'])
-

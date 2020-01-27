@@ -52,9 +52,13 @@ else:
     train_reader_instances = 1
 
 summary_steps_per_epoch = 5
+do_gradient_clipping = False
+clipping_value = 50
 
 ##### Testing #####
 do_connected_component_analysis = False
+do_filter_small_components = False
+min_number_of_voxels = 10
 batch_size_test = 1
 summaries_per_case = 10
 
@@ -94,7 +98,7 @@ samples_per_slice_bkg = 1
 samples_per_slice_uni = 1
 do_flip_coronal = False
 do_flip_sagittal = False
-do_variate_intensities = True
+do_variate_intensities = False
 intensity_variation_interval = 0.01
 
 # Resampling
@@ -122,7 +126,7 @@ tissue_threshold = -0.9
 
 # Preprocessing
 norm_min_v = -150
-norm_max_v = 350
+norm_max_v = 275
 norm_eps = 1e-5
 
 ##### Network #####

@@ -29,11 +29,23 @@ class SegBasisNet(Network):
         if self.options['loss'] == 'DICE':
             return loss.dice_loss
 
+        if self.options['loss'] == 'DICE-FNR':
+            return loss.dice_with_fnr_loss
+
         elif self.options['loss'] == 'TVE':
             return loss.tversky_loss
 
         elif self.options['loss'] == 'GDL':
             return loss.generalized_dice_loss
+
+        elif self.options['loss'] == 'GDL-FPNR':
+            return loss.generalized_dice_with_fpr_fnr_loss
+
+        elif self.options['loss'] == 'NDL':
+            return loss.normalized_dice_loss
+
+        elif self.options['loss'] == 'EDL':
+            return loss.equalized_dice_loss
 
         elif self.options['loss'] == 'WDL':
             return loss.weighted_dice_loss
@@ -44,18 +56,23 @@ class SegBasisNet(Network):
             else:
                 return loss.binary_cross_entropy_loss
 
+        elif self.options['loss'] == 'ECEL':
+            return loss.equalized_catergorical_cross_entropy
+
+        elif self.options['loss'] == 'NCEL':
+            return loss.normalized_catergorical_cross_entropy
+
         elif self.options['loss'] == 'WCEL':
-            # ToDo: update this
-            if self.options['out_channels'] > 2:
-                return loss.weighted_cross_entropy_loss_with_softmax(self.outputs['logits'], self.inputs['y'], self.inputs['x'],
-                                                                     cfg.basis_factor, cfg.tissue_factor,
-                                                                     cfg.contour_factor, cfg.tissue_threshold,
-                                                                     cfg.max_weight)
-            else:
-                return loss.weighted_cross_entropy_loss_with_sigmoid(self.outputs['logits'], self.inputs['y'], self.inputs['x'],
-                                                                     cfg.basis_factor, cfg.tissue_factor,
-                                                                     cfg.contour_factor, cfg.tissue_threshold,
-                                                                     cfg.max_weight)
+            return loss.weighted_catergorical_cross_entropy
+
+        elif self.options['loss'] == 'ECEL-FNR':
+            return loss.equalized_catergorical_cross_entropy_with_fnr
+
+        elif self.options['loss'] == 'WCEL-FPR':
+                return loss.weighted_categorical_crossentropy_with_fpr_loss
+
+        elif self.options['loss'] == 'GCEL':
+                return loss.generalized_catergorical_cross_entropy
 
         else:
             raise ValueError(self.options['loss'], 'is not a supported loss function.')
@@ -112,7 +129,7 @@ class SegBasisNet(Network):
         with tf.device('/cpu:0'):
             elapsed_time = end_time - start_time
             print('  Elapsed Time (Seconds): ', elapsed_time)
-            self._write_inference_data(probability_map, filename, apply_path, version)
+            self._write_inference_data(probability_map, filename, apply_path, version, self.options['rank'])
 
     def _run_train(self, logs_path, folder_name, training_dataset, validation_dataset,
                    summary_steps_per_epoch, l_r=0.001, optimizer='Adam'):
@@ -170,13 +187,15 @@ class SegBasisNet(Network):
                 prediction = self.model(x_t)
                 if self.options['regularize'][0]:
                     self.outputs['reg'] = tf.add_n(self.model.losses)
-                    objective_train = self.outputs['loss'](prediction, y_t) + self.outputs['reg']
+                    objective_train = self.outputs['loss'](y_t, prediction) + self.outputs['reg']
                 else:
-                    objective_train = self.outputs['loss'](prediction, y_t)
-                accuracy_train = self.outputs['accuracy'](prediction, y_t)
+                    objective_train = self.outputs['loss'](y_t, prediction)
+                accuracy_train = self.outputs['accuracy'](y_t, prediction)
                 epoch_objective_avg.update_state(objective_train)
                 epoch_accuracy_avg.update_state(accuracy_train)
             gradients = tape.gradient(objective_train, self.model.trainable_variables)
+            if cfg.do_gradient_clipping:
+                gradients, _ = tf.clip_by_global_norm(gradients, cfg.clipping_value)
             self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
 
             if global_step.numpy() % iter_per_epoch == 0 and global_step.numpy() // iter_per_epoch > 0:
@@ -208,10 +227,10 @@ class SegBasisNet(Network):
             prediction = self.model(x_v, training=False)
             if self.options['regularize'][0]:
                 self.outputs['reg'] = tf.add_n(self.model.losses)
-                objective_validation = self.outputs['loss'](prediction, y_v) + self.outputs['reg']
+                objective_validation = self.outputs['loss'](y_v, prediction) + self.outputs['reg']
             else:
-                objective_validation = self.outputs['loss'](prediction, y_v)
-            accuracy_validation = self.outputs['accuracy'](prediction, y_v)
+                objective_validation = self.outputs['loss'](y_v, prediction)
+            accuracy_validation = self.outputs['accuracy'](y_v, prediction)
             epoch_objective_avg.update_state(objective_validation)
             epoch_accuracy_avg.update_state(accuracy_validation)
 
@@ -227,7 +246,7 @@ class SegBasisNet(Network):
         with writer.as_default():
             with tf.name_scope('01_Objective'):
                 tf.summary.scalar('average_objective', objective, step=global_step)
-                tf.summary.scalar('iteration_' + self.options['loss'], self.outputs['loss'](probabilities, y), step=global_step)
+                tf.summary.scalar('iteration_' + self.options['loss'], self.outputs['loss'](y, probabilities), step=global_step)
                 if self.options['regularize'][0]:
                     tf.summary.scalar('iteration_' + self.options['regularize'][1], self.outputs['reg'], step=global_step)
 
@@ -305,7 +324,7 @@ class SegBasisNet(Network):
         if self.options['out_channels'] > 2 or self.options['loss'] in ['DICE', 'TVE', 'GDL']:
             # Dice, GDL and Tversky require SoftMax
             return 'softmax'
-        elif self.options['out_channels'] == 2 and self.options['loss'] in ['CEL', 'WCEL']:
+        elif self.options['out_channels'] == 2 and self.options['loss'] in ['CEL', 'WCEL', 'GCEL']:
             return 'sigmoid'
         else:
             raise ValueError(self.options['loss'],
@@ -313,7 +332,7 @@ class SegBasisNet(Network):
                              self.options['out_channels'], 'output channels.')
 
     @staticmethod
-    def _write_inference_data(predictions, file_name, out_path, version):
+    def _write_inference_data(predictions, file_name, out_path, version, rank):
         import SimpleITK as sitk
         predictions = np.argmax(predictions, -1)
 
@@ -334,7 +353,7 @@ class SegBasisNet(Network):
                                                       label_background_value=cfg.label_background_value,
                                                       do_augment=False)
 
-            if len(predictions.shape) == 4:
+            if rank == 3:
                 z_original = resampled_img.GetSize()[-1]
                 padded_extend = z_original + cfg.test_label_shape[0]
                 least_number_of_samples = np.int(np.ceil(z_original / cfg.test_label_shape[0]))
@@ -353,7 +372,21 @@ class SegBasisNet(Network):
         pred_img = image.np_array_to_itk_image(predictions, data_info, cfg.label_background_value,
                                                cfg.adapt_resolution, cfg.target_type_label)
         if cfg.do_connected_component_analysis:
-            pred_img = image.extract_largest_connected_component_sitk(pred_img)
+            if cfg.num_classes_seg == 1:
+                pred_img = image.extract_largest_connected_component_sitk(pred_img)
+            else:
+                pred_img_art = image.extract_largest_connected_component_sitk(pred_img == 1)
+                pred_img_vein = image.extract_largest_connected_component_sitk(pred_img == 2)
+                pred_img = sitk.Mask(pred_img_art, pred_img_vein < 1, 2)
+
+        elif cfg.do_filter_small_components:
+            if cfg.num_classes_seg == 1:
+                pred_img = image.remove_small_components_sitk(pred_img, cfg.min_number_of_voxels)
+            else:
+                pred_img_art = image.remove_small_components_sitk(pred_img == 1, cfg.min_number_of_voxels)
+                pred_img_vein = image.remove_small_components_sitk(pred_img == 2, cfg.min_number_of_voxels)
+                pred_img = sitk.MaskNegated(pred_img_art, pred_img_vein, 2)
+
 
         sitk.WriteImage(pred_img,
                         os.path.join(out_path, ('prediction' + '-' + version + '-' + file_number + '.nii')))
