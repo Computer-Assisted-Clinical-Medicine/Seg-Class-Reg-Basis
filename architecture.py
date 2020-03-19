@@ -554,3 +554,26 @@ class VNet(SegBasisNet):
                 print(' -------------------------------------')
 
         return tf.keras.Model(inputs=self.inputs['x'], outputs=self.outputs['probabilities'])
+
+
+class CombiNet(SegBasisNet):
+    '''!
+    Dummy Class
+    '''
+
+    def __init__(self, loss, is_training=True, do_finetune=False, model_path="",
+                 n_filters=[1], kernel_dims=5, n_convolutions=[1], drop_out=[True, 0.2],
+                 regularize=[True, 'L2', 0.00001], do_batch_normalization=True, do_bias=False,
+                 activation='relu', upscale='TRANS_CONV', downscale='STRIDE', res_connect=False, skip_connect=False,
+                 cross_hair=False):
+            super(CombiNet, self).__init__(loss, is_training, do_finetune, model_path,
+                 n_filters, kernel_dims, n_convolutions, drop_out,
+                 regularize, do_batch_normalization, do_bias,
+                 activation, upscale, downscale, res_connect, skip_connect, cross_hair)
+
+    @staticmethod
+    def get_name():
+        return 'Combined'
+
+    def _build_model(self):
+        pass
