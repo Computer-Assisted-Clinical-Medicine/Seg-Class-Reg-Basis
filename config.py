@@ -39,7 +39,6 @@ if socket.gethostname() == 'ckm4cad':
     ONSERVER = True
     op_parallelism_threads = 6
     batch_size_train = 16
-    training_epochs = 20
     batch_capacity_train = 4000
     train_reader_instances = 2
 
@@ -47,9 +46,12 @@ else:
     ONSERVER = False
     op_parallelism_threads = 3
     batch_size_train = 4
-    training_epochs = 1
     batch_capacity_train = 400
     train_reader_instances = 1
+
+
+epochs_for_training = 1
+epochs_for_finetuning = 1
 
 summary_steps_per_epoch = 5
 do_gradient_clipping = False
@@ -58,9 +60,10 @@ clipping_value = 50
 ##### Testing #####
 do_connected_component_analysis = False
 do_filter_small_components = False
-min_number_of_voxels = 10
+min_number_of_voxels = 15
 batch_size_test = 1
 summaries_per_case = 10
+write_probabilities = False
 
 ##### Data #####
 num_channels = 3

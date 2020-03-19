@@ -74,6 +74,9 @@ class SegBasisNet(Network):
         elif self.options['loss'] == 'GCEL':
                 return loss.generalized_catergorical_cross_entropy
 
+        elif self.options['loss'] == 'CEL+DICE':
+            return loss.categorical_cross_entropy_and_dice_loss
+
         else:
             raise ValueError(self.options['loss'], 'is not a supported loss function.')
 
@@ -155,7 +158,7 @@ class SegBasisNet(Network):
 
         global_step = tf.Variable(0, name='global_step', trainable=False, dtype=tf.int64)
 
-        train_path = os.path.join(logs_path, folder_name, 'model')
+        train_path = os.path.abspath(os.path.join(logs_path, folder_name, 'model'))
         print(train_path)
         if not os.path.exists(train_path):
             os.makedirs(train_path)
@@ -169,7 +172,7 @@ class SegBasisNet(Network):
         # save checkpoints
         checkpoint = tf.train.Checkpoint(optimizer=self.optimizer, model=self.model)
         checkpoint_manager = tf.train.CheckpointManager(
-            checkpoint, directory=train_path, max_to_keep=3, checkpoint_name=folder_name)
+            checkpoint, directory=train_path, max_to_keep=3, checkpoint_name='weights')
 
         train_writer = tf.summary.create_file_writer(os.path.join(logs_path, folder_name, 'train'))
         # with train_writer.as_default():
@@ -177,7 +180,9 @@ class SegBasisNet(Network):
         valid_writer = tf.summary.create_file_writer(os.path.join(logs_path, folder_name, 'valid'))
 
         epoch_objective_avg = tf.keras.metrics.Mean()
-        epoch_accuracy_avg = tf.keras.metrics.Mean()
+        epoch_accuracy_avg_art = tf.keras.metrics.Mean()
+        epoch_accuracy_avg_vein = tf.keras.metrics.Mean()
+
 
         self.outputs['accuracy'] = metric.dice_coefficient_tf
 
@@ -190,25 +195,40 @@ class SegBasisNet(Network):
                     objective_train = self.outputs['loss'](y_t, prediction) + self.outputs['reg']
                 else:
                     objective_train = self.outputs['loss'](y_t, prediction)
-                accuracy_train = self.outputs['accuracy'](y_t, prediction)
-                epoch_objective_avg.update_state(objective_train)
-                epoch_accuracy_avg.update_state(accuracy_train)
+
             gradients = tape.gradient(objective_train, self.model.trainable_variables)
             if cfg.do_gradient_clipping:
                 gradients, _ = tf.clip_by_global_norm(gradients, cfg.clipping_value)
             self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
 
+            if self.options['rank'] == 2:
+                accuracy_train_art = self.outputs['accuracy'](y_t[:, :, :, 1], prediction[:, :, :, 1])
+                accuracy_train_vein = self.outputs['accuracy'](y_t[:, :, :, 2], prediction[:, :, :, 2])
+            else:
+                accuracy_train_art = self.outputs['accuracy'](y_t[:, :, :, :, 1], prediction[:, :, :, :, 1])
+                accuracy_train_vein = self.outputs['accuracy'](y_t[:, :, :, :, 2], prediction[:, :, :, :, 2])
+
+            epoch_objective_avg.update_state(objective_train)
+            epoch_accuracy_avg_art.update_state(accuracy_train_art)
+            epoch_accuracy_avg_vein.update_state(accuracy_train_vein)
+
             if global_step.numpy() % iter_per_epoch == 0 and global_step.numpy() // iter_per_epoch > 0:
                 self._end_of_epoch(checkpoint_manager, global_step, iter_per_epoch, validation_dataset, valid_writer)
+
+                if self.options['do_finetune']:
+                    for layer in self.model.layers[:min(global_step.numpy() // iter_per_epoch * 3, len(self.model.layers) // 2 - 3)]:
+                        layer.trainable = False
 
             # if true compute and write summaries
             elif global_step.numpy() % summary_step == 0:
                 print('   Step: ', global_step.numpy(), ' Objective: ', epoch_objective_avg.result().numpy(),
-                      ' Accuracy: ', epoch_accuracy_avg.result().numpy(), '(Train)')
+                      ' Accuracy (V/A): ', epoch_accuracy_avg_vein.result().numpy(), epoch_accuracy_avg_art.result().numpy(), '(Train)')
                 self._summaries(x_t, y_t, prediction, epoch_objective_avg.result().numpy(),
-                                epoch_accuracy_avg.result().numpy(), global_step, train_writer)
+                                epoch_accuracy_avg_art.result().numpy(), epoch_accuracy_avg_vein.result().numpy(),
+                                global_step, train_writer)
                 epoch_objective_avg.reset_states()
-                epoch_accuracy_avg.reset_states()
+                epoch_accuracy_avg_art.reset_states()
+                epoch_accuracy_avg_vein.reset_states()
 
             global_step = global_step + 1
 
@@ -221,7 +241,8 @@ class SegBasisNet(Network):
         print(' Epoch: ', global_step.numpy() // iter_per_epoch)
         checkpoint_manager.save(checkpoint_number=global_step.numpy() // iter_per_epoch)
         epoch_objective_avg = tf.keras.metrics.Mean()
-        epoch_accuracy_avg = tf.keras.metrics.Mean()
+        epoch_accuracy_avg_art = tf.keras.metrics.Mean()
+        epoch_accuracy_avg_vein = tf.keras.metrics.Mean()
 
         for x_v, y_v in validation_dataset:
             prediction = self.model(x_v, training=False)
@@ -230,16 +251,24 @@ class SegBasisNet(Network):
                 objective_validation = self.outputs['loss'](y_v, prediction) + self.outputs['reg']
             else:
                 objective_validation = self.outputs['loss'](y_v, prediction)
-            accuracy_validation = self.outputs['accuracy'](y_v, prediction)
+
+            if self.options['rank'] == 2:
+                accuracy_validation_art = self.outputs['accuracy'](y_v[:, :, :, 1], prediction[:, :, :, 1])
+                accuracy_validation_vein = self.outputs['accuracy'](y_v[:, :, :, 2], prediction[:, :, :, 2])
+            else:
+                accuracy_validation_art = self.outputs['accuracy'](y_v[:, :, :, :, 1], prediction[:, :, :, :, 1])
+                accuracy_validation_vein = self.outputs['accuracy'](y_v[:, :, :, :, 2], prediction[:, :, :, :, 2])
+
             epoch_objective_avg.update_state(objective_validation)
-            epoch_accuracy_avg.update_state(accuracy_validation)
+            epoch_accuracy_avg_art.update_state(accuracy_validation_art)
+            epoch_accuracy_avg_vein.update_state(accuracy_validation_vein)
 
         print(' Epoch: ', global_step.numpy() // iter_per_epoch, ' Average Objective: ',
-              epoch_objective_avg.result().numpy(), ' Average Accuracy: ', epoch_accuracy_avg.result().numpy(), '(Valid)')
+              epoch_objective_avg.result().numpy(), ' Average Accuracy (V/A): ', epoch_accuracy_avg_vein.result().numpy(), epoch_accuracy_avg_art.result().numpy(), '(Valid)')
         self._summaries(x_v, y_v, prediction, epoch_objective_avg.result().numpy(),
-                        epoch_accuracy_avg.result().numpy(), global_step, valid_writer)
+                        epoch_accuracy_avg_art.result().numpy(), epoch_accuracy_avg_vein.result().numpy(), global_step, valid_writer)
 
-    def _summaries(self, x, y, probabilities, objective, acccuracy, global_step, writer, max_image_output=2, histo_buckets=50):
+    def _summaries(self, x, y, probabilities, objective, acccuracy_art, acccuracy_vein, global_step, writer, max_image_output=2, histo_buckets=50):
 
         predictions = tf.argmax(probabilities, -1)
 
@@ -251,7 +280,8 @@ class SegBasisNet(Network):
                     tf.summary.scalar('iteration_' + self.options['regularize'][1], self.outputs['reg'], step=global_step)
 
             with tf.name_scope('02_Accuracy'):
-                tf.summary.scalar('average_acccuracy', acccuracy, step=global_step)
+                tf.summary.scalar('average_acccuracy_art', acccuracy_art, step=global_step)
+                tf.summary.scalar('average_acccuracy_vein', acccuracy_vein, step=global_step)
 
             with tf.name_scope('03_Data_Statistics'):
                 tf.summary.scalar('one_hot_max_train_img', tf.reduce_max(y), step=global_step)
@@ -334,7 +364,8 @@ class SegBasisNet(Network):
     @staticmethod
     def _write_inference_data(predictions, file_name, out_path, version, rank):
         import SimpleITK as sitk
-        predictions = np.argmax(predictions, -1)
+        if not cfg.write_probabilities:
+            predictions = np.argmax(predictions, -1)
 
         folder, file_number = os.path.split(file_name[0])
         # Use a SimpleITK reader to load the nii images and labels for training

@@ -289,9 +289,9 @@ class ResNet(SegBasisNet):
         return tf.keras.Model(inputs=self.inputs['x'], outputs=self.outputs['probabilities'])
 
 
-class FCN(SegBasisNet):
+class DVN(SegBasisNet):
     '''!
-    U-Net TODO: add reference
+    DeepVesselNet TODO: add reference
 
     %Network Architecture from paper TODO: revise for implementation
 
@@ -315,16 +315,16 @@ class FCN(SegBasisNet):
     def __init__(self, loss, is_training=True, do_finetune=False, model_path="",
                  n_filters=[4, 8, 16, 32, 1], kernel_dims=[3, 5, 5, 3], n_convolutions=1, drop_out=[False, 0.2],
                  regularize=[True, 'L2', 0.00001], do_batch_normalization=False, do_bias=True,
-                 activation='relu', upscale=None, downscale=None, res_connect=False, skip_connect=False,
+                 activation='tanh', upscale=None, downscale=None, res_connect=False, skip_connect=False,
                  cross_hair=True):
-            super(FCN, self).__init__(loss, is_training, do_finetune, model_path,
-                 n_filters, kernel_dims, n_convolutions, drop_out,
-                 regularize, do_batch_normalization, do_bias,
-                 activation, upscale, downscale, res_connect, skip_connect, cross_hair)
+            super(DVN, self).__init__(loss, is_training, do_finetune, model_path,
+                                      n_filters, kernel_dims, n_convolutions, drop_out,
+                                      regularize, do_batch_normalization, do_bias,
+                                      activation, upscale, downscale, res_connect, skip_connect, cross_hair)
 
     @staticmethod
     def get_name():
-        return 'FCN'
+        return 'DVN'
 
     def _build_model(self):
         '''!
