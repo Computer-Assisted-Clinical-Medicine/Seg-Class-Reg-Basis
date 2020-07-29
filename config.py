@@ -28,9 +28,8 @@ fine_csv = 'fine.csv'
 vald_csv = 'vald.csv'
 test_csv = 'test.csv'
 
-prediction_file_name_prefix = 'prediction-'
-sample_file_name_prefix = 'ct-volume-'
-label_file_name_prefix = 'vessel-segmentation_revised-'
+sample_file_name = 'image.nii.gz'
+label_file_name = 'labels.nii.gz'
 
 ##### Mode #####
 VERBOSE = True

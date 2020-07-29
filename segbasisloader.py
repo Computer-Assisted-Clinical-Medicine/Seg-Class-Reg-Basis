@@ -104,11 +104,10 @@ class SegBasisLoader(DataLoader):
         @return data and labels as numpy arrays
         '''
         file_id = str(file_id, 'utf-8')
-        folder, file_number = os.path.split(file_id)
-        print('        Loading ', folder, file_number, ' (', self.mode, ')')
+        print('        Loading ', file_id, ' (', self.mode, ')')
         # Use a SimpleITK reader to load the nii images and labels for training
-        data_img = sitk.ReadImage(os.path.join(folder, (cfg.sample_file_name_prefix + file_number + '.nii')))
-        label_img = sitk.ReadImage(os.path.join(folder, (cfg.label_file_name_prefix + file_number + '.nii')))
+        data_img = sitk.ReadImage(os.path.join(file_id, (cfg.sample_file_name)))
+        label_img = sitk.ReadImage(os.path.join(file_id, (cfg.label_file_name)))
         data_img, label_img = self.adapt_to_task(data_img, label_img)
         data_img, label_img = self._resample(data_img, label_img)
         data = sitk.GetArrayFromImage(data_img)
