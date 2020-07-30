@@ -30,6 +30,7 @@ test_csv = 'test.csv'
 
 sample_file_name = 'image.nii.gz'
 label_file_name = 'labels.nii.gz'
+prediction_file_name = 'prediction.nii.gz'
 
 ##### Mode #####
 VERBOSE = True
@@ -65,9 +66,9 @@ summaries_per_case = 10
 write_probabilities = False
 
 ##### Data #####
-num_channels = 3
+num_channels = 1
 num_slices = 1
-num_classes_seg = 3
+num_classes_seg = 1
 num_files = -1
 train_dim = 256
 train_input_shape = [train_dim, train_dim, num_channels]

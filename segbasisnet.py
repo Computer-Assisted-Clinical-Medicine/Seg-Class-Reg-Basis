@@ -367,9 +367,8 @@ class SegBasisNet(Network):
         if not cfg.write_probabilities:
             predictions = np.argmax(predictions, -1)
 
-        folder, file_number = os.path.split(file_name[0])
         # Use a SimpleITK reader to load the nii images and labels for training
-        data_img = sitk.ReadImage(os.path.join(folder, (cfg.sample_file_name_prefix + file_number + '.nii')))
+        data_img = sitk.ReadImage(os.path.join(file_name[0], (cfg.sample_file_name)))
         data_info = image.get_data_info(data_img)
         if cfg.adapt_resolution:
             target_info = {}
@@ -420,5 +419,5 @@ class SegBasisNet(Network):
 
 
         sitk.WriteImage(pred_img,
-                        os.path.join(out_path, ('prediction' + '-' + version + '-' + file_number + '.nii')))
+                        os.path.join(out_path, ('prediction' + '-' + version + '.nii.gz')))
 
