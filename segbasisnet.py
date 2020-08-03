@@ -1,12 +1,13 @@
-import tensorflow as tf
-import numpy as np
-from time import time
-from . import config as cfg
-from .NetworkBasis import image
-from .NetworkBasis.network import Network
-from .NetworkBasis import loss
-from .NetworkBasis import metric
 import os
+from pathlib import Path
+from time import time
+
+import numpy as np
+import tensorflow as tf
+
+from . import config as cfg
+from .NetworkBasis import image, loss, metric
+from .NetworkBasis.network import Network
 
 
 class SegBasisNet(Network):
@@ -135,7 +136,7 @@ class SegBasisNet(Network):
             self._write_inference_data(probability_map, filename, apply_path, version, self.options['rank'])
 
     def _run_train(self, logs_path, folder_name, training_dataset, validation_dataset,
-                   summary_steps_per_epoch, l_r=0.001, optimizer='Adam'):
+                   summary_steps_per_epoch, l_r=0.001, optimizer='Adam', **kwargs):
         '''!
         Sets up and runs training session
         @param  logs_path               : str; path to logs
@@ -180,9 +181,7 @@ class SegBasisNet(Network):
         valid_writer = tf.summary.create_file_writer(os.path.join(logs_path, folder_name, 'valid'))
 
         epoch_objective_avg = tf.keras.metrics.Mean()
-        epoch_accuracy_avg_art = tf.keras.metrics.Mean()
-        epoch_accuracy_avg_vein = tf.keras.metrics.Mean()
-
+        epoch_accuracy_avg = tf.keras.metrics.Mean()
 
         self.outputs['accuracy'] = metric.dice_coefficient_tf
 
@@ -202,15 +201,12 @@ class SegBasisNet(Network):
             self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
 
             if self.options['rank'] == 2:
-                accuracy_train_art = self.outputs['accuracy'](y_t[:, :, :, 1], prediction[:, :, :, 1])
-                accuracy_train_vein = self.outputs['accuracy'](y_t[:, :, :, 2], prediction[:, :, :, 2])
+                accuracy_train = self.outputs['accuracy'](y_t[:, :, :, 1], prediction[:, :, :, 1])
             else:
-                accuracy_train_art = self.outputs['accuracy'](y_t[:, :, :, :, 1], prediction[:, :, :, :, 1])
-                accuracy_train_vein = self.outputs['accuracy'](y_t[:, :, :, :, 2], prediction[:, :, :, :, 2])
+                accuracy_train = self.outputs['accuracy'](y_t[:, :, :, :, 1], prediction[:, :, :, :, 1])
 
             epoch_objective_avg.update_state(objective_train)
-            epoch_accuracy_avg_art.update_state(accuracy_train_art)
-            epoch_accuracy_avg_vein.update_state(accuracy_train_vein)
+            epoch_accuracy_avg.update_state(accuracy_train)
 
             if global_step.numpy() % iter_per_epoch == 0 and global_step.numpy() // iter_per_epoch > 0:
                 self._end_of_epoch(checkpoint_manager, global_step, iter_per_epoch, validation_dataset, valid_writer)
@@ -222,13 +218,12 @@ class SegBasisNet(Network):
             # if true compute and write summaries
             elif global_step.numpy() % summary_step == 0:
                 print('   Step: ', global_step.numpy(), ' Objective: ', epoch_objective_avg.result().numpy(),
-                      ' Accuracy (V/A): ', epoch_accuracy_avg_vein.result().numpy(), epoch_accuracy_avg_art.result().numpy(), '(Train)')
+                      ' Accuracy: ', epoch_accuracy_avg.result().numpy(), '(Train)')
                 self._summaries(x_t, y_t, prediction, epoch_objective_avg.result().numpy(),
-                                epoch_accuracy_avg_art.result().numpy(), epoch_accuracy_avg_vein.result().numpy(),
+                                epoch_accuracy_avg.result().numpy(),
                                 global_step, train_writer)
                 epoch_objective_avg.reset_states()
-                epoch_accuracy_avg_art.reset_states()
-                epoch_accuracy_avg_vein.reset_states()
+                epoch_accuracy_avg.reset_states()
 
             global_step = global_step + 1
 
@@ -241,8 +236,7 @@ class SegBasisNet(Network):
         print(' Epoch: ', global_step.numpy() // iter_per_epoch)
         checkpoint_manager.save(checkpoint_number=global_step.numpy() // iter_per_epoch)
         epoch_objective_avg = tf.keras.metrics.Mean()
-        epoch_accuracy_avg_art = tf.keras.metrics.Mean()
-        epoch_accuracy_avg_vein = tf.keras.metrics.Mean()
+        epoch_accuracy_avg = tf.keras.metrics.Mean()
 
         for x_v, y_v in validation_dataset:
             prediction = self.model(x_v, training=False)
@@ -253,22 +247,19 @@ class SegBasisNet(Network):
                 objective_validation = self.outputs['loss'](y_v, prediction)
 
             if self.options['rank'] == 2:
-                accuracy_validation_art = self.outputs['accuracy'](y_v[:, :, :, 1], prediction[:, :, :, 1])
-                accuracy_validation_vein = self.outputs['accuracy'](y_v[:, :, :, 2], prediction[:, :, :, 2])
+                accuracy_validation = self.outputs['accuracy'](y_v[:, :, :, 1], prediction[:, :, :, 1])
             else:
-                accuracy_validation_art = self.outputs['accuracy'](y_v[:, :, :, :, 1], prediction[:, :, :, :, 1])
-                accuracy_validation_vein = self.outputs['accuracy'](y_v[:, :, :, :, 2], prediction[:, :, :, :, 2])
+                accuracy_validation = self.outputs['accuracy'](y_v[:, :, :, :, 1], prediction[:, :, :, :, 1])
 
             epoch_objective_avg.update_state(objective_validation)
-            epoch_accuracy_avg_art.update_state(accuracy_validation_art)
-            epoch_accuracy_avg_vein.update_state(accuracy_validation_vein)
+            epoch_accuracy_avg.update_state(accuracy_validation)
 
         print(' Epoch: ', global_step.numpy() // iter_per_epoch, ' Average Objective: ',
-              epoch_objective_avg.result().numpy(), ' Average Accuracy (V/A): ', epoch_accuracy_avg_vein.result().numpy(), epoch_accuracy_avg_art.result().numpy(), '(Valid)')
+              epoch_objective_avg.result().numpy(), ' Average Accuracy: ', epoch_accuracy_avg.result().numpy(), '(Valid)')
         self._summaries(x_v, y_v, prediction, epoch_objective_avg.result().numpy(),
-                        epoch_accuracy_avg_art.result().numpy(), epoch_accuracy_avg_vein.result().numpy(), global_step, valid_writer)
+                        epoch_accuracy_avg.result().numpy(), global_step, valid_writer)
 
-    def _summaries(self, x, y, probabilities, objective, acccuracy_art, acccuracy_vein, global_step, writer, max_image_output=2, histo_buckets=50):
+    def _summaries(self, x, y, probabilities, objective, acccuracy, global_step, writer, max_image_output=2, histo_buckets=50):
 
         predictions = tf.argmax(probabilities, -1)
 
@@ -280,8 +271,7 @@ class SegBasisNet(Network):
                     tf.summary.scalar('iteration_' + self.options['regularize'][1], self.outputs['reg'], step=global_step)
 
             with tf.name_scope('02_Accuracy'):
-                tf.summary.scalar('average_acccuracy_art', acccuracy_art, step=global_step)
-                tf.summary.scalar('average_acccuracy_vein', acccuracy_vein, step=global_step)
+                tf.summary.scalar('average_acccuracy', acccuracy, step=global_step)
 
             with tf.name_scope('03_Data_Statistics'):
                 tf.summary.scalar('one_hot_max_train_img', tf.reduce_max(y), step=global_step)
@@ -368,7 +358,7 @@ class SegBasisNet(Network):
             predictions = np.argmax(predictions, -1)
 
         # Use a SimpleITK reader to load the nii images and labels for training
-        data_img = sitk.ReadImage(os.path.join(file_name[0], (cfg.sample_file_name)))
+        data_img = sitk.ReadImage(os.path.join(file_name, (cfg.sample_file_name)))
         data_info = image.get_data_info(data_img)
         if cfg.adapt_resolution:
             target_info = {}
@@ -401,23 +391,7 @@ class SegBasisNet(Network):
 
         pred_img = image.np_array_to_itk_image(predictions, data_info, cfg.label_background_value,
                                                cfg.adapt_resolution, cfg.target_type_label)
-        if cfg.do_connected_component_analysis:
-            if cfg.num_classes_seg == 1:
-                pred_img = image.extract_largest_connected_component_sitk(pred_img)
-            else:
-                pred_img_art = image.extract_largest_connected_component_sitk(pred_img == 1)
-                pred_img_vein = image.extract_largest_connected_component_sitk(pred_img == 2)
-                pred_img = sitk.Mask(pred_img_art, pred_img_vein < 1, 2)
 
-        elif cfg.do_filter_small_components:
-            if cfg.num_classes_seg == 1:
-                pred_img = image.remove_small_components_sitk(pred_img, cfg.min_number_of_voxels)
-            else:
-                pred_img_art = image.remove_small_components_sitk(pred_img == 1, cfg.min_number_of_voxels)
-                pred_img_vein = image.remove_small_components_sitk(pred_img == 2, cfg.min_number_of_voxels)
-                pred_img = sitk.MaskNegated(pred_img_art, pred_img_vein, 2)
-
-
-        sitk.WriteImage(pred_img,
-                        os.path.join(out_path, ('prediction' + '-' + version + '.nii.gz')))
-
+        name = Path(file_name).name
+        pred_path = Path(out_path) / f'prediction-{name}-{version}.nii.gz'
+        sitk.WriteImage(pred_img, str(pred_path.absolute()))

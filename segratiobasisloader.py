@@ -243,7 +243,8 @@ class SegRatioBasisLoader(SegBasisLoader):
                     number_of_missing_samples = int(number_of_samples - np.sum(samples_per_slice))
 
                     # slices at the end of the list have the most center voxels
-                    samples_per_slice[-number_of_missing_samples:] = s_r + 1
+                    if number_of_missing_samples > 0:
+                        samples_per_slice[-number_of_missing_samples:] = s_r + 1
 
                     assert np.sum(samples_per_slice) == number_of_samples
             else:
@@ -272,6 +273,8 @@ class SegRatioBasisLoader(SegBasisLoader):
         #       ' - BG:', np.sum(valid_patch_centers_background)/valid_patch_centers_objects.size)
         n_object_per_slice = np.sum(valid_patch_centers_objects, axis=(0, 1))
         n_background_per_slice = np.sum(valid_patch_centers_background, axis=(0, 1))
+        if np.sum(n_object_per_slice) == 0:
+            raise Exception('All labels are zero, no objects were found, either the labels are incorrect or there was a problem processing the image.')
         # print('---- Centers per Slice:', valid_patch_centers.size, ' - OB:', n_object_per_slice. size, n_object_per_slice, ' - BG:', n_background_per_slice.size, n_background_per_slice)
         # If the segmentation is not a continuous volume (case 102), a vector from min to max leads to empty slices.
         # -> use unique instead!
@@ -295,6 +298,7 @@ class SegRatioBasisLoader(SegBasisLoader):
     def _get_samples_from_volume(self, data, lbl):
         return self._get_ratio_samples_from_volume(data, lbl)
 
+    @tf.autograph.experimental.do_not_convert
     def _get_ratio_samples_from_volume(self, data, lbl):
         '''!
         Get batches/samples for training from image and label data.

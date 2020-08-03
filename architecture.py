@@ -34,11 +34,11 @@ class UNet(SegBasisNet):
                  n_filters=[8, 16, 32, 64, 128], kernel_dims=3, n_convolutions=[2, 3, 2], drop_out=[False, 0.2],
                  regularize=[True, 'L2', 0.00001], do_batch_normalization=False, do_bias=True,
                  activation='relu', upscale='TRANS_CONV', downscale='MAX_POOL', res_connect=False, skip_connect=True,
-                 cross_hair=False):
+                 cross_hair=False, **kwargs):
             super(UNet, self).__init__(loss, is_training, do_finetune, model_path,
                  n_filters, kernel_dims, n_convolutions, drop_out,
                  regularize, do_batch_normalization, do_bias,
-                 activation, upscale, downscale, res_connect, skip_connect, cross_hair)
+                 activation, upscale, downscale, res_connect, skip_connect, cross_hair, **kwargs)
 
     @staticmethod
     def get_name():
@@ -174,11 +174,11 @@ class ResNet(SegBasisNet):
                  n_filters=[64, 128, 256, 512, 1024], kernel_dims=3, n_convolutions=[2, 3, 2], drop_out=[False, 0.2],
                  regularize=[True, 'L2', 0.00001], do_batch_normalization=False, do_bias=True,
                  activation='relu', upscale='TRANS_CONV', downscale='MAX_POOL', res_connect=True, skip_connect=False,
-                 cross_hair=False):
+                 cross_hair=False, **kwargs):
             super(ResNet, self).__init__(loss, is_training, do_finetune, model_path,
                  n_filters, kernel_dims, n_convolutions, drop_out,
                  regularize, do_batch_normalization, do_bias,
-                 activation, upscale, downscale, res_connect, skip_connect, cross_hair)
+                 activation, upscale, downscale, res_connect, skip_connect, cross_hair, **kwargs)
 
     def _build_model(self):
         '''!
@@ -316,11 +316,11 @@ class DVN(SegBasisNet):
                  n_filters=[4, 8, 16, 32, 1], kernel_dims=[3, 5, 5, 3], n_convolutions=1, drop_out=[False, 0.2],
                  regularize=[True, 'L2', 0.00001], do_batch_normalization=False, do_bias=True,
                  activation='tanh', upscale=None, downscale=None, res_connect=False, skip_connect=False,
-                 cross_hair=True):
+                 cross_hair=True, **kwargs):
             super(DVN, self).__init__(loss, is_training, do_finetune, model_path,
                                       n_filters, kernel_dims, n_convolutions, drop_out,
                                       regularize, do_batch_normalization, do_bias,
-                                      activation, upscale, downscale, res_connect, skip_connect, cross_hair)
+                                      activation, upscale, downscale, res_connect, skip_connect, cross_hair, **kwargs)
 
     @staticmethod
     def get_name():
@@ -399,11 +399,11 @@ class VNet(SegBasisNet):
                  n_filters=[8, 16, 32, 64, 128], kernel_dims=5, n_convolutions=[1, 2, 3, 2, 1], drop_out=[True, 0.2],
                  regularize=[True, 'L2', 0.00001], do_batch_normalization=True, do_bias=False,
                  activation='leaky_relu', upscale='TRANS_CONV', downscale='STRIDE', res_connect=True, skip_connect=True,
-                 cross_hair=False):
+                 cross_hair=False, **kwargs):
             super(VNet, self).__init__(loss, is_training, do_finetune, model_path,
                  n_filters, kernel_dims, n_convolutions, drop_out,
                  regularize, do_batch_normalization, do_bias,
-                 activation, upscale, downscale, res_connect, skip_connect, cross_hair)
+                 activation, upscale, downscale, res_connect, skip_connect, cross_hair, **kwargs)
 
     @staticmethod
     def get_name():

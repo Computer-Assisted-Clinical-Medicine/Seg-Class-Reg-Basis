@@ -22,15 +22,15 @@ class NORMALIZING(Enum):
     PERCENT5 = 2
 
 
-
+#these files are used to store the different sets
 train_csv = 'train.csv'
 fine_csv = 'fine.csv'
 vald_csv = 'vald.csv'
 test_csv = 'test.csv'
 
+#these names are used inside the patient folder
 sample_file_name = 'image.nii.gz'
 label_file_name = 'labels.nii.gz'
-prediction_file_name = 'prediction.nii.gz'
 
 ##### Mode #####
 VERBOSE = True
@@ -50,9 +50,6 @@ else:
     train_reader_instances = 1
 
 
-epochs_for_training = 1
-epochs_for_finetuning = 1
-
 summary_steps_per_epoch = 5
 do_gradient_clipping = False
 clipping_value = 50
@@ -68,12 +65,13 @@ write_probabilities = False
 ##### Data #####
 num_channels = 1
 num_slices = 1
-num_classes_seg = 1
+num_classes_seg = 2
 num_files = -1
-train_dim = 256
+#has to be smaller than the target size
+train_dim = 128
 train_input_shape = [train_dim, train_dim, num_channels]
 train_label_shape = [train_dim, train_dim, num_classes_seg]
-test_dim = 512
+test_dim = 256
 test_data_shape = [test_dim, test_dim, num_channels]
 test_label_shape = [test_dim, test_dim, num_classes_seg]
 
@@ -107,18 +105,14 @@ intensity_variation_interval = 0.01
 # Resampling
 adapt_resolution = True
 if adapt_resolution:
-    target_spacing = [0.75, 0.75, 1.5]
-    target_size = [512, 512]
+    target_spacing = [1, 1, 3]
+    target_size = [256, 256]
 target_direction = (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)  # make sure all images are oriented equally
 target_type_image = sitk.sitkFloat32
 target_type_label = sitk.sitkUInt8
 data_background_value = -1000
 label_background_value = 0
 max_rotation = 0.07
-
-# Tversky
-tversky_alpha = 0.3
-tversky_beta = 1 - tversky_alpha
 
 # Weighted CE
 basis_factor = 5
@@ -131,6 +125,3 @@ tissue_threshold = -0.9
 norm_min_v = -150
 norm_max_v = 275
 norm_eps = 1e-5
-
-##### Network #####
-sparse_cardinality = 2
