@@ -1,11 +1,17 @@
-import numpy as np
-np.seterr(all='raise')
-import SimpleITK as sitk
+import logging
 import os
+
+import numpy as np
+import SimpleITK as sitk
+
 from . import config as cfg
 from .NetworkBasis import image as Image
 from .NetworkBasis.dataloader import DataLoader
 
+np.seterr(all='raise')
+
+#configure logger
+logger = logging.getLogger(__name__)
 
 class SegBasisLoader(DataLoader):
     """!
@@ -41,7 +47,7 @@ class SegBasisLoader(DataLoader):
             # They will be interpreted as channels.
             # Using in_between_slice_factor slices will be skipped.
             self.slice_shift = ((self.n_channels - 1) // 2) * cfg.in_between_slice_factor
-            print('    Rank of input shape is', self.data_rank, '. Loading 2D samples with SS=', self.slice_shift)
+            logger.debug('    Rank of input shape is %s. Loading 2D samples with SS=%s', self.data_rank, self.slice_shift)
 
         elif self.data_rank == 4:
             # In 3D this parameter describes the z extend of the sample.
@@ -51,7 +57,7 @@ class SegBasisLoader(DataLoader):
             #     self.slice_shift = self.dshapes[0][0] // 2
             #     print(self.slice_shift)
             self.slice_shift = self.dshapes[0][0] // 2
-            print('    Rank of input shape is', self.data_rank, '. Loading 3D samples with SS=', self.slice_shift)
+            logger.debug('    Rank of input shape is %s. Loading 3D samples with SS=%s', self.data_rank, self.slice_shift)
 
         else:
             raise Exception('rank = \'{}\' is not supported'.format(self.data_rank))
@@ -104,7 +110,7 @@ class SegBasisLoader(DataLoader):
         @return data and labels as numpy arrays
         '''
         file_id = str(file_id, 'utf-8')
-        print('        Loading ', file_id, ' (', self.mode, ')')
+        logger.debug('        Loading %s (%s)', file_id, self.mode)
         # Use a SimpleITK reader to load the nii images and labels for training
         data_img = sitk.ReadImage(os.path.join(file_id, (cfg.sample_file_name)))
         label_img = sitk.ReadImage(os.path.join(file_id, (cfg.label_file_name)))
@@ -147,7 +153,7 @@ class SegBasisLoader(DataLoader):
                 images, _ = self._get_samples_by_index(data, lbl, indices[i], samples_per_slice=1)
                 I[i] = images
 
-            print('   Image Samples Shape: ', I.shape)
+            logger.debug('   Image Samples Shape: %s')
             return [I, None]
 
         else:
@@ -165,8 +171,8 @@ class SegBasisLoader(DataLoader):
             if self.mode is self.MODES.TRAIN:
                 I, L = self._augment_samples(I, L)
 
-            print('   Image Samples Shape: ', I.shape)
-            print('   Label Samples Shape: ', L.shape)
+            logger.debug('   Image Samples Shape: %s', I.shape)
+            logger.debug('   Label Samples Shape: %s', L.shape)
 
             return [I, L]
 
@@ -193,7 +199,7 @@ class SegBasisLoader(DataLoader):
             center = s // 2
             indices = np.arange(center - (number_of_samples // 2) * self.slice_shift,
                                 center + (number_of_samples // 2 + 1) * self.slice_shift, self.slice_shift, dtype=np.int)
-            print('M: ', number_of_samples, 'S: ', s, 'Indices: ', indices)
+            logger.debug('M: %s S: %s Indices: %s', number_of_samples, s, indices)
             return indices, np.ones(indices.size, dtype=np.int)
         else:
             indices = np.arange(0 + self.slice_shift, s - self.slice_shift, 1)
@@ -248,12 +254,10 @@ class SegBasisLoader(DataLoader):
                 slice_is_empty = True
                 if cfg.random_sampling_mode == cfg.SAMPLINGMODES.CONSTRAINED_MUSTD:
                     # if there are no lables on the slice, sample in the body for CONSTRAINED_MUSTD
-                    # print('This is where it brakes.')
                     if cfg.normalizing_method == cfg.NORMALIZING.WINDOW:
                         n_z = np.nonzero(np.greater(data[:, :, index], cfg.norm_min_v))
                     elif cfg.normalizing_method == cfg.NORMALIZING.MEAN_STD:
                         n_z = np.nonzero(np.greater(data[:, :, index], 0))
-                        # print(n_z)
 
             if cfg.random_sampling_mode == cfg.SAMPLINGMODES.CONSTRAINED_MUSTD:
                 if n_z[0].size > 0:
@@ -291,7 +295,6 @@ class SegBasisLoader(DataLoader):
             # select patch centers from mask points inside the bounding box
             valid_locations = np.nonzero(np.logical_and(np.logical_and(n_z[0] >= min_x, n_z[0] <= max_x),
                                                         np.logical_and(n_z[1] >= min_y, n_z[1] <= max_y)))[0]
-            # print('   VL:', valid_locations.shape, valid_locations)
             # If there are not enough centers, select voxels close by
             if len(valid_locations) < samples_per_slice:
                 n_missing_samples = samples_per_slice - len(valid_locations)
@@ -307,9 +310,6 @@ class SegBasisLoader(DataLoader):
 
                 x_idx, x_dist = find_nearest([min_x, max_x], np.mean(n_z[0]))
                 y_idx, y_dist = find_nearest([min_y, max_y], np.mean(n_z[1]))
-
-                # print('Locations and Distances: ', np.mean(n_z[0]), '->', x_idx, x_dist, [min_x, max_x], '|',
-                #       np.mean(n_z[1]), '->', y_idx, y_dist, [min_y, max_y])
 
                 if x_idx == 0:  # if minimum
                     sample_x = min_x + np.random.randint(0, x_dist + 1, n_missing_samples)
@@ -476,13 +476,6 @@ class SegBasisLoader(DataLoader):
             std = np.std(img)
             img = img / (std if std != 0 else eps)
 
-            # np.seterr(all='raise')  # To catch invalid value in std warning
-            # try:
-            #     std = np.std(img)
-            #     img = img / (std if std != 0 else eps)
-            # except FloatingPointError as err:
-            #     img = img / eps
-            #     print(err, 'Replaced it with eps.')
         return img
 
     @staticmethod
@@ -501,5 +494,3 @@ class SegBasisLoader(DataLoader):
         tmp_image_data = sitk.GetImageFromArray(img)
         tmp_image_data.CopyInformation(img_data)
         return tmp_image_data
-
-

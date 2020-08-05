@@ -1,14 +1,18 @@
+import logging
 import os
 from pathlib import Path
 from time import time
 
 import numpy as np
 import tensorflow as tf
+from tqdm import tqdm
 
 from . import config as cfg
 from .NetworkBasis import image, loss, metric
 from .NetworkBasis.network import Network
 
+#configure logger
+logger = logging.getLogger(__name__)
 
 class SegBasisNet(Network):
 
@@ -132,11 +136,11 @@ class SegBasisNet(Network):
 
         with tf.device('/cpu:0'):
             elapsed_time = end_time - start_time
-            print('  Elapsed Time (Seconds): ', elapsed_time)
+            logger.debug('  Elapsed Time (Seconds): %s', elapsed_time)
             self._write_inference_data(probability_map, filename, apply_path, version, self.options['rank'])
 
     def _run_train(self, logs_path, folder_name, training_dataset, validation_dataset,
-                   summary_steps_per_epoch, l_r=0.001, optimizer='Adam', **kwargs):
+                   summary_steps_per_epoch, l_r=0.001, optimizer='Adam', epochs=None, **kwargs):
         '''!
         Sets up and runs training session
         @param  logs_path               : str; path to logs
@@ -148,10 +152,11 @@ class SegBasisNet(Network):
         @param  summary_step            : int
         @param  l_r                     : float; Learning Rate for the optimizer
         @param  optimizer               : {'Adam', 'Momentum', 'Adadelta'}; Optimizer.
+        @param epochs                   : int; number of epochs (for progress display)
         '''
 
         iter_per_epoch = cfg.samples_per_volume * cfg.num_files // cfg.batch_size_train
-        print('Iter per Epoch', iter_per_epoch)
+        logger.debug('Iter per Epoch %s', iter_per_epoch)
         summary_step = iter_per_epoch // summary_steps_per_epoch
 
         if self.options['do_finetune']:
@@ -160,7 +165,7 @@ class SegBasisNet(Network):
         global_step = tf.Variable(0, name='global_step', trainable=False, dtype=tf.int64)
 
         train_path = os.path.abspath(os.path.join(logs_path, folder_name, 'model'))
-        print(train_path)
+        logger.debug('Training path: %s', train_path)
         if not os.path.exists(train_path):
             os.makedirs(train_path)
 
@@ -185,7 +190,26 @@ class SegBasisNet(Network):
 
         self.outputs['accuracy'] = metric.dice_coefficient_tf
 
+        #make progress bar for epochs
+        if epochs != None:
+            progress_bar_epochs = tqdm(
+                        total=epochs,
+                        desc=f'{folder_name} (train)',
+                        position=1,
+                        unit='epoch',
+                        smoothing=0.9
+                    )
+
         for x_t, y_t in training_dataset:
+
+            #create progress bar and reset every epoch
+            if global_step.numpy() % iter_per_epoch == 0:
+                progress_bar_batches = tqdm(
+                    total=iter_per_epoch,
+                    desc=f'Epoch {global_step.numpy() // iter_per_epoch + 1}',
+                    position=0,
+                    smoothing=0.9
+                )
 
             with tf.GradientTape() as tape:
                 prediction = self.model(x_t)
@@ -208,8 +232,18 @@ class SegBasisNet(Network):
             epoch_objective_avg.update_state(objective_train)
             epoch_accuracy_avg.update_state(accuracy_train)
 
+            #call function when epoch ends
             if global_step.numpy() % iter_per_epoch == 0 and global_step.numpy() // iter_per_epoch > 0:
                 self._end_of_epoch(checkpoint_manager, global_step, iter_per_epoch, validation_dataset, valid_writer)
+
+                #update progress bars
+                progress_bar_batches.set_postfix_str(
+                    f'Obj.: {epoch_objective_avg.result().numpy():.4f}' +
+                    f' Acc.: {epoch_accuracy_avg.result().numpy():.4f}'
+                )
+
+                if epochs != None:
+                    progress_bar_epochs.update()
 
                 if self.options['do_finetune']:
                     for layer in self.model.layers[:min(global_step.numpy() // iter_per_epoch * 3, len(self.model.layers) // 2 - 3)]:
@@ -217,23 +251,34 @@ class SegBasisNet(Network):
 
             # if true compute and write summaries
             elif global_step.numpy() % summary_step == 0:
-                print('   Step: ', global_step.numpy(), ' Objective: ', epoch_objective_avg.result().numpy(),
-                      ' Accuracy: ', epoch_accuracy_avg.result().numpy(), '(Train)')
+                logger.info(f'   Step: {global_step.numpy()} Objective: {epoch_objective_avg.result().numpy():.4f}' +
+                      f' Accuracy: {epoch_accuracy_avg.result().numpy():.4f} (Train)')
+
+                #update progress bar
+                progress_bar_batches.set_postfix_str(
+                    f'Obj.: {epoch_objective_avg.result().numpy():.4f}' +
+                    f' Acc.: {epoch_accuracy_avg.result().numpy():.4f}'
+                )
+
                 self._summaries(x_t, y_t, prediction, epoch_objective_avg.result().numpy(),
                                 epoch_accuracy_avg.result().numpy(),
                                 global_step, train_writer)
                 epoch_objective_avg.reset_states()
                 epoch_accuracy_avg.reset_states()
 
+            progress_bar_batches.update()
+
             global_step = global_step + 1
 
-        print('Done -- Finished training after', global_step.numpy() // iter_per_epoch,
-              ' epochs /', global_step.numpy(), 'steps.', ' Average Objective: ', epoch_objective_avg.result().numpy(),
-              '(Train)')
+        #update progressbar after final epoch
+        if epochs != None:
+            progress_bar_epochs.update()
+        logger.info(f'Done -- Finished training after {global_step.numpy() // iter_per_epoch} epochs /' +
+            f'{global_step.numpy()} steps. Average Objective: {epoch_objective_avg.result().numpy()} (Train)')
         self._end_of_epoch(checkpoint_manager, global_step, iter_per_epoch, validation_dataset, valid_writer)
 
     def _end_of_epoch(self, checkpoint_manager, global_step, iter_per_epoch, validation_dataset, valid_writer):
-        print(' Epoch: ', global_step.numpy() // iter_per_epoch)
+        logger.info(' Epoch: %s', global_step.numpy() // iter_per_epoch)
         checkpoint_manager.save(checkpoint_number=global_step.numpy() // iter_per_epoch)
         epoch_objective_avg = tf.keras.metrics.Mean()
         epoch_accuracy_avg = tf.keras.metrics.Mean()
@@ -254,8 +299,8 @@ class SegBasisNet(Network):
             epoch_objective_avg.update_state(objective_validation)
             epoch_accuracy_avg.update_state(accuracy_validation)
 
-        print(' Epoch: ', global_step.numpy() // iter_per_epoch, ' Average Objective: ',
-              epoch_objective_avg.result().numpy(), ' Average Accuracy: ', epoch_accuracy_avg.result().numpy(), '(Valid)')
+        logger.info(f' Epoch: {global_step.numpy() // iter_per_epoch} Average Objective: ' +
+              f'{epoch_objective_avg.result().numpy():.4f} Average Accuracy: {epoch_accuracy_avg.result().numpy():.4f} (Valid)')
         self._summaries(x_v, y_v, prediction, epoch_objective_avg.result().numpy(),
                         epoch_accuracy_avg.result().numpy(), global_step, valid_writer)
 

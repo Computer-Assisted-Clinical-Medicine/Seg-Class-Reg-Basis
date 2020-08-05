@@ -1,11 +1,16 @@
-import tensorflow as tf
+import logging
 import traceback
-import scipy
 import warnings
+
 import numpy as np
+import scipy
+import tensorflow as tf
+
 from . import config as cfg
 from .segbasisloader import SegBasisLoader
 
+#configure logger
+logger = logging.getLogger(__name__)
 
 class SegRatioBasisLoader(SegBasisLoader):
 
@@ -192,8 +197,8 @@ class SegRatioBasisLoader(SegBasisLoader):
             try:
                 samples_obj, samples_bkg = self._read_file_and_return_numpy_samples(file_id.numpy())
             except Exception as e:
-                print('got error `{} from `_read_file`:'.format(e))
-                print(traceback.format_exc())
+                logger.error('got error `%s from `_read_file`:', format(e))
+                logger.error(traceback.format_exc())
                 raise
             return samples_obj[0], samples_obj[1], samples_bkg[0], samples_bkg[1]
 
@@ -340,7 +345,7 @@ class SegRatioBasisLoader(SegBasisLoader):
             I_bkg, L_bkg = self._augment_samples(I_bkg, L_bkg)
             I_obj, L_obj = self._augment_samples(I_obj, L_obj)
 
-        print('          Image Samples Shape: ', I_obj.shape, I_bkg.shape)
-        print('          Label Samples Shape: ', L_obj.shape, L_bkg.shape)
+        logger.debug('          Image Samples Shape: %s (obj) %s (bkg)', I_obj.shape, I_bkg.shape)
+        logger.debug('          Label Samples Shape: %s (obj) %s (bkg)', L_obj.shape, L_bkg.shape)
 
         return [I_obj, L_obj], [I_bkg, L_bkg]

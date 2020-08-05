@@ -32,9 +32,6 @@ test_csv = 'test.csv'
 sample_file_name = 'image.nii.gz'
 label_file_name = 'labels.nii.gz'
 
-##### Mode #####
-VERBOSE = True
-
 if socket.gethostname() == 'ckm4cad':
     ONSERVER = True
     op_parallelism_threads = 6

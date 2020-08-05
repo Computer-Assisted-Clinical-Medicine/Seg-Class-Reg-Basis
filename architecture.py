@@ -1,11 +1,15 @@
-import tensorflow as tf
-import numpy as np
+import logging
 
+import numpy as np
+import tensorflow as tf
+
+from . import config as cfg
 from .NetworkBasis import block as block
 from .NetworkBasis import layer as layer
 from .segbasisnet import SegBasisNet
-from . import config as cfg
 
+#configure logger
+logger = logging.getLogger(__name__)
 
 class UNet(SegBasisNet):
     '''!
@@ -54,15 +58,14 @@ class UNet(SegBasisNet):
         self.options['n_filters_per_block'] = [*self.options['n_filters'], *self.options['n_filters'][-2::-1]]
         self.options['n_blocks'] = len(self.options['n_filters_per_block'])
 
-        if cfg.VERBOSE:
-            self._print_init()
+        #self._print_init()
 
         x = self.inputs['x']
 
         # Encoding
         for block_index in range(0, 2):
             with tf.name_scope('%02d_enc_block' % (block_index)):
-                if cfg.VERBOSE: print(' Encoding Block ', block_index)
+                logger.debug(' Encoding Block %s', block_index)
                 x = block.encoding(x, self.options, self.variables, self.options['n_convolutions'][0],
                                    self.options['kernel_dims'],
                                    self.options['n_filters_per_block'][block_index], self.options['strides'],
@@ -70,14 +73,12 @@ class UNet(SegBasisNet):
                                    self.options['activation'], self.options['use_bias'],
                                    self.options['batch_normalization'], self.options['drop_out'])
                 # self.variables['feature_maps'].append(x) is performed in the encoding block
-                if cfg.VERBOSE:
-                    print(' Result is Tensor with shape ', x.shape)
-                    print(' -------------------------------------')
+                logger.debug(' Result is Tensor with shape %s', x.shape)
 
         # Encoding
         for block_index in range(2, 4):
             with tf.name_scope('%02d_enc_block' % (block_index)):
-                if cfg.VERBOSE: print(' Encoding Block ', block_index)
+                logger.debug(' Encoding Block %s', block_index)
                 x = block.encoding(x, self.options, self.variables, self.options['n_convolutions'][1],
                                    self.options['kernel_dims'],
                                    self.options['n_filters_per_block'][block_index], self.options['strides'],
@@ -85,29 +86,25 @@ class UNet(SegBasisNet):
                                    self.options['activation'], self.options['use_bias'],
                                    self.options['batch_normalization'], self.options['drop_out'])
                 # self.variables['feature_maps'].append(x) is performed in the encoding block
-                if cfg.VERBOSE:
-                    print(' Result is Tensor with shape ', x.shape)
-                    print(' -------------------------------------')
+                logger.debug(' Result is Tensor with shape %s', x.shape)
 
 
         # Bottom
         block_index = 4
         with tf.name_scope('%02d_bot_block' % block_index):
-            if cfg.VERBOSE: print(' Bottom Block ', block_index)
+            logger.debug(' Bottom Block %s', block_index)
             x = block.basic(x, self.options, self.options['n_convolutions'][1],
                             self.options['kernel_dims'],
                             self.options['n_filters_per_block'][block_index], self.options['strides'],
                             self.options['padding'], self.options['dilation_rate'],
                             self.options['activation'], self.options['use_bias'],
                             self.options['batch_normalization'], self.options['drop_out'])
-            if cfg.VERBOSE:
-                print(' Result is Tensor with shape ', x.shape)
-                print(' -------------------------------------')
+            logger.debug(' Result is Tensor with shape %s', x.shape)
 
         # Decoding
         for block_index in range(5, 7):
             with tf.name_scope('%02d_dec_block' % block_index):
-                if cfg.VERBOSE: print(' Decoding Block ', block_index)
+                logger.debug(' Decoding Block %s', block_index)
                 x = block.decoding(x,
                                    self.options, self.options['n_convolutions'][1],
                                    self.options['kernel_dims'],
@@ -116,14 +113,12 @@ class UNet(SegBasisNet):
                                    self.options['activation'], self.options['use_bias'],
                                    self.options['batch_normalization'], self.options['drop_out'],
                                    self.variables['feature_maps'][self.options['n_blocks'] - block_index - 1])
-                if cfg.VERBOSE:
-                    print(' Result is Tensor with shape ', x.shape)
-                    print(' -------------------------------------')
+                logger.debug(' Result is Tensor with shape %s', x.shape)
 
         # Decoding
         for block_index in range(7, 9):
             with tf.name_scope('%02d_dec_block' % block_index):
-                if cfg.VERBOSE: print(' Decoding Block ', block_index)
+                logger.debug(' Decoding Block %s', block_index)
                 x = block.decoding(x,
                                    self.options, self.options['n_convolutions'][2],
                                    self.options['kernel_dims'],
@@ -132,18 +127,14 @@ class UNet(SegBasisNet):
                                    self.options['activation'], self.options['use_bias'],
                                    self.options['batch_normalization'], self.options['drop_out'],
                                    self.variables['feature_maps'][self.options['n_blocks'] - block_index - 1])
-                if cfg.VERBOSE:
-                    print(' Result is Tensor with shape ', x.shape)
-                    print(' -------------------------------------')
+                logger.debug(' Result is Tensor with shape %s', x.shape)
 
         # Add final 1x1 convolutional layer to compute logits
         with tf.name_scope('9_last_layer' + str(cfg.num_classes_seg)):
             self.outputs['probabilities'] = layer.last(x, self.outputs, np.ones(self.options['rank'], dtype=np.int32), self.options['out_channels'], self.options['strides'],
                                                 self.options['padding'], self.options['dilation_rate'],
                                                 self._select_final_activation(), False, self.options['regularizer'], self.options['use_cross_hair'], do_summary=True)
-            if cfg.VERBOSE:
-                print(' Probabilities has shape ', self.outputs['probabilities'].shape)
-                print(' -------------------------------------')
+            logger.debug(' Probabilities have shape %s', self.outputs['probabilities'].shape)
 
         return tf.keras.Model(inputs=self.inputs['x'], outputs=self.outputs['probabilities'])
 
@@ -194,15 +185,14 @@ class ResNet(SegBasisNet):
         self.options['padding_per_block'] = [self.options['padding']] * self.options['n_blocks']
         self.options['kernel_dims_per_block'] = [self.options['kernel_dims']] * self.options['n_blocks']
 
-        if cfg.VERBOSE:
-            self._print_init()
+        #self._print_init()
 
         x = self.inputs['x']
 
         # Encoding
         for block_index in range(0, 2):
             with tf.name_scope('%02d_enc_block' % (block_index)):
-                if cfg.VERBOSE: print(' Encoding Block ', block_index)
+                logger.debug(' Encoding Block %s', block_index)
                 x = block.encoding(x, self.options, self.variables, self.options['n_convolutions'][0],
                                    self.options['kernel_dims_per_block'][block_index],
                                    self.options['n_filters_per_block'][block_index], [1, 1],
@@ -210,14 +200,12 @@ class ResNet(SegBasisNet):
                                    self.options['activation_per_block'][block_index], self.options['use_bias'],
                                    self.options['batch_normalization_per_block'][block_index], self.options['drop_out'])
                 # self.variables['feature_maps'].append(x) is performed in the encoding block
-                if cfg.VERBOSE:
-                    print(' Result is Tensor with shape ', x.shape)
-                    print(' -------------------------------------')
+                logger.debug(' Result is Tensor with shape %s', x.shape)
 
         # Encoding
         for block_index in range(2, 4):
             with tf.name_scope('%02d_enc_block' % (block_index)):
-                if cfg.VERBOSE: print(' Encoding Block ', block_index)
+                logger.debug(' Encoding Block %s', block_index)
                 x = block.encoding(x, self.options, self.variables, self.options['n_convolutions'][1],
                                    self.options['kernel_dims_per_block'][block_index],
                                    self.options['n_filters_per_block'][block_index], self.options['dilation_rate'],
@@ -225,14 +213,12 @@ class ResNet(SegBasisNet):
                                    self.options['activation_per_block'][block_index], self.options['use_bias'],
                                    self.options['batch_normalization_per_block'][block_index], self.options['drop_out'])
                 # self.variables['feature_maps'].append(x) is performed in the encoding block
-                if cfg.VERBOSE:
-                    print(' Result is Tensor with shape ', x.shape)
-                    print(' -------------------------------------')
+                logger.debug(' Result is Tensor with shape %s', x.shape)
 
         # Bottom
         block_index = 4
         with tf.name_scope('%02d_bot_block' % block_index):
-            if cfg.VERBOSE: print(' Bottom Block ', block_index)
+            logger.debug(' Bottom Block %s', block_index)
             x = block.basic(x, self.options, self.options['n_convolutions'][1],
                             self.options['kernel_dims_per_block'][block_index],
                             self.options['n_filters_per_block'][block_index], self.options['dilation_rate'],
@@ -240,14 +226,12 @@ class ResNet(SegBasisNet):
                             self.options['activation_per_block'][block_index], self.options['use_bias'],
                             self.options['batch_normalization_per_block'][block_index], self.options['drop_out'])
 
-            if cfg.VERBOSE:
-                print(' Result is Tensor with shape ', x.shape)
-                print(' -------------------------------------')
+            logger.debug(' Result is Tensor with shape %s', x.shape)
 
         # Decoding
         for block_index in range(5, 7):
             with tf.name_scope('%02d_dec_block' % block_index):
-                if cfg.VERBOSE: print(' Decoding Block ', block_index)
+                logger.debug(' Decoding Block %s', block_index)
                 x = block.decoding(x,
                                  self.options, self.options['n_convolutions'][1],
                                  self.options['kernel_dims_per_block'][block_index],
@@ -256,14 +240,12 @@ class ResNet(SegBasisNet):
                                  self.options['activation_per_block'][block_index], self.options['use_bias'],
                                  self.options['batch_normalization_per_block'][block_index], self.options['drop_out'])
 
-                if cfg.VERBOSE:
-                    print(' Result is Tensor with shape ', x.shape)
-                    print(' -------------------------------------')
+                logger.debug(' Result is Tensor with shape %s', x.shape)
 
         # Decoding
         for block_index in range(7, 9):
             with tf.name_scope('%02d_dec_block' % block_index):
-                if cfg.VERBOSE: print(' Decoding Block ', block_index)
+                logger.debug(' Decoding Block %s', block_index)
                 x = block.decoding(x,
                                    self.options, self.options['n_convolutions'][2],
                                    self.options['kernel_dims_per_block'][block_index],
@@ -271,9 +253,8 @@ class ResNet(SegBasisNet):
                                    self.options['padding_per_block'][block_index], self.options['dilation_rate'],
                                    self.options['activation_per_block'][block_index], self.options['use_bias'],
                                    self.options['batch_normalization_per_block'][block_index], self.options['drop_out'])
-                if cfg.VERBOSE:
-                    print(' Result is Tensor with shape ', x.shape)
-                    print(' -------------------------------------')
+                    
+                logger.debug(' Result is Tensor with shape %s', x.shape)
 
         # Add final 1x1 convolutional layer to compute logits
         with tf.name_scope('9_last_layer'+ str(cfg.num_classes_seg)):
@@ -282,9 +263,8 @@ class ResNet(SegBasisNet):
                                                        self.options['padding'], self.options['dilation_rate'],
                                                        self._select_final_activation(), False,
                                                        self.options['use_cross_hair'], do_summary=True)
-            if cfg.VERBOSE:
-                print(' Probabilities has shape ', self.outputs['probabilities'].shape)
-                print(' -------------------------------------')
+  
+            logger.debug(' Probabilities have shape %s', self.outputs['probabilities'].shape)
 
         return tf.keras.Model(inputs=self.inputs['x'], outputs=self.outputs['probabilities'])
 
@@ -334,25 +314,22 @@ class DVN(SegBasisNet):
         ## Name of the network
         self.options['name'] = self.get_name()
 
-        if cfg.VERBOSE:
-            self._print_init()
+        #self._print_init()
 
         x = self.inputs['x']
 
         # Convolutional Layers
         for block_index in range(0, 4):
             with tf.name_scope('%02dconv_block' % (block_index)):
-                if cfg.VERBOSE: print(' Convolutional Block ', block_index)
+                logger.debug(' Convolutional Block %s', block_index)
                 x = block.basic(x, self.options, self.options['n_convolutions'],
                                    [self.options['kernel_dims'][0][block_index]] * self.options['rank'],
                                    self.options['n_filters'][block_index], self.options['strides'],
                                    self.options['padding'], self.options['dilation_rate'],
                                    self.options['activation'], self.options['use_bias'],
                                    self.options['batch_normalization'], self.options['drop_out'])
-                # self.variables['feature_maps'].append(x) is performed in the encoding block
-                if cfg.VERBOSE:
-                    print(' Result is Tensor with shape ', x.shape)
-                    print(' -------------------------------------')
+
+                logger.debug(' Result is Tensor with shape %s', x.shape)
 
         # Add final 1x1 convolutional layer to compute logits
         with tf.name_scope('4_last_layer'+ str(cfg.num_classes_seg)):
@@ -365,9 +342,8 @@ class DVN(SegBasisNet):
                                                        self._select_final_activation(), False,
                                                        self.options['regularizer'],
                                                        self.options['use_cross_hair'], do_summary=True)
-            if cfg.VERBOSE:
-                print(' Probabilities has shape ', self.outputs['probabilities'].shape)
-                print(' -------------------------------------')
+
+            logger.debug(' Probabilities have shape %s', self.outputs['probabilities'].shape)
 
         return tf.keras.Model(inputs=self.inputs['x'], outputs=self.outputs['probabilities'])
 
@@ -419,8 +395,7 @@ class VNet(SegBasisNet):
         self.options['n_filters_per_block'] = [*self.options['n_filters'], *self.options['n_filters'][-2::-1]]
         self.options['n_blocks'] = len(self.options['n_filters_per_block'])
 
-        if cfg.VERBOSE:
-            self._print_init()
+        #self._print_init()
 
         x = self.inputs['x']
 
@@ -439,7 +414,7 @@ class VNet(SegBasisNet):
         # Encoding
         for block_index in range(0, 1):
             with tf.name_scope('%02d_enc_block' % (block_index)):
-                if cfg.VERBOSE: print(' Encoding Block ', block_index)
+                logger.debug(' Encoding Block %s', block_index)
                 x = block.encoding_2(x, self.options, self.variables, self.options['n_convolutions'][0],
                                      self.options['kernel_dims'],
                                      self.options['n_filters_per_block'][block_index], self.options['strides'],
@@ -447,14 +422,13 @@ class VNet(SegBasisNet):
                                      self.options['activation'], self.options['use_bias'],
                                      self.options['batch_normalization'], self.options['drop_out'])
                 # self.variables['feature_maps'].append(x) is performed in the encoding block
-                if cfg.VERBOSE:
-                    print(' Result is Tensor with shape ', x.shape)
-                    print(' -------------------------------------')
+
+                logger.debug(' Result is Tensor with shape %s', x.shape)
 
         # Encoding
         for block_index in range(1, 2):
             with tf.name_scope('%02d_enc_block' % (block_index)):
-                if cfg.VERBOSE: print(' Encoding Block ', block_index)
+                logger.debug(' Encoding Block %s', block_index)
                 x = block.encoding_2(x, self.options, self.variables, self.options['n_convolutions'][1],
                                    self.options['kernel_dims'],
                                    self.options['n_filters_per_block'][block_index], self.options['strides'],
@@ -462,14 +436,13 @@ class VNet(SegBasisNet):
                                    self.options['activation'], self.options['use_bias'],
                                    self.options['batch_normalization'], self.options['drop_out'])
                 # self.variables['feature_maps'].append(x) is performed in the encoding block
-                if cfg.VERBOSE:
-                    print(' Result is Tensor with shape ', x.shape)
-                    print(' -------------------------------------')
+
+                logger.debug(' Result is Tensor with shape %s', x.shape)
 
         # Encoding
         for block_index in range(2, 4):
             with tf.name_scope('%02d_enc_block' % (block_index)):
-                if cfg.VERBOSE: print(' Encoding Block ', block_index)
+                logger.debug(' Encoding Block %s', block_index)
                 x = block.encoding_2(x, self.options, self.variables, self.options['n_convolutions'][2],
                                    self.options['kernel_dims'],
                                    self.options['n_filters_per_block'][block_index], self.options['strides'],
@@ -477,29 +450,27 @@ class VNet(SegBasisNet):
                                    self.options['activation'], self.options['use_bias'],
                                    self.options['batch_normalization'], self.options['drop_out'])
                 # self.variables['feature_maps'].append(x) is performed in the encoding block
-                if cfg.VERBOSE:
-                    print(' Result is Tensor with shape ', x.shape)
-                    print(' -------------------------------------')
+
+                logger.debug(' Result is Tensor with shape %s', x.shape)
 
 
         # Bottom
         block_index = 4
         with tf.name_scope('%02d_bot_block' % block_index):
-            if cfg.VERBOSE: print(' Bottom Block ', block_index)
+            logger.debug(' Bottom Block %s', block_index)
             x = block.basic_2(x, self.options, self.options['n_convolutions'][2],
                             self.options['kernel_dims'],
                             self.options['n_filters_per_block'][block_index], self.options['strides'],
                             self.options['padding'], self.options['dilation_rate'],
                             self.options['activation'], self.options['use_bias'],
                             self.options['batch_normalization'], self.options['drop_out'])
-            if cfg.VERBOSE:
-                print(' Result is Tensor with shape ', x.shape)
-                print(' -------------------------------------')
+
+            logger.debug(' Result is Tensor with shape %s', x.shape)
 
         # Decoding
         for block_index in range(5, 7):
             with tf.name_scope('%02d_dec_block' % block_index):
-                if cfg.VERBOSE: print(' Decoding Block ', block_index)
+                logger.debug(' Decoding Block %s', block_index)
                 x = block.decoding_2(x,
                                    self.options, self.options['n_convolutions'][2],
                                    self.options['kernel_dims'],
@@ -508,14 +479,13 @@ class VNet(SegBasisNet):
                                    self.options['activation'], self.options['use_bias'],
                                    self.options['batch_normalization'], self.options['drop_out'],
                                    self.variables['feature_maps'][self.options['n_blocks'] - block_index - 1])
-                if cfg.VERBOSE:
-                    print(' Result is Tensor with shape ', x.shape)
-                    print(' -------------------------------------')
+
+                logger.debug(' Result is Tensor with shape %s', x.shape)
 
         # Decoding
         for block_index in range(7, 8):
             with tf.name_scope('%02d_dec_block' % block_index):
-                if cfg.VERBOSE: print(' Decoding Block ', block_index)
+                logger.debug(' Decoding Block %s', block_index)
                 x = block.decoding_2(x,
                                    self.options, self.options['n_convolutions'][1],
                                    self.options['kernel_dims'],
@@ -524,14 +494,13 @@ class VNet(SegBasisNet):
                                    self.options['activation'], self.options['use_bias'],
                                    self.options['batch_normalization'], self.options['drop_out'],
                                    self.variables['feature_maps'][self.options['n_blocks'] - block_index - 1])
-                if cfg.VERBOSE:
-                    print(' Result is Tensor with shape ', x.shape)
-                    print(' -------------------------------------')
+
+                logger.debug(' Result is Tensor with shape %s', x.shape)
 
         # Decoding
         for block_index in range(8, 9):
             with tf.name_scope('%02d_dec_block' % block_index):
-                if cfg.VERBOSE: print(' Decoding Block ', block_index)
+                logger.debug(' Decoding Block %s', block_index)
                 x = block.decoding_2(x,
                                      self.options, self.options['n_convolutions'][0],
                                      self.options['kernel_dims'],
@@ -540,18 +509,16 @@ class VNet(SegBasisNet):
                                      self.options['activation'], self.options['use_bias'],
                                      self.options['batch_normalization'], self.options['drop_out'],
                                      self.variables['feature_maps'][self.options['n_blocks'] - block_index - 1])
-                if cfg.VERBOSE:
-                    print(' Result is Tensor with shape ', x.shape)
-                    print(' -------------------------------------')
+
+                logger.debug(' Result is Tensor with shape %s', x.shape)
 
         # Add final 1x1 convolutional layer to compute logits
         with tf.name_scope('9_last_layer'+ str(cfg.num_classes_seg)):
             self.outputs['probabilities'] = layer.last(x, self.outputs, np.ones(self.options['rank'], dtype=np.int32), self.options['out_channels'], self.options['strides'],
                                                 self.options['padding'], self.options['dilation_rate'],
                                                 self._select_final_activation(), False, self.options['regularizer'], self.options['use_cross_hair'], do_summary=True)
-            if cfg.VERBOSE:
-                print(' Probabilities has shape ', self.outputs['probabilities'].shape)
-                print(' -------------------------------------')
+
+            logger.debug(' Probabilities have shape %s', self.outputs['probabilities'].shape)
 
         return tf.keras.Model(inputs=self.inputs['x'], outputs=self.outputs['probabilities'])
 
