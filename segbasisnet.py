@@ -434,7 +434,7 @@ class SegBasisNet(Network):
             data_info['res_origin'] = resampled_img.GetOrigin()
             data_info['res_direction'] = cfg.target_direction
 
-        pred_img = image.np_array_to_itk_image(predictions, data_info, cfg.label_background_value,
+        pred_img = image.np_array_to_sitk_image(predictions, data_info, cfg.label_background_value,
                                                cfg.adapt_resolution, cfg.target_type_label)
 
         name = Path(file_name).name
