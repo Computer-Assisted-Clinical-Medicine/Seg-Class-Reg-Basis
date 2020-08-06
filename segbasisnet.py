@@ -5,6 +5,7 @@ from time import time
 
 import numpy as np
 import tensorflow as tf
+from tensorboard.plugins.hparams import api as hp
 from tqdm import tqdm
 
 from . import config as cfg
@@ -140,7 +141,7 @@ class SegBasisNet(Network):
             self._write_inference_data(probability_map, filename, apply_path, version, self.options['rank'])
 
     def _run_train(self, logs_path, folder_name, training_dataset, validation_dataset,
-                   summary_steps_per_epoch, l_r=0.001, optimizer='Adam', epochs=None, **kwargs):
+                   summary_steps_per_epoch, epochs, l_r=0.001, optimizer='Adam', **kwargs):
         '''!
         Sets up and runs training session
         @param  logs_path               : str; path to logs
@@ -154,6 +155,10 @@ class SegBasisNet(Network):
         @param  optimizer               : {'Adam', 'Momentum', 'Adadelta'}; Optimizer.
         @param epochs                   : int; number of epochs (for progress display)
         '''
+
+        #save options for summary
+        self.options['epochs'] = epochs
+        self.options['learning_rate'] = l_r
 
         iter_per_epoch = cfg.samples_per_volume * cfg.num_files // cfg.batch_size_train
         logger.debug('Iter per Epoch %s', iter_per_epoch)
@@ -191,14 +196,13 @@ class SegBasisNet(Network):
         self.outputs['accuracy'] = metric.dice_coefficient_tf
 
         #make progress bar for epochs
-        if epochs != None:
-            progress_bar_epochs = tqdm(
-                        total=epochs,
-                        desc=f'{folder_name} (train)',
-                        position=1,
-                        unit='epoch',
-                        smoothing=0.9
-                    )
+        progress_bar_epochs = tqdm(
+                    total=epochs,
+                    desc=f'{folder_name} (train)',
+                    position=1,
+                    unit='epoch',
+                    smoothing=0.9
+                )
 
         for x_t, y_t in training_dataset:
 
@@ -242,8 +246,7 @@ class SegBasisNet(Network):
                     f' Acc.: {epoch_accuracy_avg.result().numpy():.4f}'
                 )
 
-                if epochs != None:
-                    progress_bar_epochs.update()
+                progress_bar_epochs.update()
 
                 if self.options['do_finetune']:
                     for layer in self.model.layers[:min(global_step.numpy() // iter_per_epoch * 3, len(self.model.layers) // 2 - 3)]:
@@ -262,7 +265,7 @@ class SegBasisNet(Network):
 
                 self._summaries(x_t, y_t, prediction, epoch_objective_avg.result().numpy(),
                                 epoch_accuracy_avg.result().numpy(),
-                                global_step, train_writer)
+                                global_step, train_writer, mode='train')
                 epoch_objective_avg.reset_states()
                 epoch_accuracy_avg.reset_states()
 
@@ -271,8 +274,7 @@ class SegBasisNet(Network):
             global_step = global_step + 1
 
         #update progressbar after final epoch
-        if epochs != None:
-            progress_bar_epochs.update()
+        progress_bar_epochs.update()
         logger.info(f'Done -- Finished training after {global_step.numpy() // iter_per_epoch} epochs /' +
             f'{global_step.numpy()} steps. Average Objective: {epoch_objective_avg.result().numpy()} (Train)')
         self._end_of_epoch(checkpoint_manager, global_step, iter_per_epoch, validation_dataset, valid_writer)
@@ -302,13 +304,39 @@ class SegBasisNet(Network):
         logger.info(f' Epoch: {global_step.numpy() // iter_per_epoch} Average Objective: ' +
               f'{epoch_objective_avg.result().numpy():.4f} Average Accuracy: {epoch_accuracy_avg.result().numpy():.4f} (Valid)')
         self._summaries(x_v, y_v, prediction, epoch_objective_avg.result().numpy(),
-                        epoch_accuracy_avg.result().numpy(), global_step, valid_writer)
+                        epoch_accuracy_avg.result().numpy(), global_step, valid_writer, mode='valid')
 
-    def _summaries(self, x, y, probabilities, objective, acccuracy, global_step, writer, max_image_output=2, histo_buckets=50):
+    def get_hyperparameter_dict(self):
+        """This function reads the hyperparameters from options and writes them to a dict of
+        hyperparameters, which can then be read using tensorboard.
+
+        Returns
+        -------
+        dict
+            the hyperparameters as a dictionary
+        """
+        hyperparameters = {
+            'dimension' : self.options['rank'],
+            'optimizer' : self.optimizer._name,
+            'drop_out_rate' : self.options['drop_out'][1],
+            'regularize' : self.options['regularize'][0],
+            'regularizer' : self.options['regularize'][1],
+            'regularizer_param' : self.options['regularize'][2],
+            'kernel_dim' : self.options['kernel_dims'][0]
+        }
+        for o in ['epochs', 'learning_rate', 'use_bias', 'loss', 'name', 'do_gradient_clipping', 'batch_normalization', 'activation', 'use_cross_hair']:
+            hyperparameters[o] = self.options[o]
+        return hyperparameters
+
+    def _summaries(self, x, y, probabilities, objective, acccuracy, global_step, writer, max_image_output=2, histo_buckets=50, mode=None):
 
         predictions = tf.argmax(probabilities, -1)
 
         with writer.as_default():
+            
+            #save hyperparameters for tensorboard
+            hp.hparams(self.get_hyperparameter_dict())
+
             with tf.name_scope('01_Objective'):
                 tf.summary.scalar('average_objective', objective, step=global_step)
                 tf.summary.scalar('iteration_' + self.options['loss'], self.outputs['loss'](y, probabilities), step=global_step)
@@ -317,6 +345,8 @@ class SegBasisNet(Network):
 
             with tf.name_scope('02_Accuracy'):
                 tf.summary.scalar('average_acccuracy', acccuracy, step=global_step)
+                if mode != None:
+                    tf.summary.scalar(f'average_acccuracy_{mode}', acccuracy, step=global_step)
 
             with tf.name_scope('03_Data_Statistics'):
                 tf.summary.scalar('one_hot_max_train_img', tf.reduce_max(y), step=global_step)
