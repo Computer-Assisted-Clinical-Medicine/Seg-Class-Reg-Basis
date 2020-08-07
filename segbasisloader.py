@@ -112,8 +112,9 @@ class SegBasisLoader(DataLoader):
         file_id = str(file_id, 'utf-8')
         logger.debug('        Loading %s (%s)', file_id, self.mode)
         # Use a SimpleITK reader to load the nii images and labels for training
-        data_img = sitk.ReadImage(os.path.join(file_id, (cfg.sample_file_name)))
-        label_img = sitk.ReadImage(os.path.join(file_id, (cfg.label_file_name)))
+        data_file, label_file = self._get_filenames(file_id) 
+        data_img = sitk.ReadImage(data_file)
+        label_img = sitk.ReadImage(label_file)
         data_img, label_img = self.adapt_to_task(data_img, label_img)
         data_img, label_img = self._resample(data_img, label_img)
         data = sitk.GetArrayFromImage(data_img)
@@ -129,6 +130,24 @@ class SegBasisLoader(DataLoader):
         # self._check_images(data, lbl)
 
         return data, lbl
+
+    def _get_filenames(self, file_id):
+        """Implements the standard file names, can be changed for custom file names
+
+        Parameters
+        ----------
+        file_id : str
+            The file ID
+
+        Returns
+        -------
+        str, str
+            The path to the data_file and label_file
+        """
+        folder, file_number = os.path.split(file_id)
+        data_file = os.path.join(folder, (cfg.sample_file_name_prefix + file_number + '.nii'))
+        os.path.join(folder, (cfg.label_file_name_prefix + file_number + '.nii'))
+        return data_file, label_file
 
     def _get_samples_from_volume(self, data, lbl):
         '''!
