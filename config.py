@@ -28,9 +28,9 @@ fine_csv = 'fine.csv'
 vald_csv = 'vald.csv'
 test_csv = 'test.csv'
 
-#these names are used inside the patient folder
-sample_file_name = 'image.nii.gz'
-label_file_name = 'labels.nii.gz'
+#prefixes are used for file names
+sample_file_name_prefix = 'sample-' 
+label_file_name_prefix = 'label-'
 
 if socket.gethostname() == 'ckm4cad':
     ONSERVER = True
@@ -47,7 +47,7 @@ else:
     train_reader_instances = 1
 
 
-summary_steps_per_epoch = 5
+summary_steps_per_epoch = 5 # how often a summary is calculated (useful for updates in tesnorboard)
 do_gradient_clipping = False
 clipping_value = 50
 
@@ -62,7 +62,7 @@ write_probabilities = False
 ##### Data #####
 num_channels = 1
 num_slices = 1
-num_classes_seg = 2
+num_classes_seg = 2  #the number of classes including the background
 num_files = -1
 #has to be smaller than the target size
 train_dim = 128
@@ -72,7 +72,7 @@ test_dim = 256
 test_data_shape = [test_dim, test_dim, num_channels]
 test_label_shape = [test_dim, test_dim, num_classes_seg]
 
-dtype = tf.float32
+dtype = tf.float32 #the datatype to use inside of tensorflow
 data_train_split = 0.75
 number_of_vald = 2
 
@@ -88,7 +88,7 @@ patch_shift_factor = 3  # 3*std is 99th percentile
 in_between_slice_factor = 2
 min_n_samples = 10
 random_sampling_mode = SAMPLINGMODES.CONSTRAINED_LABEL
-percent_of_object_samples = 50  # %
+percent_of_object_samples = 50 #how many samples should contain the objects (in percent of samples_per_volume)
 samples_per_volume = 80
 samples_per_slice_object = 2
 samples_per_slice_lesion = 4
@@ -103,13 +103,13 @@ intensity_variation_interval = 0.01
 adapt_resolution = True
 if adapt_resolution:
     target_spacing = [1, 1, 3]
-    target_size = [256, 256]
+    target_size = [256, 256] # these can be different from the network dimensions, because patches are used
 target_direction = (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)  # make sure all images are oriented equally
 target_type_image = sitk.sitkFloat32
 target_type_label = sitk.sitkUInt8
-data_background_value = -1000
-label_background_value = 0
-max_rotation = 0.07
+data_background_value = -1000 #data outside the image is set to this value
+label_background_value = 0 #labels to this
+max_rotation = 0.07  #the maximum amount of rotation that is allowed rotation will be between -pi*max_rotation and pi*max_rotation
 
 # Weighted CE
 basis_factor = 5
@@ -119,6 +119,8 @@ max_weight = 1.2
 tissue_threshold = -0.9
 
 # Preprocessing
+#values between [norm_min_v, norm_max_v] are normalized to interval [-1, 1]
+#values outside this area are truncated
 norm_min_v = -150
 norm_max_v = 275
 norm_eps = 1e-5

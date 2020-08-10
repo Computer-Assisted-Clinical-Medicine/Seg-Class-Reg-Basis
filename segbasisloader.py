@@ -146,7 +146,11 @@ class SegBasisLoader(DataLoader):
         """
         folder, file_number = os.path.split(file_id)
         data_file = os.path.join(folder, (cfg.sample_file_name_prefix + file_number + '.nii'))
-        os.path.join(folder, (cfg.label_file_name_prefix + file_number + '.nii'))
+        if not os.path.exists(data_file):
+            raise Exception(f'The file {data_file} could not be found')
+        label_file = os.path.join(folder, (cfg.label_file_name_prefix + file_number + '.nii'))
+        if not os.path.exists(data_file):
+            raise Exception(f'The file {label_file} could not be found')
         return data_file, label_file
 
     def _get_samples_from_volume(self, data, lbl):
