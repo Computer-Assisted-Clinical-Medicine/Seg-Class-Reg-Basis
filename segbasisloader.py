@@ -8,6 +8,10 @@ from numpy.core.fromnumeric import squeeze
 from . import config as cfg
 from .NetworkBasis import image as Image
 from .NetworkBasis.dataloader import DataLoader
+import tensorflow as tf
+import elasticdeform
+import matplotlib.pyplot as plt
+
 
 np.seterr(all='raise')
 
@@ -74,7 +78,8 @@ class SegBasisLoader(DataLoader):
         elif self.mode is self.MODES.VALIDATE:
             self.sample_buffer_size = cfg.batch_capacity_train
 
-    def _read_file_and_return_numpy_samples(self, file_id:bytes):
+    @tf.autograph.experimental.do_not_convert
+    def _read_file_and_return_numpy_samples(self, file_id):
         """!
         Calls _load_file to load data and label based on the @p file_id and then extracts samples by calling _get_samples_from_volume()
         @param file_id <em>string,  </em> a file ID correspondinging to a pair of data file and label
@@ -401,7 +406,7 @@ class SegBasisLoader(DataLoader):
                                        index - self.slice_shift:index + self.slice_shift:1], -1, 0)
 
         if self.mode is not self.MODES.APPLY:
-            L = self.__class__.one_hot_label(L)
+            L = np.expand_dims(L, -1)
             return [I, L]
         else:
             return [I, None]
@@ -444,8 +449,9 @@ class SegBasisLoader(DataLoader):
         - flipping coronal
         - flipping sagittal
         - intensity variation
+        - deformation
         '''
-        if cfg.do_flip_coronal or cfg.do_flip_sagittal or cfg.do_variate_intensities:
+        if cfg.do_flip_coronal or cfg.do_flip_sagittal or cfg.do_variate_intensities or cfg.do_deform or cfg.add_noise:
             for sample in range(I.shape[0]):
                 if cfg.do_flip_coronal:
                     if np.random.randint(0, 2) > 0:
@@ -459,9 +465,51 @@ class SegBasisLoader(DataLoader):
                         variation = (np.random.random_sample() * 2.0 * cfg.intensity_variation_interval) - cfg.intensity_variation_interval
                         I[sample] = I[sample] + variation
                         if cfg.normalizing_method == cfg.NORMALIZING.WINDOW:
-                            a_min = np.quantile(I[sample], cfg.norm_min_q)
-                            a_max = np.quantile(I[sample], cfg.norm_max_q)
-                            I[sample] = np.clip(I[sample], a_min=a_min, a_max=a_max)
+                            flags = I[sample] < -1
+                            I[sample][flags] = -1
+                            flags = I[sample] > 1
+                            I[sample][flags] = 1
+                if cfg.do_deform:
+                    if np.random.randint(0, 2) > 0:
+                        if cfg.normalizing_method == cfg.NORMALIZING.WINDOW:
+                            [i_sample, i_label] = elasticdeform.deform_random_grid([np.squeeze(I[sample]), np.squeeze(L[sample])], cfg.deform_sigma, cfg.points, cval=[-1, 0])
+                            I[sample] = np.expand_dims(i_sample, -1)
+                            L[sample] = np.expand_dims(i_label, -1)
+                            flags = I[sample] < -1
+                            I[sample][flags] = -1
+                            flags = I[sample] > 1
+                            I[sample][flags] = 1
+                            L[sample] = (L[sample] > 0.5).astype(int)
+                        else:
+                            # ToDo throw exception not allowed mode
+                            raise ValueError("Not allowed mode. Try NORMALIZING.WINDOW method.")
+                # ToDo: do_add_noise
+                if cfg.add_noise:
+
+                    if cfg.noise_typ == cfg.NOISETYP.GAUSSIAN:
+                        gaussian = np.random.normal(0, cfg.standard_deviation, self.dshapes[0])
+                        gaussian = gaussian * 2/(np.abs(cfg.norm_min_v) + cfg.norm_max_v)
+                        print("Min gaus:", gaussian.min())
+                        print("Max gaus:", gaussian.max())
+                        I[sample] = I[sample] + gaussian
+
+                    elif cfg.noise_typ == cfg.NOISETYP.POISSON:
+                        #I[sample] = I[sample]-10
+                        poisson = np.random.poisson(cfg.mean_poisson, self.dshapes[0])
+                        print("STD vorher:", np.std(poisson))
+                        poisson = poisson * -cfg.mean_poisson/2 * 2/(np.abs(cfg.norm_min_v) + cfg.norm_max_v)
+                        print("STD:", np.std(poisson))
+
+                        print("Minimum Poisson:", np.min(poisson))
+                        print("Maximum Poisson:", np.max(poisson))
+                        I[sample] = I[sample] + poisson
+                        #I[sample] = I[sample] + (poisson - 13*0.0025)
+
+                    flags = I[sample] < -1
+                    I[sample][flags] = -1
+                    flags = I[sample] > 1
+                    I[sample][flags] = 1
+
         return I, L
 
     def _resample(self, data, label):

@@ -24,6 +24,10 @@ class NORMALIZING(Enum):
     PERCENT5 = 2
 
 
+class NOISETYP(Enum):
+    GAUSSIAN =0
+    POISSON = 1
+
 #these files are used to store the different sets
 train_csv = 'train.csv'
 fine_csv = 'fine.csv'
@@ -107,7 +111,14 @@ samples_per_slice_uni = 1
 do_flip_coronal = False
 do_flip_sagittal = False
 do_variate_intensities = False
-intensity_variation_interval = 0.01
+intensity_variation_interval = 0 #0.01
+do_deform = False
+deform_sigma = 10  # standard deviation of the normal distribution
+points = 3  # size of the grid (3x3 grid)
+add_noise = True
+noise_typ = NOISETYP.GAUSSIAN
+standard_deviation = 0.025
+mean_poisson = 30 # relative to full scale
 
 # Resampling
 do_resampling = False
