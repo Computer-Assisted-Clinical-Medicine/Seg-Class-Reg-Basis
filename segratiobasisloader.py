@@ -16,9 +16,9 @@ class SegRatioBasisLoader(SegBasisLoader):
 
     def __call__(self, file_list, batch_size, n_epochs=1, read_threads=1):
         """!
-        Parses the list of file IDs given in @p file_list, identifies .nii files to load and loads the data and labels, genetares @p tf.dataset of data and labels with necessary repeating, shuffling, batching and prefetching.
+        Parses the list of file IDs given in @p file_list, identifies .nrrd files to load and loads the data and labels, genetares @p tf.dataset of data and labels with necessary repeating, shuffling, batching and prefetching.
 
-        @param  file_list : <em>  array of strings,  </em> where each string is a file ID corresponding to a pair of data file and label file to be loaded. @p file_list should be obtained from a @p .csv file and then converted to numpy array. Each ID string should have the format <tt> 'Location\\file_number'</tt>. From @p Location, the data file and label file with the @p file_number, respectiely named as @p volume-file_number.nii and segmentation-file_number.nii are loaded. (See also LitsLoader._read_file(), LitsLoader._load_file() for more details.)
+        @param  file_list : <em>  array of strings,  </em> where each string is a file ID corresponding to a pair of data file and label file to be loaded. @p file_list should be obtained from a @p .csv file and then converted to numpy array. Each ID string should have the format <tt> 'Location\\file_number'</tt>. From @p Location, the data file and label file with the @p file_number, respectiely named as @p volume-file_number.nrrd and segmentation-file_number.nrrd are loaded. (See also LitsLoader._read_file(), LitsLoader._load_file() for more details.)
         @param batch_size : <em> int, </em> batch size
         @param n_epochs : @em int, number of training epochs
         @param read_threads : @em int, number of threads/instances to read in parallel
@@ -90,6 +90,7 @@ class SegRatioBasisLoader(SegBasisLoader):
                     zipped_ds = tf.data.Dataset.zip((ds_obj, ds_bkg))
                     ds = zipped_ds.map(concat)
 
+                    # already prefetch the next element to reduce latency
                     ds = ds.prefetch(1)
 
         return ds
@@ -296,8 +297,8 @@ class SegRatioBasisLoader(SegBasisLoader):
         # print('          Slices:', s, self.slice_shift, 'Number of Indices (Object, Background): ', object_indices.size, background_indices.size)
         # print('            Indices (Object, Background): ', object_indices, background_indices)
         # print('            Samples per Slice (Object, Background): ', samples_per_slice_obj, samples_per_slice_bkg)
-        # print('---- Object Indix List:', np.min(object_indices), np.max(object_indices))
-        # print('---- Background Indix List:', np.min(background_indices), np.max(background_indices))
+        # print('---- Object Index List:', np.min(object_indices), np.max(object_indices))
+        # print('---- Background Index List:', np.min(background_indices), np.max(background_indices))
         return object_indices, samples_per_slice_obj, background_indices, samples_per_slice_bkg
 
     def _get_samples_from_volume(self, data, lbl):

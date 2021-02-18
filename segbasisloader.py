@@ -3,6 +3,7 @@ import os
 
 import numpy as np
 import SimpleITK as sitk
+from numpy.core.fromnumeric import squeeze
 
 from . import config as cfg
 from .NetworkBasis import image as Image
@@ -46,7 +47,7 @@ class SegBasisLoader(DataLoader):
             # In 2D this parameter describes how many slices are additionally loaded.
             # They will be interpreted as channels.
             # Using in_between_slice_factor slices will be skipped.
-            self.slice_shift = ((self.n_channels - 1) // 2) * cfg.in_between_slice_factor
+            self.slice_shift = 0#((self.n_channels - 1) // 2) * cfg.in_between_slice_factor TODO fix calculation, does not work for 3
             logger.debug('    Rank of input shape is %s. Loading 2D samples with SS=%s', self.data_rank, self.slice_shift)
 
         elif self.data_rank == 4:
@@ -73,7 +74,7 @@ class SegBasisLoader(DataLoader):
         elif self.mode is self.MODES.VALIDATE:
             self.sample_buffer_size = cfg.batch_capacity_train
 
-    def _read_file_and_return_numpy_samples(self, file_id):
+    def _read_file_and_return_numpy_samples(self, file_id:bytes):
         """!
         Calls _load_file to load data and label based on the @p file_id and then extracts samples by calling _get_samples_from_volume()
         @param file_id <em>string,  </em> a file ID correspondinging to a pair of data file and label
@@ -97,7 +98,7 @@ class SegBasisLoader(DataLoader):
         '''!
         loads nii data file and nii labels file given the @p file_id
 
-        @param file_id <em>string,  </em> should have the format <tt> 'Location\\file_number'</tt>. The @p Location must contain the data file with the @p file_number named as @p volume-file_number.nii and the data file with the @p file_number named as @p segmentation-file_number.nii to be loaded. For example, <tt>'C:\\DataLoction\\0'</tt> can be a @p file_id. Then <tt> C:\\DataLoction </tt> should contain @p volume-0.nii and @p segmetation-0.nii.
+        @param file_id <em>string,  </em> should have the format <tt> 'Location\\file_number'</tt>. The @p Location must contain the data file with the @p file_number named as @p volume-file_number.nrrd and the data file with the @p file_number named as @p segmentation-file_number.nrrd to be loaded. For example, <tt>'C:\\DataLoction\\0'</tt> can be a @p file_id. Then <tt> C:\\DataLoction </tt> should contain @p volume-0.nrrd and @p segmetation-0.nrrd.
 
         Given the @p file_id, this function
         - Generates the location and file number for the data and label files.
@@ -116,13 +117,14 @@ class SegBasisLoader(DataLoader):
         data_img = sitk.ReadImage(data_file)
         label_img = sitk.ReadImage(label_file)
         data_img, label_img = self.adapt_to_task(data_img, label_img)
-        data_img, label_img = self._resample(data_img, label_img)
+        if cfg.do_resampling:
+            data_img, label_img = self._resample(data_img, label_img)
         data = sitk.GetArrayFromImage(data_img)
         data = self.normalize(data)
         lbl = sitk.GetArrayFromImage(label_img)
-        # move z axis to last index
-        data = np.moveaxis(data, 0, -1)
-        lbl = np.moveaxis(lbl, 0, -1)
+        # move z axis to last index (do not use -1 in case there are 4 dimensions)
+        data = np.moveaxis(data, 0, 2)
+        lbl = np.moveaxis(lbl, 0, 2)
         self._check_images(data, lbl)
         if self.mode is self.MODES.APPLY:
             data = Image.pad_image(data, 'edge', self.slice_shift)
@@ -145,10 +147,10 @@ class SegBasisLoader(DataLoader):
             The path to the data_file and label_file
         """
         folder, file_number = os.path.split(file_id)
-        data_file = os.path.join(folder, (cfg.sample_file_name_prefix + file_number + '.nii'))
+        data_file = os.path.join(folder, (cfg.sample_file_name_prefix + file_number + '.nrrd'))
         if not os.path.exists(data_file):
             raise Exception(f'The file {data_file} could not be found')
-        label_file = os.path.join(folder, (cfg.label_file_name_prefix + file_number + '.nii'))
+        label_file = os.path.join(folder, (cfg.label_file_name_prefix + file_number + '.nrrd'))
         if not os.path.exists(data_file):
             raise Exception(f'The file {label_file} could not be found')
         return data_file, label_file
@@ -259,12 +261,19 @@ class SegBasisLoader(DataLoader):
         if self.mode is not self.MODES.APPLY:
             if object_sampling:
                 if cfg.normalizing_method == cfg.NORMALIZING.WINDOW:
-                    n_z = np.nonzero(label[:, :, index] * np.greater(data[:, :, index], -1))  # do not use air
+                    if len(data.shape) == 4:
+                        n_z = np.nonzero(label[:, :, index] * np.greater(data[:, :, index, 0], -1))  # do not use air
+                    else:
+                        n_z = np.nonzero(label[:, :, index] * np.greater(data[:, :, index], -1))  # do not use air
                 else:
                     n_z = np.nonzero(label[:, :, index])
             else:
                 if cfg.normalizing_method == cfg.NORMALIZING.WINDOW:
-                    n_z = np.where(
+                    if len(data.shape) == 4:
+                        n_z = np.where(
+                        label[:, :, index] * np.greater(data[:, :, index, 0], -1) == 0)  # do not use air
+                    else:
+                        n_z = np.where(
                         label[:, :, index] * np.greater(data[:, :, index], -1) == 0)  # do not use air
                 else:
                     n_z = np.where(label[:, :, index] == 0)
@@ -278,9 +287,15 @@ class SegBasisLoader(DataLoader):
                 if cfg.random_sampling_mode == cfg.SAMPLINGMODES.CONSTRAINED_MUSTD:
                     # if there are no lables on the slice, sample in the body for CONSTRAINED_MUSTD
                     if cfg.normalizing_method == cfg.NORMALIZING.WINDOW:
-                        n_z = np.nonzero(np.greater(data[:, :, index], cfg.norm_min_v))
+                        if len(data.shape) == 4:
+                            n_z = np.nonzero(np.greater(data[:, :, index, 0], cfg.norm_min_v))
+                        else:
+                            n_z = np.nonzero(np.greater(data[:, :, index], cfg.norm_min_v))
                     elif cfg.normalizing_method == cfg.NORMALIZING.MEAN_STD:
-                        n_z = np.nonzero(np.greater(data[:, :, index], 0))
+                        if len(data.shape) == 4:
+                            n_z = np.nonzero(np.greater(data[:, :, index, 0], 0))
+                        else:
+                            n_z = np.nonzero(np.greater(data[:, :, index], 0))
 
             if cfg.random_sampling_mode == cfg.SAMPLINGMODES.CONSTRAINED_MUSTD:
                 if n_z[0].size > 0:
@@ -311,15 +326,15 @@ class SegBasisLoader(DataLoader):
 
         # select samples
         if cfg.random_sampling_mode == cfg.SAMPLINGMODES.UNIFORM or cfg.random_sampling_mode == cfg.SAMPLINGMODES.CONSTRAINED_MUSTD or slice_is_empty:
-            sample_x = np.random.randint(min_x, max_x + 1, samples_per_slice)
-            sample_y = np.random.randint(min_y, max_y + 1, samples_per_slice)
+            sample_x = np.random.random_integers(min_x, max_x, samples_per_slice)
+            sample_y = np.random.random_integers(min_y, max_y, samples_per_slice)
 
         elif cfg.random_sampling_mode == cfg.SAMPLINGMODES.CONSTRAINED_LABEL:
             # select patch centers from mask points inside the bounding box
             valid_locations = np.nonzero(np.logical_and(np.logical_and(n_z[0] >= min_x, n_z[0] <= max_x),
                                                         np.logical_and(n_z[1] >= min_y, n_z[1] <= max_y)))[0]
             # If there are not enough centers, select voxels close by
-            if len(valid_locations) < samples_per_slice:
+            if len(valid_locations) > 0 and len(valid_locations) < samples_per_slice:
                 n_missing_samples = samples_per_slice - len(valid_locations)
 
                 def find_nearest(array, value):
@@ -335,47 +350,54 @@ class SegBasisLoader(DataLoader):
                 y_idx, y_dist = find_nearest([min_y, max_y], np.mean(n_z[1]))
 
                 if x_idx == 0:  # if minimum
-                    sample_x = min_x + np.random.randint(0, x_dist + 1, n_missing_samples)
+                    sample_x = min_x + np.random.random_integers(0, x_dist, n_missing_samples)
                 else:
-                    sample_x = max_x - np.random.randint(0, x_dist + 1, n_missing_samples)
+                    sample_x = max_x - np.random.random_integers(0, x_dist, n_missing_samples)
 
                 if y_idx == 0:
-                    sample_y = min_y + np.random.randint(0, y_dist + 1, n_missing_samples)
+                    sample_y = min_y + np.random.random_integers(0, y_dist, n_missing_samples)
                 else:
-                    sample_y = max_y - np.random.randint(0, y_dist + 1, n_missing_samples)
+                    sample_y = max_y - np.random.random_integers(0, y_dist, n_missing_samples)
 
                 sample_x = np.append(sample_x, n_z[0][valid_locations])
                 sample_y = np.append(sample_y, n_z[1][valid_locations])
 
             # Otherwise select randomly
-            else:
+            elif len(valid_locations) > 0 and len(valid_locations) > samples_per_slice:
                 selection = np.random.choice(valid_locations, samples_per_slice, replace=False)
                 sample_x = n_z[0][selection]
                 sample_y = n_z[1][selection]
+            else:
+                sample_x = np.random.random_integers(min_x, max_x, samples_per_slice)
+                sample_y = np.random.random_integers(min_y, max_y, samples_per_slice)
 
         else:
-            # TODO: throw error for not allowed mode
-            pass
+            raise Exception('Mode not allowed')
 
         # Get Sample Data from Volumes
         for i in range(samples_per_slice):
+            # set the window of the sample
+            x_start = sample_x[i] - (bb_dim[0] // 2)
+            x_end = sample_x[i] + (bb_dim[0] // 2)
+            y_start = sample_y[i] - (bb_dim[1] // 2)
+            y_end = sample_y[i] + (bb_dim[1] // 2)         
             if self.data_rank == 3:
-                I[i] = data[sample_x[i] - (bb_dim[0] // 2):sample_x[i] + (bb_dim[0] // 2),
-                       sample_y[i] - (bb_dim[1] // 2):sample_y[i] + (bb_dim[1] // 2),
-                       index - self.slice_shift:index + self.slice_shift + 1:cfg.in_between_slice_factor]
+                I[i] = data[x_start:x_end, 
+                       y_start:y_end,
+                       index - self.slice_shift:index + self.slice_shift + 1:cfg.in_between_slice_factor].squeeze()
             else:
-                I[i] = np.expand_dims(np.moveaxis(data[sample_x[i] - (bb_dim[0] // 2):sample_x[i] + (bb_dim[0] // 2),
-                                  sample_y[i] - (bb_dim[1] // 2):sample_y[i] + (bb_dim[1] // 2),
-                                  index - self.slice_shift:index + self.slice_shift:1], -1, 0), -1)
+                I[i] = np.expand_dims(np.moveaxis(data[x_start:x_end,
+                                  y_start:y_end,
+                                  index - self.slice_shift:index + self.slice_shift:1], 2, 0), -1).squeeze()
 
             if self.mode is not self.MODES.APPLY:
                 if self.data_rank == 3:
-                    L[i] = label[sample_x[i] - (bb_dim[0] // 2): sample_x[i] + (bb_dim[0] // 2),
-                           sample_y[i] - (bb_dim[1] // 2): sample_y[i] + (bb_dim[1] // 2),
+                    L[i] = label[x_start: x_end,
+                           y_start: y_end,
                            index]
                 else:
-                    L[i] = np.moveaxis(label[sample_x[i] - (bb_dim[0] // 2): sample_x[i] + (bb_dim[0] // 2),
-                                       sample_y[i] - (bb_dim[1] // 2): sample_y[i] + (bb_dim[1] // 2),
+                    L[i] = np.moveaxis(label[x_start: x_end,
+                                       y_start: y_end,
                                        index - self.slice_shift:index + self.slice_shift:1], -1, 0)
 
         if self.mode is not self.MODES.APPLY:
@@ -437,10 +459,9 @@ class SegBasisLoader(DataLoader):
                         variation = (np.random.random_sample() * 2.0 * cfg.intensity_variation_interval) - cfg.intensity_variation_interval
                         I[sample] = I[sample] + variation
                         if cfg.normalizing_method == cfg.NORMALIZING.WINDOW:
-                            flags = I[sample] < -1
-                            I[sample][flags] = -1
-                            flags = I[sample] > 1
-                            I[sample][flags] = 1
+                            a_min = np.quantile(I[sample], cfg.norm_min_q)
+                            a_max = np.quantile(I[sample], cfg.norm_max_q)
+                            I[sample] = np.clip(I[sample], a_min=a_min, a_max=a_max)
         return I, L
 
     def _resample(self, data, label):
@@ -485,16 +506,22 @@ class SegBasisLoader(DataLoader):
         Truncates input to interval [config.norm_min_v, config.norm_max_v] an
          normalizes it to interval [-1, 1] when using WINDOW and to mean = 0 and std = 1 when MEAN_STD.
         '''
-        # ToDo: normalize by percentile
-        flags = img < cfg.norm_min_v
-        img[flags] = cfg.norm_min_v
-        flags = img > cfg.norm_max_v
-        img[flags] = cfg.norm_max_v
+        # remove nans and set them to the background value
+        # check for the number of nans first (find the reason)
+        # nan_frac = np.mean(np.isnan(img))
+        # if nan_frac > 0.02:
+        #     logging.error(f'More than 2% nans in the image ({int(nan_frac*100)}%).') 
+        # TODO: find out where the nans come from
+        img_no_nan = np.nan_to_num(img, nan=cfg.data_background_value)
+        # clip outliers and rescale to between zero and one
+        a_min = np.quantile(img_no_nan, cfg.norm_min_q)
+        a_max = np.quantile(img_no_nan, cfg.norm_max_q)
+        img = np.clip(img_no_nan, a_min=a_min, a_max=a_max)
         if cfg.normalizing_method == cfg.NORMALIZING.WINDOW:
-            img = (img - cfg.norm_min_v) / (cfg.norm_max_v - cfg.norm_min_v + cfg.norm_eps)
+            img = (img_no_nan - a_min) / (a_max - a_min)
             img = (img * 2) - 1
         elif cfg.normalizing_method == cfg.NORMALIZING.MEAN_STD:
-            img = img - np.mean(img)
+            img = img_no_nan - np.mean(img_no_nan)
 
             std = np.std(img)
             img = img / (std if std != 0 else eps)

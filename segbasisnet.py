@@ -160,6 +160,13 @@ class SegBasisNet(Network):
         self.options['epochs'] = epochs
         self.options['learning_rate'] = l_r
 
+        if not cfg.samples_per_volume * cfg.num_files % cfg.batch_size_train == 0:
+            raise ValueError(
+                f'cfg.samples_per_volume ({cfg.samples_per_volume}) * '+
+                f'cfg.num_files ({cfg.num_files}) should be'+
+                f' divisible by cfg.batch_size_train ({cfg.batch_size_train}). '
+                f'Consider choosing samples per volume as multiple of batch size.'
+            )
         iter_per_epoch = cfg.samples_per_volume * cfg.num_files // cfg.batch_size_train
         logger.debug('Iter per Epoch %s', iter_per_epoch)
         summary_step = iter_per_epoch // summary_steps_per_epoch
@@ -228,6 +235,7 @@ class SegBasisNet(Network):
                 gradients, _ = tf.clip_by_global_norm(gradients, cfg.clipping_value)
             self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
 
+            # update metrics
             if self.options['rank'] == 2:
                 accuracy_train = self.outputs['accuracy'](y_t[:, :, :, 1], prediction[:, :, :, 1])
             else:
@@ -326,6 +334,10 @@ class SegBasisNet(Network):
         }
         for o in ['epochs', 'learning_rate', 'use_bias', 'loss', 'name', 'do_gradient_clipping', 'batch_normalization', 'activation', 'use_cross_hair']:
             hyperparameters[o] = self.options[o]
+        # check the types
+        for key, value in hyperparameters.items():
+            if type(value) in [list]:
+                hyperparameters[key] = str(value)
         return hyperparameters
 
     def _summaries(self, x, y, probabilities, objective, acccuracy, global_step, writer, max_image_output=2, histo_buckets=50, mode=None):
@@ -335,7 +347,7 @@ class SegBasisNet(Network):
         with writer.as_default():
             
             #save hyperparameters for tensorboard
-            hp.hparams(self.get_hyperparameter_dict())
+            hp.hparams(self.get_hyperparameter_dict(), trial_id=cfg.trial_id)
 
             with tf.name_scope('01_Objective'):
                 tf.summary.scalar('average_objective', objective, step=global_step)
@@ -434,7 +446,7 @@ class SegBasisNet(Network):
 
         # Use a SimpleITK reader to load the nii images and labels for training
         folder, file_number = os.path.split(file_name)
-        data_img = sitk.ReadImage(os.path.join(folder, (cfg.sample_file_name_prefix + file_number + '.nii')))
+        data_img = sitk.ReadImage(os.path.join(folder, (cfg.sample_file_name_prefix + file_number + '.nrrd')))
         data_info = image.get_data_info(data_img)
         if cfg.adapt_resolution:
             target_info = {}
@@ -469,5 +481,5 @@ class SegBasisNet(Network):
                                                cfg.adapt_resolution, cfg.target_type_label)
 
         name = Path(file_name).name
-        pred_path = Path(out_path) / f'prediction-{name}-{version}.nii'
+        pred_path = Path(out_path) / f'prediction-{name}-{version}.nrrd'
         sitk.WriteImage(pred_img, str(pred_path.absolute()))

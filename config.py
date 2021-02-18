@@ -47,7 +47,7 @@ else:
     train_reader_instances = 1
 
 
-summary_steps_per_epoch = 5 # how often a summary is calculated (useful for updates in tesnorboard)
+summary_steps_per_epoch = 2 # how often a summary is calculated (useful for updates in tensorboard)
 do_gradient_clipping = False
 clipping_value = 50
 
@@ -60,10 +60,10 @@ summaries_per_case = 10
 write_probabilities = False
 
 ##### Data #####
-num_channels = 1
+num_channels = 3
 num_slices = 1
 num_classes_seg = 2  #the number of classes including the background
-num_files = -1
+num_dimensions = 3
 #has to be smaller than the target size
 train_dim = 128
 train_input_shape = [train_dim, train_dim, num_channels]
@@ -71,6 +71,11 @@ train_label_shape = [train_dim, train_dim, num_classes_seg]
 test_dim = 256
 test_data_shape = [test_dim, test_dim, num_channels]
 test_label_shape = [test_dim, test_dim, num_classes_seg]
+
+if num_dimensions == 3:
+    num_slices_train = 4 # should be divisible by two
+    train_input_shape = [num_slices_train, train_dim, train_dim, num_channels]
+    train_label_shape = [num_slices_train, train_dim, train_dim, num_classes_seg]
 
 dtype = tf.float32 #the datatype to use inside of tensorflow
 data_train_split = 0.75
@@ -100,6 +105,7 @@ do_variate_intensities = False
 intensity_variation_interval = 0.01
 
 # Resampling
+do_resampling = False
 adapt_resolution = True
 if adapt_resolution:
     target_spacing = [1, 1, 3]
@@ -107,7 +113,7 @@ if adapt_resolution:
 target_direction = (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)  # make sure all images are oriented equally
 target_type_image = sitk.sitkFloat32
 target_type_label = sitk.sitkUInt8
-data_background_value = -1000 #data outside the image is set to this value
+data_background_value = 0 #data outside the image is set to this value
 label_background_value = 0 #labels to this
 max_rotation = 0.07  #the maximum amount of rotation that is allowed rotation will be between -pi*max_rotation and pi*max_rotation
 
@@ -119,8 +125,7 @@ max_weight = 1.2
 tissue_threshold = -0.9
 
 # Preprocessing
-#values between [norm_min_v, norm_max_v] are normalized to interval [-1, 1]
+#values between outside of the quantiles norm_min_q and norm_max_q are normalized to interval [-1, 1]
 #values outside this area are truncated
-norm_min_v = -150
-norm_max_v = 275
-norm_eps = 1e-5
+norm_min_q = 0.01
+norm_max_q = 0.99
