@@ -171,6 +171,10 @@ class ResNet(SegBasisNet):
                  regularize, do_batch_normalization, do_bias,
                  activation, upscale, downscale, res_connect, skip_connect, cross_hair, **kwargs)
 
+    @staticmethod
+    def get_name():
+        return 'ResNet'
+
     def _build_model(self):
         '''!
         Builds U-Net
@@ -258,11 +262,20 @@ class ResNet(SegBasisNet):
 
         # Add final 1x1 convolutional layer to compute logits
         with tf.name_scope('9_last_layer'+ str(cfg.num_classes_seg)):
-            self.outputs['probabilities'] = layer.last(x, self.outputs, np.ones(self.options['rank'], dtype=np.int32),
-                                                       self.options['out_channels'], self.options['strides'],
-                                                       self.options['padding'], self.options['dilation_rate'],
-                                                       self._select_final_activation(), False,
-                                                       self.options['use_cross_hair'], do_summary=True)
+            self.outputs['probabilities'] = layer.last(
+                x=x,
+                outputs=self.outputs,
+                filter_shape=np.ones(self.options['rank'], dtype=np.int32),
+                n_filter=self.options['out_channels'],
+                stride=self.options['strides'],
+                padding=self.options['padding'],
+                dilation_rate=self.options['dilation_rate'],
+                act_func=self._select_final_activation(),
+                use_bias=False,
+                regularizer=self.options['regularizer'],
+                cross_hair=self.options['use_cross_hair'],
+                do_summary=True
+            )
   
             logger.debug(' Probabilities have shape %s', self.outputs['probabilities'].shape)
 
