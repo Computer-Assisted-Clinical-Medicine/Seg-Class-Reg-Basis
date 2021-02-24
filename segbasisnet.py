@@ -63,22 +63,22 @@ class SegBasisNet(Network):
                 return loss.binary_cross_entropy_loss
 
         elif self.options['loss'] == 'ECEL':
-            return loss.equalized_catergorical_cross_entropy
+            return loss.equalized_categorical_cross_entropy
 
         elif self.options['loss'] == 'NCEL':
-            return loss.normalized_catergorical_cross_entropy
+            return loss.normalized_categorical_cross_entropy
 
         elif self.options['loss'] == 'WCEL':
-            return loss.weighted_catergorical_cross_entropy
+            return loss.weighted_categorical_cross_entropy
 
         elif self.options['loss'] == 'ECEL-FNR':
-            return loss.equalized_catergorical_cross_entropy_with_fnr
+            return loss.equalized_categorical_cross_entropy_with_fnr
 
         elif self.options['loss'] == 'WCEL-FPR':
                 return loss.weighted_categorical_crossentropy_with_fpr_loss
 
         elif self.options['loss'] == 'GCEL':
-                return loss.generalized_catergorical_cross_entropy
+                return loss.generalized_categorical_cross_entropy
 
         elif self.options['loss'] == 'CEL+DICE':
             return loss.categorical_cross_entropy_and_dice_loss
@@ -446,7 +446,7 @@ class SegBasisNet(Network):
 
         # Use a SimpleITK reader to load the nii images and labels for training
         folder, file_number = os.path.split(file_name)
-        data_img = sitk.ReadImage(os.path.join(folder, (cfg.sample_file_name_prefix + file_number + '.nrrd')))
+        data_img = sitk.ReadImage(os.path.join(folder, (cfg.sample_file_name_prefix + file_number + cfg.file_suffix)))
         data_info = image.get_data_info(data_img)
         if cfg.adapt_resolution:
             target_info = {}
@@ -481,5 +481,5 @@ class SegBasisNet(Network):
                                                cfg.adapt_resolution, cfg.target_type_label)
 
         name = Path(file_name).name
-        pred_path = Path(out_path) / f'prediction-{name}-{version}.nrrd'
+        pred_path = Path(out_path) / f'prediction-{name}-{version}{cfg.file_suffix}'
         sitk.WriteImage(pred_img, str(pred_path.absolute()))

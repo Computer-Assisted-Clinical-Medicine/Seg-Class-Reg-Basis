@@ -272,6 +272,7 @@ class SegRatioBasisLoader(SegBasisLoader):
         max_y = data_shape[1] - bb_dim[1] // 2
         s = lbl.shape[2]  # third dimension is z-axis
         indices = np.arange(0 + self.slice_shift, s - self.slice_shift, 1)
+        assert indices.size > 0, 'consider lowering cfg.num_slices_train'
         valid_patch_centers_objects = (lbl > 0)[min_x:max_x, min_y:max_y, indices]
         valid_patch_centers_background = np.logical_not(valid_patch_centers_objects)
         # print('---- Valid Patch Centers:', valid_patch_centers_objects.size, ' - OB:',

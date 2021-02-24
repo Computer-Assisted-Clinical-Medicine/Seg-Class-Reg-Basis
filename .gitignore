@@ -1,5 +1,6 @@
 # Projects Specific Folders
 tmp/
+test_data
 
 # Pycharm
 .idea/

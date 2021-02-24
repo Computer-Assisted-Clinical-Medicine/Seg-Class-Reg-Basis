@@ -2,10 +2,12 @@
 @file config.py
 Sets the parameters for configuration
 """
-import tensorflow as tf
-import SimpleITK as sitk
 import socket
 from enum import Enum
+
+import numpy as np
+import SimpleITK as sitk
+import tensorflow as tf
 
 ##### Enums #####
 
@@ -31,6 +33,8 @@ test_csv = 'test.csv'
 #prefixes are used for file names
 sample_file_name_prefix = 'sample-' 
 label_file_name_prefix = 'label-'
+#the suffix determines the format
+file_suffix = '.nrrd'
 
 if socket.gethostname() == 'ckm4cad':
     ONSERVER = True
@@ -78,6 +82,7 @@ if num_dimensions == 3:
     train_label_shape = [num_slices_train, train_dim, train_dim, num_classes_seg]
 
 dtype = tf.float32 #the datatype to use inside of tensorflow
+dtype_np = np.float32 # the datatype used in numpy, should be the same as in tf
 data_train_split = 0.75
 number_of_vald = 2
 
