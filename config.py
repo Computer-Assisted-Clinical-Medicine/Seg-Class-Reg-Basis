@@ -91,7 +91,7 @@ vald_reader_instances = 1
 file_name_capacity = 140
 file_name_capacity_valid = file_name_capacity // 10
 batch_capacity_valid = batch_capacity_train // 2
-normalizing_method = NORMALIZING.WINDOW
+normalizing_method = NORMALIZING.PERCENT5
 
 # Sample Mining
 patch_shift_factor = 3  # 3*std is 99th percentile
@@ -134,3 +134,7 @@ tissue_threshold = -0.9
 #values outside this area are truncated
 norm_min_q = 0.01
 norm_max_q = 0.99
+
+norm_min_v = -150
+norm_max_v = 275
+norm_eps = 1e-5

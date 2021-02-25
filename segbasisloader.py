@@ -516,15 +516,21 @@ class SegBasisLoader(DataLoader):
         # clip outliers and rescale to between zero and one
         a_min = np.quantile(img_no_nan, cfg.norm_min_q)
         a_max = np.quantile(img_no_nan, cfg.norm_max_q)
-        img = np.clip(img_no_nan, a_min=a_min, a_max=a_max)
-        if cfg.normalizing_method == cfg.NORMALIZING.WINDOW:
+        if cfg.normalizing_method == cfg.NORMALIZING.PERCENT5:
+            img = np.clip(img_no_nan, a_min=a_min, a_max=a_max)
             img = (img_no_nan - a_min) / (a_max - a_min)
             img = (img * 2) - 1
         elif cfg.normalizing_method == cfg.NORMALIZING.MEAN_STD:
+            img = np.clip(img_no_nan, a_min=a_min, a_max=a_max)
             img = img_no_nan - np.mean(img_no_nan)
-
             std = np.std(img)
             img = img / (std if std != 0 else eps)
+        elif cfg.normalizing_method == cfg.NORMALIZING.WINDOW:
+            img = np.clip(img_no_nan, a_min=cfg.norm_min_v, a_max=cfg.norm_max_v)
+            img = (img - cfg.norm_min_v) / (cfg.norm_max_v - cfg.norm_min_v + cfg.norm_eps)
+            img = (img * 2) - 1
+        else:
+            raise NotImplementedError(f'{cfg.normalizing_method} is not implemented')
 
         return img
 
