@@ -11,6 +11,7 @@ from .segbasisnet import SegBasisNet
 #configure logger
 logger = logging.getLogger(__name__)
 
+# TODO: update references
 class UNet(SegBasisNet):
     '''!
     U-Net TODO: add reference
@@ -61,6 +62,8 @@ class UNet(SegBasisNet):
         #self._print_init()
 
         x = self.inputs['x']
+
+        assert x.shape[1] % 16 == 0, 'N_Slices has to be divisible by 16, otherwise the downsampling fails (4*downsampling by half)'
 
         # Encoding
         for block_index in range(0, 2):
@@ -411,6 +414,8 @@ class VNet(SegBasisNet):
         #self._print_init()
 
         x = self.inputs['x']
+
+        assert x.shape[1] % 16 == 0, 'N_Slices has to be divisible by 16, otherwise the downsampling fails (4*downsampling by half)'
 
         if self.options['in_channels'] == 1:
             x = tf.tile(x, [1, 1, 1, 1, self.options['n_filters_per_block'][0]])

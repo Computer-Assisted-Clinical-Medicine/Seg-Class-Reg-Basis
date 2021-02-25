@@ -198,8 +198,6 @@ class SegBasisNet(Network):
             checkpoint, directory=train_path, max_to_keep=3, checkpoint_name='weights')
 
         train_writer = tf.summary.create_file_writer(os.path.join(logs_path, folder_name, 'train'))
-        # with train_writer.as_default():
-        #     tf.summary.trace_export(name="architecture", step=global_step, profiler_outdir=os.path.join(logs_path, folder_name, 'train'))
         valid_writer = tf.summary.create_file_writer(os.path.join(logs_path, folder_name, 'valid'))
 
         epoch_objective_avg = tf.keras.metrics.Mean()
@@ -217,12 +215,14 @@ class SegBasisNet(Network):
                 )
 
         for x_t, y_t in training_dataset:
+            
+            epoch = global_step.numpy() // iter_per_epoch
 
             #create progress bar and reset every epoch
             if global_step.numpy() % iter_per_epoch == 0:
                 progress_bar_batches = tqdm(
                     total=iter_per_epoch,
-                    desc=f'Epoch {global_step.numpy() // iter_per_epoch + 1}',
+                    desc=f'Epoch {epoch + 1}',
                     position=0,
                     smoothing=0.9
                 )
@@ -244,6 +244,31 @@ class SegBasisNet(Network):
             epoch_objective_avg.update_state(objective_train)
             epoch_accuracy_avg.update_state(accuracy_train)
 
+            #call function when epoch ends (and at the start)
+            if global_step.numpy() % iter_per_epoch == 0:
+                self._end_of_epoch(checkpoint_manager, epoch, iter_per_epoch, validation_dataset, valid_writer)
+
+                if self.options['do_finetune']:
+                    for layer in self.model.layers[:min(epoch * 3, len(self.model.layers) // 2 - 3)]:
+                        layer.trainable = False
+
+                # use the epoch as step number, because it is more consistent
+                self._summaries(x_t, y_t, prediction, epoch_objective_avg.result().numpy(),
+                                epoch_accuracy_avg.result().numpy(),
+                                epoch, train_writer, mode='train')
+
+                if global_step.numpy() != 0:
+                    epoch_objective_avg.reset_states()
+                    epoch_accuracy_avg.reset_states()
+
+                #update progress bars
+                progress_bar_batches.set_postfix_str(
+                    f'Obj.: {epoch_objective_avg.result().numpy():.4f}' +
+                    f' Acc.: {epoch_accuracy_avg.result().numpy():.4f}'
+                )
+                if global_step.numpy() != 0:
+                    progress_bar_epochs.update()
+
             #update progress bar
             progress_bar_batches.set_postfix_str(
                 f'Obj.: {epoch_objective_avg.result().numpy():.4f}' +
@@ -252,37 +277,19 @@ class SegBasisNet(Network):
 
             progress_bar_batches.update()
 
-            #call function when epoch ends
-            if global_step.numpy() % iter_per_epoch == 0:
-                self._end_of_epoch(checkpoint_manager, global_step, iter_per_epoch, validation_dataset, valid_writer)
-
-                if self.options['do_finetune']:
-                    for layer in self.model.layers[:min(global_step.numpy() // iter_per_epoch * 3, len(self.model.layers) // 2 - 3)]:
-                        layer.trainable = False
-
-                #update progress bars
-                progress_bar_batches.set_postfix_str(
-                    f'Obj.: {epoch_objective_avg.result().numpy():.4f}' +
-                    f' Acc.: {epoch_accuracy_avg.result().numpy():.4f}'
-                )
-                progress_bar_epochs.update()
-
-                self._summaries(x_t, y_t, prediction, epoch_objective_avg.result().numpy(),
-                                epoch_accuracy_avg.result().numpy(),
-                                global_step, train_writer, mode='train')
-                epoch_objective_avg.reset_states()
-                epoch_accuracy_avg.reset_states()
-
             global_step = global_step + 1
+
+        # set last epoch
+        epoch = global_step.numpy() // iter_per_epoch
 
         #update progressbar after final epoch
         progress_bar_epochs.update()
-        logger.info(f'Done -- Finished training after {global_step.numpy() // iter_per_epoch} epochs /' +
+        logger.info(f'Done -- Finished training after {epoch} epochs /' +
             f'{global_step.numpy()} steps. Average Objective: {epoch_objective_avg.result().numpy()} (Train)')
-        self._end_of_epoch(checkpoint_manager, global_step, iter_per_epoch, validation_dataset, valid_writer)
+        self._end_of_epoch(checkpoint_manager, epoch, iter_per_epoch, validation_dataset, valid_writer)
         # do final summary
         self._summaries(x_t, y_t, prediction, epoch_objective_avg.result().numpy(), epoch_accuracy_avg.result().numpy(),
-                                global_step, train_writer, mode='train')
+                                epoch, train_writer, mode='train')
 
         # stop the profiler
         profiler.stop()
@@ -303,9 +310,9 @@ class SegBasisNet(Network):
         self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
         return prediction, objective_train
 
-    def _end_of_epoch(self, checkpoint_manager, global_step, iter_per_epoch, validation_dataset, valid_writer):
-        logger.info(' Epoch: %s', global_step.numpy() // iter_per_epoch)
-        checkpoint_manager.save(checkpoint_number=global_step.numpy() // iter_per_epoch)
+    def _end_of_epoch(self, checkpoint_manager, step, iter_per_epoch, validation_dataset, valid_writer):
+        logger.info(' Epoch: %s', step)
+        checkpoint_manager.save(checkpoint_number=step)
         epoch_objective_avg = tf.keras.metrics.Mean()
         epoch_accuracy_avg = tf.keras.metrics.Mean()
 
@@ -325,10 +332,10 @@ class SegBasisNet(Network):
             epoch_objective_avg.update_state(objective_validation)
             epoch_accuracy_avg.update_state(accuracy_validation)
 
-        logger.info(f' Epoch: {global_step.numpy() // iter_per_epoch} Average Objective: ' +
+        logger.info(f' Epoch: {step} Average Objective: ' +
               f'{epoch_objective_avg.result().numpy():.4f} Average Accuracy: {epoch_accuracy_avg.result().numpy():.4f} (Valid)')
         self._summaries(x_v, y_v, prediction, epoch_objective_avg.result().numpy(),
-                        epoch_accuracy_avg.result().numpy(), global_step, valid_writer, mode='valid')
+                        epoch_accuracy_avg.result().numpy(), step, valid_writer, mode='valid')
 
     def get_hyperparameter_dict(self):
         """This function reads the hyperparameters from options and writes them to a dict of
@@ -356,7 +363,7 @@ class SegBasisNet(Network):
                 hyperparameters[key] = str(value)
         return hyperparameters
 
-    def _summaries(self, x, y, probabilities, objective, acccuracy, global_step, writer, max_image_output=2, histo_buckets=50, mode=None):
+    def _summaries(self, x, y, probabilities, objective, acccuracy, step, writer, max_image_output=2, histo_buckets=50, mode=None):
 
         predictions = tf.argmax(probabilities, -1)
 
@@ -366,72 +373,72 @@ class SegBasisNet(Network):
             hp.hparams(self.get_hyperparameter_dict(), trial_id=cfg.trial_id)
 
             with tf.name_scope('01_Objective'):
-                tf.summary.scalar('average_objective', objective, step=global_step)
-                tf.summary.scalar('iteration_' + self.options['loss'], self.outputs['loss'](y, probabilities), step=global_step)
+                tf.summary.scalar('average_objective', objective, step=step)
+                tf.summary.scalar('iteration_' + self.options['loss'], self.outputs['loss'](y, probabilities), step=step)
                 if self.options['regularize'][0]:
-                    tf.summary.scalar('iteration_' + self.options['regularize'][1], self.outputs['reg'], step=global_step)
+                    tf.summary.scalar('iteration_' + self.options['regularize'][1], self.outputs['reg'], step=step)
 
             with tf.name_scope('02_Accuracy'):
-                tf.summary.scalar('average_acccuracy', acccuracy, step=global_step)
+                tf.summary.scalar('average_acccuracy', acccuracy, step=step)
                 if mode != None:
-                    tf.summary.scalar(f'average_acccuracy_{mode}', acccuracy, step=global_step)
+                    tf.summary.scalar(f'average_acccuracy_{mode}', acccuracy, step=step)
 
             with tf.name_scope('03_Data_Statistics'):
-                tf.summary.scalar('one_hot_max_train_img', tf.reduce_max(y), step=global_step)
-                tf.summary.histogram('train_img', x, global_step, buckets=histo_buckets)
-                tf.summary.histogram('label_img', y, global_step, buckets=histo_buckets)
+                tf.summary.scalar('one_hot_max_train_img', tf.reduce_max(y), step=step)
+                tf.summary.histogram('train_img', x, step, buckets=histo_buckets)
+                tf.summary.histogram('label_img', y, step, buckets=histo_buckets)
 
             with tf.name_scope('04_Output_Statistics'):
-                # tf.summary.histogram('logits', self.outputs['logits'], global_step, buckets=histo_buckets)
-                tf.summary.histogram('probabilities', probabilities, global_step, buckets=histo_buckets)
-                tf.summary.histogram('predictions', predictions, global_step, buckets=histo_buckets)
+                # tf.summary.histogram('logits', self.outputs['logits'], step, buckets=histo_buckets)
+                tf.summary.histogram('probabilities', probabilities, step, buckets=histo_buckets)
+                tf.summary.histogram('predictions', predictions, step, buckets=histo_buckets)
 
             with tf.name_scope('01_Input_and_Predictions'):
                 if self.options['rank'] == 2:
                     if self.options['in_channels'] == 1:
                         tf.summary.image('train_img', tf.cast((tf.gather(x, [0, cfg.batch_size_train - 1]) + 1) * 255 / 2,
-                                                              tf.uint8), global_step, max_image_output)
+                                                              tf.uint8), step, max_image_output)
                     else:
                         for c in range(self.options['in_channels']):
                             tf.summary.image('train_img_c'+str(c), tf.expand_dims(tf.cast(
                                 (tf.gather(x[:, :, :, c], [0, cfg.batch_size_train - 1]) + 1) * 255 / 2,
-                                tf.uint8), axis=-1), global_step, max_image_output)
+                                tf.uint8), axis=-1), step, max_image_output)
 
                     tf.summary.image('train_seg_lbl', tf.expand_dims(tf.cast(tf.argmax(
                         tf.gather(y, [0, cfg.batch_size_train - 1])
-                        , -1) * (255 // (cfg.num_classes_seg - 1)), tf.uint8), axis=-1), global_step, max_image_output)
+                        , -1) * (255 // (cfg.num_classes_seg - 1)), tf.uint8), axis=-1), step, max_image_output)
                     tf.summary.image('train_seg_pred', tf.expand_dims(tf.cast(
                         tf.gather(predictions, [0, cfg.batch_size_train - 1])
-                        * (255 // (cfg.num_classes_seg - 1)), tf.uint8), axis=-1), global_step, max_image_output)
+                        * (255 // (cfg.num_classes_seg - 1)), tf.uint8), axis=-1), step, max_image_output)
 
                 else:
                     if self.options['in_channels'] == 1:
                         tf.summary.image('train_img', tf.cast(
                             (tf.gather(x[:, self.inputs['x'].shape[1] // 2, :, :], [0, cfg.batch_size_train - 1]) + 1) * 255 / 2,
-                            tf.uint8), global_step, max_image_output)
+                            tf.uint8), step, max_image_output)
                     else:
                         pass
 
                     tf.summary.image('train_seg_lbl', tf.expand_dims(tf.cast(tf.argmax(
                         tf.gather(y[:, self.inputs['x'].shape[1] // 2], [0, cfg.batch_size_train - 1]),
-                        -1) * (255 // (cfg.num_classes_seg - 1)), tf.uint8), axis=-1), global_step, max_image_output)
+                        -1) * (255 // (cfg.num_classes_seg - 1)), tf.uint8), axis=-1), step, max_image_output)
 
                     tf.summary.image('train_seg_pred', tf.expand_dims(tf.cast(
                             tf.gather(predictions[:, self.inputs['x'].shape[1] // 2], [0, cfg.batch_size_train - 1])
-                            * (255 // (cfg.num_classes_seg - 1)), tf.uint8), axis=-1), global_step, max_image_output)
+                            * (255 // (cfg.num_classes_seg - 1)), tf.uint8), axis=-1), step, max_image_output)
 
             with tf.name_scope('02_Probabilities'):
                 if self.options['rank'] == 2:
                     for c in range(cfg.num_classes_seg):
                         tf.summary.image('train_seg_prob_' + str(c), tf.expand_dims(tf.cast(
                             tf.gather(probabilities[:, :, :, c], [0, cfg.batch_size_train - 1])
-                            * 255, tf.uint8), axis=-1), global_step, max_image_output)
+                            * 255, tf.uint8), axis=-1), step, max_image_output)
                 else:
                     for c in range(cfg.num_classes_seg):
                         tf.summary.image('train_seg_prob_class' + str(c), tf.expand_dims(tf.cast(
                             tf.gather(probabilities[:, self.inputs['x'].shape[1] // 2, :, :, c],
                                       [0, cfg.batch_size_train - 1])
-                            * 255, tf.uint8), axis=-1), global_step, max_image_output)
+                            * 255, tf.uint8), axis=-1), step, max_image_output)
 
             with tf.name_scope('03_Class_Labels'):
                 if self.options['rank'] == 2:
@@ -440,7 +447,7 @@ class SegBasisNet(Network):
                     for c in range(cfg.num_classes_seg):
                         tf.summary.image('train_seg_lbl' + str(c), tf.expand_dims(tf.cast(
                             tf.gather(y[:, self.inputs['x'].shape[1] // 2, :, :, c], [0, cfg.batch_size_train - 1])
-                            * 255, tf.uint8), axis=-1), global_step, max_image_output)
+                            * 255, tf.uint8), axis=-1), step, max_image_output)
 
     def _select_final_activation(self):
         # http://dataaspirant.com/2017/03/07/difference-between-softmax-function-and-sigmoid-function/
