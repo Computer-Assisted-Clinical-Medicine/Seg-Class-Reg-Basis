@@ -6,6 +6,7 @@ from time import time
 import numpy as np
 import tensorflow as tf
 from tensorboard.plugins.hparams import api as hp
+import tensorflow.profiler.experimental as profiler
 from tqdm import tqdm
 
 from . import config as cfg
@@ -156,6 +157,11 @@ class SegBasisNet(Network):
         @param epochs                   : int; number of epochs (for progress display)
         '''
 
+        #TODO: generate graphs
+
+        #start profiler
+        profiler.start(logdir=os.path.abspath(os.path.join(logs_path, folder_name, 'profiler')))
+
         #save options for summary
         self.options['epochs'] = epochs
         self.options['learning_rate'] = l_r
@@ -169,7 +175,6 @@ class SegBasisNet(Network):
             )
         iter_per_epoch = cfg.samples_per_volume * cfg.num_files // cfg.batch_size_train
         logger.debug('Iter per Epoch %s', iter_per_epoch)
-        summary_step = iter_per_epoch // summary_steps_per_epoch
 
         if self.options['do_finetune']:
             folder_name = folder_name + '-f'
@@ -222,18 +227,13 @@ class SegBasisNet(Network):
                     smoothing=0.9
                 )
 
-            with tf.GradientTape() as tape:
-                prediction = self.model(x_t)
-                if self.options['regularize'][0]:
-                    self.outputs['reg'] = tf.add_n(self.model.losses)
-                    objective_train = self.outputs['loss'](y_t, prediction) + self.outputs['reg']
-                else:
-                    objective_train = self.outputs['loss'](y_t, prediction)
-
-            gradients = tape.gradient(objective_train, self.model.trainable_variables)
-            if cfg.do_gradient_clipping:
-                gradients, _ = tf.clip_by_global_norm(gradients, cfg.clipping_value)
-            self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
+            if global_step == 0:
+                prediction, objective_train = self.training_step(x_t, y_t)
+            else:
+                # call profiler
+                with profiler.Trace('train', step_num=global_step, _r=1):
+                    # to the training step
+                    prediction, objective_train = self.training_step(x_t, y_t)
 
             # update metrics
             if self.options['rank'] == 2:
@@ -244,40 +244,34 @@ class SegBasisNet(Network):
             epoch_objective_avg.update_state(objective_train)
             epoch_accuracy_avg.update_state(accuracy_train)
 
+            #update progress bar
+            progress_bar_batches.set_postfix_str(
+                f'Obj.: {epoch_objective_avg.result().numpy():.4f}' +
+                f' Acc.: {epoch_accuracy_avg.result().numpy():.4f}'
+            )
+
+            progress_bar_batches.update()
+
             #call function when epoch ends
-            if global_step.numpy() % iter_per_epoch == 0 and global_step.numpy() // iter_per_epoch > 0:
+            if global_step.numpy() % iter_per_epoch == 0:
                 self._end_of_epoch(checkpoint_manager, global_step, iter_per_epoch, validation_dataset, valid_writer)
+
+                if self.options['do_finetune']:
+                    for layer in self.model.layers[:min(global_step.numpy() // iter_per_epoch * 3, len(self.model.layers) // 2 - 3)]:
+                        layer.trainable = False
 
                 #update progress bars
                 progress_bar_batches.set_postfix_str(
                     f'Obj.: {epoch_objective_avg.result().numpy():.4f}' +
                     f' Acc.: {epoch_accuracy_avg.result().numpy():.4f}'
                 )
-
                 progress_bar_epochs.update()
-
-                if self.options['do_finetune']:
-                    for layer in self.model.layers[:min(global_step.numpy() // iter_per_epoch * 3, len(self.model.layers) // 2 - 3)]:
-                        layer.trainable = False
-
-            # if true compute and write summaries
-            elif global_step.numpy() % summary_step == 0:
-                logger.info(f'   Step: {global_step.numpy()} Objective: {epoch_objective_avg.result().numpy():.4f}' +
-                      f' Accuracy: {epoch_accuracy_avg.result().numpy():.4f} (Train)')
-
-                #update progress bar
-                progress_bar_batches.set_postfix_str(
-                    f'Obj.: {epoch_objective_avg.result().numpy():.4f}' +
-                    f' Acc.: {epoch_accuracy_avg.result().numpy():.4f}'
-                )
 
                 self._summaries(x_t, y_t, prediction, epoch_objective_avg.result().numpy(),
                                 epoch_accuracy_avg.result().numpy(),
                                 global_step, train_writer, mode='train')
                 epoch_objective_avg.reset_states()
                 epoch_accuracy_avg.reset_states()
-
-            progress_bar_batches.update()
 
             global_step = global_step + 1
 
@@ -286,6 +280,28 @@ class SegBasisNet(Network):
         logger.info(f'Done -- Finished training after {global_step.numpy() // iter_per_epoch} epochs /' +
             f'{global_step.numpy()} steps. Average Objective: {epoch_objective_avg.result().numpy()} (Train)')
         self._end_of_epoch(checkpoint_manager, global_step, iter_per_epoch, validation_dataset, valid_writer)
+        # do final summary
+        self._summaries(x_t, y_t, prediction, epoch_objective_avg.result().numpy(), epoch_accuracy_avg.result().numpy(),
+                                global_step, train_writer, mode='train')
+
+        # stop the profiler
+        profiler.stop()
+
+    def training_step(self, x_t, y_t):
+        # enabling the computation of gradients
+        with tf.GradientTape() as tape:
+            prediction = self.model(x_t)
+            if self.options['regularize'][0]:
+                self.outputs['reg'] = tf.add_n(self.model.losses)
+                objective_train = self.outputs['loss'](y_t, prediction) + self.outputs['reg']
+            else:
+                objective_train = self.outputs['loss'](y_t, prediction)
+
+        gradients = tape.gradient(objective_train, self.model.trainable_variables)
+        if cfg.do_gradient_clipping:
+            gradients, _ = tf.clip_by_global_norm(gradients, cfg.clipping_value)
+        self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
+        return prediction, objective_train
 
     def _end_of_epoch(self, checkpoint_manager, global_step, iter_per_epoch, validation_dataset, valid_writer):
         logger.info(' Epoch: %s', global_step.numpy() // iter_per_epoch)
