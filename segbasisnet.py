@@ -424,8 +424,8 @@ class SegBasisNet(Network):
                         tf.summary.image('train_img', image_fc, step, max_image_output)
                     else:
                         for c in range(self.options['in_channels']):
-                            image = tf.cast((tf.gather(x[:, self.inputs['x'].shape[1] // 2, :, :, c], 
-                            [0, cfg.batch_size_train - 1]) + 1) * 255 / 2, tf.uint8)
+                            image = tf.expand_dims(tf.cast((tf.gather(x[:, self.inputs['x'].shape[1] // 2, :, :, c], 
+                            [0, cfg.batch_size_train - 1]) + 1) * 255 / 2, tf.uint8), axis=-1)
                             if c == 0:
                                 image_fc = image
                             tf.summary.image('train_img_c'+str(c), image, step, max_image_output)

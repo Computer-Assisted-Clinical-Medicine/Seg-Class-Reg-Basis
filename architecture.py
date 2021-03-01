@@ -196,13 +196,18 @@ class ResNet(SegBasisNet):
 
         x = self.inputs['x']
 
+        # set stride
+        stride = [1, 1]
+        if self.options['rank'] == 3:
+            stride = [1, 1, 1]
+
         # Encoding
         for block_index in range(0, 2):
             with tf.name_scope('%02d_enc_block' % (block_index)):
                 logger.debug(' Encoding Block %s', block_index)
                 x = block.encoding(x, self.options, self.variables, self.options['n_convolutions'][0],
                                    self.options['kernel_dims_per_block'][block_index],
-                                   self.options['n_filters_per_block'][block_index], [1, 1],
+                                   self.options['n_filters_per_block'][block_index], stride,
                                    self.options['padding_per_block'][block_index], self.options['dilation_rate'],
                                    self.options['activation_per_block'][block_index], self.options['use_bias'],
                                    self.options['batch_normalization_per_block'][block_index], self.options['drop_out'])
