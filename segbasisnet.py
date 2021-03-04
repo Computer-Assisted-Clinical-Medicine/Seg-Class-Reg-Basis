@@ -4,27 +4,106 @@ from pathlib import Path
 from time import time
 
 import numpy as np
+import SimpleITK as sitk
 import tensorflow as tf
 from tensorboard.plugins.hparams import api as hp
-import tensorflow.profiler.experimental as profiler
-from tqdm import tqdm
+
+from SegmentationNetworkBasis.NetworkBasis import image, loss
+from SegmentationNetworkBasis.NetworkBasis.metric import Dice
+from SegmentationNetworkBasis.NetworkBasis.network import Network
 
 from . import config as cfg
-from .NetworkBasis import image, loss, metric
-from .NetworkBasis.network import Network
 
 #configure logger
 logger = logging.getLogger(__name__)
 
+# TODO: add validation summary using test_step
+
 class SegBasisNet(Network):
+    def __init__(self, loss, is_training=True, do_finetune=False, model_path="",
+                 n_filters=[8, 16, 32, 64, 128], kernel_dims=3, n_convolutions=[2, 3, 2], drop_out=[False, 0.2],
+                 regularize=[True, 'L2', 0.00001], do_batch_normalization=False, do_bias=True,
+                 activation='relu', upscale='TRANS_CONV', downscale='MAX_POOL', res_connect=False, skip_connect=True,
+                 cross_hair=False, **kwargs):
+
+        # set tensorflow mixed precision policy #TODO: update for tf version 2.4
+        policy = tf.keras.mixed_precision.experimental.Policy('mixed_float16')
+        tf.keras.mixed_precision.experimental.set_policy(policy)
+
+
+        self.inputs = {}
+        self.outputs = {}
+        self.variables = {}
+        self.options = {}
+        self.options['is_training'] = is_training
+        self.options['do_finetune'] = do_finetune
+        self.options['regularize'] = regularize
+
+        if not self.options['is_training'] or (self.options['is_training'] and self.options['do_finetune']):
+            if model_path == "":
+                raise ValueError('Model Path cannot be empty for Finetuning or Inference!')
+        else:
+            if model_path!= "":
+                logger.warning("Caution: argument model_path is ignored in training!")
+
+        self.options['model_path'] = model_path
+
+        if self.options['is_training'] and not self.options['do_finetune']:
+            self._set_up_inputs()
+            self.options['n_filters'] = n_filters
+            self.options['n_convolutions'] = n_convolutions
+            self.options['drop_out'] = drop_out  # if [0] is True, dropout is added to the graph with keep_prob [2]
+            self.options['regularizer'] = self._get_reg()
+            self.options['batch_normalization'] = do_batch_normalization
+            self.options['use_bias'] = do_bias
+            if self.options['batch_normalization'] and self.options['use_bias']:
+                logger.warning("Caution: do not use bias AND batch normalization!")
+            self.options['activation'] = activation
+            self.options['res_connect'] = res_connect
+            self.options['skip_connect'] = skip_connect
+            self.options['upscale'] = upscale  # #'BI_INTER' TRANS_CONV
+            if self.options['upscale'] == 'UNPOOL_MAX_IND':
+                self.variables['unpool_params'] = []
+                self.options['downscale'] = 'MAX_POOL_ARGMAX'
+                if not downscale == 'MAX_POOL_ARGMAX':
+                    logger.warning("Caution: changed downscale to MAX_POOL_ARGMAX!")
+            else:
+                self.options['downscale'] = downscale
+                if downscale == 'MAX_POOL_ARGMAX':
+                    raise ValueError("MAX_POOL_ARGMAX has to be used with UNPOOL_MAX_IND!")
+            self.options['padding'] = 'SAME'
+            # if training build everything according to parameters
+            self.options['in_channels'] = self.inputs['x'].shape.as_list()[-1]
+            # self.options['out_channels'] is set elsewhere, but required
+            self.options['rank'] = len(self.inputs['x'].shape) - 2  # input number of dimensions (without channels and batch size)
+            self.options['use_cross_hair'] = cross_hair
+            if self.options['rank'] == 2 and self.options['use_cross_hair']:
+                logger.warning("Caution: cross_hair is ignored for 2D input!")
+            self.options['dilation_rate'] = np.ones(self.options['rank'])  # input strides
+            self.options['strides'] = np.ones(self.options['rank'], dtype=np.int32)  # outout strides
+            self.options['kernel_dims'] = [kernel_dims] * self.options['rank']
+            assert len(self.options['kernel_dims']) == self.options['rank']
+            if self.options['skip_connect']:
+                self.variables['feature_maps'] = []
+
+
+            self.options['loss'] = loss
+            self.outputs['loss'] = self._get_loss()
+            self.model = self._build_model()
+            self.model._name = self.get_name()
+        else:
+            # for finetuning load net from file
+            self._load_net()
+            self.options['loss'] = loss
+            self.outputs['loss'] = self._get_loss()
+
+        #write other kwags to options
+        for key, value in kwargs.items():
+            self.options[key] = value
 
     def _set_up_inputs(self):
         self.inputs['x'] = tf.keras.Input(shape=cfg.train_input_shape, batch_size=cfg.batch_size_train, dtype=cfg.dtype)
         self.options['out_channels'] = cfg.num_classes_seg
-
-    @staticmethod
-    def _get_test_size():
-        return cfg.test_data_shape
 
     def _get_loss(self):
         '''!
@@ -87,259 +166,153 @@ class SegBasisNet(Network):
         else:
             raise ValueError(self.options['loss'], 'is not a supported loss function.')
 
-    def _run_apply(self, version, apply_path, application_dataset, filename):
-
-        if not os.path.exists(apply_path):
-            os.makedirs(apply_path)
-
-        predictions = []
-        start_time = time()
-
-        for x in application_dataset:
-            prediction = self.model(x, training=False)
-            predictions.append(prediction)
-
-        if self.options['rank'] == 3:
-            m = len(predictions)
-            extend_z = cfg.test_label_shape[0] * np.int(np.ceil(m/2))
-
-            probability_map = np.zeros((extend_z, *cfg.test_label_shape[1:3], self.options['out_channels']))
-            # weight_map = np.zeros((extend_z, *cfg.test_label_shape[1:3], self.options['out_channels']))
-            basic_weights = np.ones(predictions[0].shape, dtype=np.float)
-            part_length = cfg.test_label_shape[0] // 2
-            weight_factors = np.linspace(0, 1, part_length)
-            weight_factors = np.concatenate([weight_factors, np.flip(weight_factors)])
-            for i in range(cfg.test_label_shape[0]):
-                basic_weights[:, i] = weight_factors[i]
-
-            for p in range(0, m):
-                if p == 0:
-                    # The first half of the first prediction gets weighted with 1, the rest with 0.5
-                    weights = basic_weights.copy()
-                    weights[:, :part_length] = 1.0
-                elif p == m-1:
-                    # The second half of the last prediction gets weighted with 1, the rest with 0.5
-                    weights = basic_weights.copy()
-                    weights[:, part_length:] = 1.0
-                else:
-                    weights = basic_weights.copy()
-
-                probability_map[p * part_length: p * part_length + cfg.test_label_shape[0]] += np.squeeze(np.multiply(weights, predictions[p]))
-                # weight_map[p * part_length: p * part_length + cfg.test_label_shape[0]] += np.squeeze(weights)
-
-                # import matplotlib.pyplot as plt
-                # plt.imshow(probability_map[:, :, 250, 2], interpolation='none', cmap='gray')
-                # plt.imshow(weight_map[:, :, 250, 2], interpolation='none', cmap='gray')
-                pass
+    def _select_final_activation(self):
+        # http://dataaspirant.com/2017/03/07/difference-between-softmax-function-and-sigmoid-function/
+        if self.options['out_channels'] > 2 or self.options['loss'] in ['DICE', 'TVE', 'GDL']:
+            # Dice, GDL and Tversky require SoftMax
+            return 'softmax'
+        elif self.options['out_channels'] == 2 and self.options['loss'] in ['CEL', 'WCEL', 'GCEL']:
+            return 'sigmoid'
         else:
-            probability_map = np.concatenate(predictions)
+            raise ValueError(self.options['loss'],
+                             'is not a supported loss function or cannot combined with ',
+                             self.options['out_channels'], 'output channels.')
 
-        end_time = time()
+    def _run_train(self, logs_path, folder_name, training_dataset, validation_dataset, epochs,
+                   l_r=0.001, optimizer='Adam', early_stopping=False, reduce_lr_on_plateau=False, **kwargs):
 
-        with tf.device('/cpu:0'):
-            elapsed_time = end_time - start_time
-            logger.debug('  Elapsed Time (Seconds): %s', elapsed_time)
-            self._write_inference_data(probability_map, filename, apply_path, version, self.options['rank'])
+        # set path
+        output_path = Path(logs_path) / folder_name
 
-    def _run_train(self, logs_path, folder_name, training_dataset, validation_dataset,
-                   summary_steps_per_epoch, epochs, l_r=0.001, optimizer='Adam', **kwargs):
-        '''!
-        Sets up and runs training session
-        @param  logs_path               : str; path to logs
-        @param  folder_name             : str
-        @param  feed_dict_train         : dict
-        @param  feed_dict_test          : dict
-        @param  training_iterator       : tf.iterator
-        @param  validation_iterator     : tf.iterator
-        @param  summary_step            : int
-        @param  l_r                     : float; Learning Rate for the optimizer
-        @param  optimizer               : {'Adam', 'Momentum', 'Adadelta'}; Optimizer.
-        @param epochs                   : int; number of epochs (for progress display)
-        '''
+        # compile model
+        self.model.compile(
+            optimizer=self._get_optimizer(optimizer, l_r, 0),
+            loss=self.outputs['loss'],
+            metrics=[
+                Dice(name='dice', num_classes=cfg.num_classes_seg),
+                'acc',
+                tf.keras.metrics.MeanIoU(num_classes=cfg.num_classes_seg)
+            ]
+        )
 
-        #TODO: generate graphs
-
-        #start profiler
-        profiler.start(logdir=os.path.abspath(os.path.join(logs_path, folder_name, 'profiler')))
-
-        #save options for summary
-        self.options['epochs'] = epochs
-        self.options['learning_rate'] = l_r
-
-        if not cfg.samples_per_volume * cfg.num_files % cfg.batch_size_train == 0:
-            raise ValueError(
-                f'cfg.samples_per_volume ({cfg.samples_per_volume}) * '+
-                f'cfg.num_files ({cfg.num_files}) should be'+
-                f' divisible by cfg.batch_size_train ({cfg.batch_size_train}). '
-                f'Consider choosing samples per volume as multiple of batch size.'
-            )
+        # define callbacks
+        callbacks = []
         iter_per_epoch = cfg.samples_per_volume * cfg.num_files // cfg.batch_size_train
-        logger.debug('Iter per Epoch %s', iter_per_epoch)
+        iter_per_vald = cfg.samples_per_volume * cfg.num_files_vald // cfg.batch_size_train
+        # for tensorboard
+        tb_callback = tf.keras.callbacks.TensorBoard(
+            output_path / 'logs',
+            update_freq='epoch',
+            profile_batch=(2, 12),
+            histogram_freq=1
+        )
+        callbacks.append(tb_callback)
 
-        if self.options['do_finetune']:
-            folder_name = folder_name + '-f'
+        # to save the model
+        model_dir = output_path / 'models'
+        if not model_dir.exists():
+            model_dir.mkdir()
+        cp_callback = tf.keras.callbacks.ModelCheckpoint(
+            filepath=model_dir / 'weights_{epoch:03d}.hdf5',
+            save_weights_only=True,
+            verbose=0,
+            save_freq=10*iter_per_epoch
+        )
+        callbacks.append(cp_callback)
 
-        global_step = tf.Variable(0, name='global_step', trainable=False, dtype=tf.int64)
+        # to save the best model
+        cp_best_callback = tf.keras.callbacks.ModelCheckpoint(
+            filepath=model_dir / 'weights_best_{epoch:03d}-{val_dice:1.3f}.hdf5',
+            save_weights_only=True,
+            verbose=0,
+            save_freq='epoch',
+            save_best_only=True,
+            monitor='val_dice',
+            mode='max'
+        )
+        callbacks.append(cp_best_callback)
 
-        train_path = os.path.abspath(os.path.join(logs_path, folder_name, 'model'))
-        logger.debug('Training path: %s', train_path)
-        if not os.path.exists(train_path):
-            os.makedirs(train_path)
-
-        # save the keras model
-        self.model.save(os.path.join(train_path, 'keras_model.h5'))
-
-        if not hasattr(self, 'optimizer'):
-            self.optimizer = self._get_optimizer(optimizer, l_r, global_step)
-
-        # save checkpoints
-        checkpoint = tf.train.Checkpoint(optimizer=self.optimizer, model=self.model)
-        checkpoint_manager = tf.train.CheckpointManager(
-            checkpoint, directory=train_path, max_to_keep=3, checkpoint_name='weights')
-
-        train_writer = tf.summary.create_file_writer(os.path.join(logs_path, folder_name, 'train'))
-        valid_writer = tf.summary.create_file_writer(os.path.join(logs_path, folder_name, 'valid'))
-
-        epoch_objective_avg = tf.keras.metrics.Mean()
-        epoch_accuracy_avg = tf.keras.metrics.Mean()
-
-        self.outputs['accuracy'] = metric.dice_coefficient_tf
-
-        #make progress bar for epochs
-        progress_bar_epochs = tqdm(
-                    total=epochs,
-                    desc=f'{folder_name} (train)',
-                    position=1,
-                    unit='epoch',
-                    smoothing=0.9
-                )
-
-        for x_t, y_t in training_dataset:
-            
-            epoch = global_step.numpy() // iter_per_epoch
-
-            #create progress bar and reset every epoch
-            if global_step.numpy() % iter_per_epoch == 0:
-                progress_bar_batches = tqdm(
-                    total=iter_per_epoch,
-                    desc=f'Epoch {epoch + 1}',
-                    position=0,
-                    smoothing=0.9
-                )
-            # do not profile the first epoch
-            if epoch == 0:
-                prediction, objective_train = self.training_step(x_t, y_t)
-            # profile the first one
-            elif epoch == 1:
-                # call profiler
-                with profiler.Trace('train', step_num=global_step, _r=1):
-                    # to the training step
-                    prediction, objective_train = self.training_step(x_t, y_t)
-                # stop the profiler after the second epoch
-                if global_step.numpy() ==  2 * iter_per_epoch - 1:
-                    profiler.stop()
-            # do not profile the rest         
-            else:
-                prediction, objective_train = self.training_step(x_t, y_t)
-
-            # update metrics
-            if self.options['rank'] == 2:
-                accuracy_train = self.outputs['accuracy'](y_t[:, :, :, 1], prediction[:, :, :, 1])
-            else:
-                accuracy_train = self.outputs['accuracy'](y_t[:, :, :, :, 1], prediction[:, :, :, :, 1])
-
-            epoch_objective_avg.update_state(objective_train)
-            epoch_accuracy_avg.update_state(accuracy_train)
-
-            #call function when epoch ends (and at the start)
-            if global_step.numpy() % iter_per_epoch == 0:
-                self._end_of_epoch(checkpoint_manager, epoch, iter_per_epoch, validation_dataset, valid_writer)
-
-                if self.options['do_finetune']:
-                    for layer in self.model.layers[:min(epoch * 3, len(self.model.layers) // 2 - 3)]:
-                        layer.trainable = False
-
-                # use the epoch as step number, because it is more consistent
-                self._summaries(x_t, y_t, prediction, epoch_objective_avg.result().numpy(),
-                                epoch_accuracy_avg.result().numpy(),
-                                epoch, train_writer, mode='train')
-
-                if global_step.numpy() != 0:
-                    epoch_objective_avg.reset_states()
-                    epoch_accuracy_avg.reset_states()
-
-                #update progress bars
-                progress_bar_batches.set_postfix_str(
-                    f'Obj.: {epoch_objective_avg.result().numpy():.4f}' +
-                    f' Acc.: {epoch_accuracy_avg.result().numpy():.4f}'
-                )
-                if global_step.numpy() != 0:
-                    progress_bar_epochs.update()
-
-            #update progress bar
-            progress_bar_batches.set_postfix_str(
-                f'Obj.: {epoch_objective_avg.result().numpy():.4f}' +
-                f' Acc.: {epoch_accuracy_avg.result().numpy():.4f}'
+        # early stopping
+        if early_stopping:
+            es_callback = tf.keras.callbacks.EarlyStopping(
+                monitor='val_dice',
+                patience=10,
+                mode='max',
+                min_delta=0.005
             )
+            callbacks.append(es_callback)
 
-            progress_bar_batches.update()
+        # reduce learning rate on plateau
+        if reduce_lr_on_plateau:
+            lr_reduce_callback = tf.keras.callbacks.ReduceLROnPlateau(
+                monitor='val_dice',
+                patience=10,
+                mode='max',
+                factor=0.2,
+                verbose=1,
+                cooldown=10
+            )
+            callbacks.append(lr_reduce_callback)
 
-            global_step = global_step + 1
+            class LRLogCallback(tf.keras.callbacks.Callback):
 
-        # set last epoch
-        epoch = global_step.numpy() // iter_per_epoch
+                def __init__(self, tb_callback):
+                    self.tb_callback = tb_callback
 
-        #update progressbar after final epoch
-        progress_bar_epochs.update()
-        logger.info(f'Done -- Finished training after {epoch} epochs /' +
-            f'{global_step.numpy()} steps. Average Objective: {epoch_objective_avg.result().numpy()} (Train)')
-        self._end_of_epoch(checkpoint_manager, epoch, iter_per_epoch, validation_dataset, valid_writer)
-        # do final summary
-        self._summaries(x_t, y_t, prediction, epoch_objective_avg.result().numpy(), epoch_accuracy_avg.result().numpy(),
-                                epoch, train_writer, mode='train')
+                def on_epoch_end(self, epoch, logs):
+                    with self.tb_callback._writers['train'].as_default():
+                        tf.summary.scalar('learning rate', data=logs['lr'], step=epoch)
 
-    def training_step(self, x_t, y_t):
-        # enabling the computation of gradients
-        with tf.GradientTape() as tape:
-            prediction = self.model(x_t)
-            if self.options['regularize'][0]:
-                self.outputs['reg'] = tf.add_n(self.model.losses)
-                objective_train = self.outputs['loss'](y_t, prediction) + self.outputs['reg']
-            else:
-                objective_train = self.outputs['loss'](y_t, prediction)
+            # log additional data (using the tensorboard writer)
+            log_callback = LRLogCallback(tb_callback)
+            callbacks.append(log_callback)
 
-        gradients = tape.gradient(objective_train, self.model.trainable_variables)
-        if cfg.do_gradient_clipping:
-            gradients, _ = tf.clip_by_global_norm(gradients, cfg.clipping_value)
-        self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
-        return prediction, objective_train
+        # callback for hyperparameters
+        hparams = self.get_hyperparameter_dict()
+        # set additional paramters
+        hparams['folder_name'] = folder_name
+        hp_callback = hp.KerasCallback(str(output_path / 'logs' / 'train'), hparams)
+        callbacks.append(hp_callback)
 
-    def _end_of_epoch(self, checkpoint_manager, step, iter_per_epoch, validation_dataset, valid_writer):
-        logger.info(' Epoch: %s', step)
-        checkpoint_manager.save(checkpoint_number=step)
-        epoch_objective_avg = tf.keras.metrics.Mean()
-        epoch_accuracy_avg = tf.keras.metrics.Mean()
+        # callback to write csv data
+        csv_callback = tf.keras.callbacks.CSVLogger(
+            filename = output_path / 'training.csv',
+            separator=';'
+        )
+        callbacks.append(csv_callback)
 
-        for x_v, y_v in validation_dataset:
-            prediction = self.model(x_v, training=False)
-            if self.options['regularize'][0]:
-                self.outputs['reg'] = tf.add_n(self.model.losses)
-                objective_validation = self.outputs['loss'](y_v, prediction) + self.outputs['reg']
-            else:
-                objective_validation = self.outputs['loss'](y_v, prediction)
+        # do the training
+        self.model.fit(
+            x=training_dataset,
+            epochs=epochs,
+            verbose=1,
+            validation_data=validation_dataset,
+            validation_freq=1,
+            steps_per_epoch=iter_per_epoch,
+            validation_steps=iter_per_vald,
+            callbacks=callbacks
+        )
+        print('Saving the final model.')
+        # save the model once (only weights are saved afterwards)
+        self.model.save(model_dir / 'model-final', save_format='tf')
+        print('Saving finished.')
 
-            if self.options['rank'] == 2:
-                accuracy_validation = self.outputs['accuracy'](y_v[:, :, :, 1], prediction[:, :, :, 1])
-            else:
-                accuracy_validation = self.outputs['accuracy'](y_v[:, :, :, :, 1], prediction[:, :, :, :, 1])
+    def _load_net(self):
+        # This loads the keras network and the first checkpoint file
+        self.model = tf.keras.models.load_model(
+            self.options['model_path'],
+            compile=False,
+            custom_objects={'Dice' : Dice}
+        )
 
-            epoch_objective_avg.update_state(objective_validation)
-            epoch_accuracy_avg.update_state(accuracy_validation)
+        self.variables['epoch'] = 'final'
 
-        logger.info(f' Epoch: {step} Average Objective: ' +
-              f'{epoch_objective_avg.result().numpy():.4f} Average Accuracy: {epoch_accuracy_avg.result().numpy():.4f} (Valid)')
-        self._summaries(x_v, y_v, prediction, epoch_objective_avg.result().numpy(),
-                        epoch_accuracy_avg.result().numpy(), step, valid_writer, mode='valid')
+        if self.options['is_training'] == False:
+            self.model.trainable = False
+        self.options['rank'] = len(self.model.inputs[0].shape) - 2
+        self.options['in_channels'] = self.model.inputs[0].shape.as_list()[-1]
+        self.options['out_channels'] = self.model.outputs[0].shape.as_list()[-1]
+        logger.info('Model was loaded')
 
     def get_hyperparameter_dict(self):
         """This function reads the hyperparameters from options and writes them to a dict of
@@ -352,14 +325,13 @@ class SegBasisNet(Network):
         """
         hyperparameters = {
             'dimension' : self.options['rank'],
-            'optimizer' : self.optimizer._name,
             'drop_out_rate' : self.options['drop_out'][1],
             'regularize' : self.options['regularize'][0],
             'regularizer' : self.options['regularize'][1],
             'regularizer_param' : self.options['regularize'][2],
             'kernel_dim' : self.options['kernel_dims'][0]
         }
-        for o in ['epochs', 'learning_rate', 'use_bias', 'loss', 'name', 'do_gradient_clipping', 'batch_normalization', 'activation', 'use_cross_hair']:
+        for o in ['use_bias', 'loss', 'name', 'batch_normalization', 'activation', 'use_cross_hair']:
             hyperparameters[o] = self.options[o]
         # check the types
         for key, value in hyperparameters.items():
@@ -367,6 +339,83 @@ class SegBasisNet(Network):
                 hyperparameters[key] = str(value)
         return hyperparameters
 
+    # TODO: simplify and document
+    def _run_apply(self, version, model_path, application_dataset, filename, apply_path):
+
+        if not os.path.exists(apply_path):
+            os.makedirs(apply_path)
+
+        image_data = application_dataset(filename)
+
+        # if 2D, run each layer as a batch
+        if self.options['rank'] == 2:
+            predictions = []
+            for x in np.expand_dims(image_data, axis=1):
+                p = self.model(x, training=False)
+                predictions.append(p)
+            # concatenate
+            probability_map = np.concatenate(predictions)
+        # otherwise, just run it
+        else:
+            try:
+                probability_map = self.model(image_data, training=False)
+            except tf.errors.ResourceExhaustedError:
+                logger.info(f'{filename} cannot be processed as a complete image, dividing into slices.')
+                # if running out of memory, turn into sub-problems
+                assert application_dataset.training_shape[0] % 2 == 0, 'Training Shape z-extent should be divisible by 2'
+                z_half = application_dataset.training_shape[0] // 2
+                # always use the two central slices
+                indices = np.arange(z_half, image_data.shape[1] - z_half, 2, dtype=int)
+                # create a new probability map
+                map_shape = image_data.shape[:-1] + (cfg.num_classes_seg,)
+                probability_map = np.zeros(map_shape)
+                for i in indices:
+                    result = self.model(image_data[:,i-z_half:i+z_half], training=False)
+                    # take the central two slices
+                    probability_map[:,i-1:i+1] = result[:,z_half-1:z_half+1]
+
+        # remove padding
+        probability_map = application_dataset.remove_padding(probability_map)
+
+        # remove the batch dimension
+        if self.options['rank'] == 3:
+            probability_map = probability_map[0]
+        
+        # get the labels
+        predicted_labels = np.argmax(probability_map, -1)
+
+        # get the processed image
+        orig_processed = application_dataset.get_processed_image(filename)
+
+        predicted_label_img = sitk.GetImageFromArray(predicted_labels)
+        # copy info
+        predicted_label_img.CopyInformation(orig_processed)
+
+        # get the original image
+        original_image = application_dataset.get_original_image(filename)
+
+        # resample to the original file
+        predicted_label_orig = sitk.Resample(
+            image1=predicted_label_img,
+            referenceImage=original_image,
+            interpolator=sitk.sitkNearestNeighbor,
+            outputPixelType =sitk.sitkUInt8,
+            useNearestNeighborExtrapolator=True
+        )
+
+        # write resampled file
+        name = Path(filename).name
+        pred_path = Path(apply_path) / f'prediction-{name}-{version}{cfg.file_suffix}'
+        sitk.WriteImage(predicted_label_orig, str(pred_path.absolute()))
+
+        if cfg.write_probabilities:
+            with open(Path(apply_path) / f'prediction-{name}-{version}.npy', 'wb') as f:
+                np.save(f, probability_map)
+
+        return
+
+
+    # TODO: add hook for summaries in test_step
     def _summaries(self, x, y, probabilities, objective, acccuracy, step, writer, max_image_output=2, histo_buckets=50, mode=None):
 
         predictions = tf.argmax(probabilities, -1)
@@ -379,8 +428,8 @@ class SegBasisNet(Network):
             with tf.name_scope('01_Objective'):
                 tf.summary.scalar('average_objective', objective, step=step)
                 tf.summary.scalar('iteration_' + self.options['loss'], self.outputs['loss'](y, probabilities), step=step)
-                if self.options['regularize'][0]:
-                    tf.summary.scalar('iteration_' + self.options['regularize'][1], self.outputs['reg'], step=step)
+                # if self.options['regularize'][0]:
+                #     tf.summary.scalar('iteration_' + self.options['regularize'][1], self.outputs['reg'], step=step)
 
             with tf.name_scope('02_Accuracy'):
                 tf.summary.scalar('average_acccuracy', acccuracy, step=step)
@@ -438,7 +487,7 @@ class SegBasisNet(Network):
                         [0, cfg.batch_size_train - 1]) * (255 // (cfg.num_classes_seg - 1)), tf.uint8), axis=-1)
                     tf.summary.image('train_seg_pred', pred, step, max_image_output)
 
-            with tf.name_scope('02_Combined_predictions (prediction in red, label in green, both in yellow)'):
+            with tf.name_scope('02_Combined_predictions'): # (prediction in red, label in green, both in yellow)'):
                 # set to first channel where both labels are zero
                 mask = tf.cast(tf.math.logical_and(pred == 0, label == 0), tf.uint8)
                 # set those values to the mask
@@ -470,61 +519,3 @@ class SegBasisNet(Network):
                         tf.summary.image('train_seg_lbl' + str(c), tf.expand_dims(tf.cast(
                             tf.gather(y[:, self.inputs['x'].shape[1] // 2, :, :, c], [0, cfg.batch_size_train - 1])
                             * 255, tf.uint8), axis=-1), step, max_image_output)
-
-    def _select_final_activation(self):
-        # http://dataaspirant.com/2017/03/07/difference-between-softmax-function-and-sigmoid-function/
-        if self.options['out_channels'] > 2 or self.options['loss'] in ['DICE', 'TVE', 'GDL']:
-            # Dice, GDL and Tversky require SoftMax
-            return 'softmax'
-        elif self.options['out_channels'] == 2 and self.options['loss'] in ['CEL', 'WCEL', 'GCEL']:
-            return 'sigmoid'
-        else:
-            raise ValueError(self.options['loss'],
-                             'is not a supported loss function or cannot combined with ',
-                             self.options['out_channels'], 'output channels.')
-
-    @staticmethod
-    def _write_inference_data(predictions, file_name, out_path, version, rank):
-        import SimpleITK as sitk
-        if not cfg.write_probabilities:
-            predictions = np.argmax(predictions, -1)
-
-        # Use a SimpleITK reader to load the nii images and labels for training
-        folder, file_number = os.path.split(file_name)
-        data_img = sitk.ReadImage(os.path.join(folder, (cfg.sample_file_name_prefix + file_number + cfg.file_suffix)))
-        data_info = image.get_data_info(data_img)
-        if cfg.adapt_resolution:
-            target_info = {}
-            target_info['target_spacing'] = cfg.target_spacing
-            target_info['target_direction'] = cfg.target_direction
-            target_info['target_size'] = cfg.target_size
-            target_info['target_type_image'] = cfg.target_type_image
-            target_info['target_type_label'] = cfg.target_type_image
-            resampled_img = image.resample_sitk_image(data_img, target_info,
-                                                      data_background_value=cfg.data_background_value,
-                                                      do_adapt_resolution=cfg.adapt_resolution,
-                                                      label_background_value=cfg.label_background_value,
-                                                      do_augment=False)
-
-            if rank == 3:
-                z_original = resampled_img.GetSize()[-1]
-                padded_extend = z_original + cfg.test_label_shape[0]
-                least_number_of_samples = np.int(np.ceil(z_original / cfg.test_label_shape[0]))
-                number_of_samples = 2 * least_number_of_samples - 1
-                stiched_extend = np.ceil(number_of_samples/2) * cfg.test_label_shape[0]
-                center = np.int(z_original//2 + cfg.test_label_shape[0] // 2 - (padded_extend - stiched_extend) // 2)
-                if (z_original % 2) == 0:
-                    predictions = predictions[center - (z_original // 2) + 1:]
-                else:
-                    predictions = predictions[center - (z_original // 2):]
-
-            data_info['res_spacing'] = cfg.target_spacing
-            data_info['res_origin'] = resampled_img.GetOrigin()
-            data_info['res_direction'] = cfg.target_direction
-
-        pred_img = image.np_array_to_sitk_image(predictions, data_info, cfg.label_background_value,
-                                               cfg.adapt_resolution, cfg.target_type_label)
-
-        name = Path(file_name).name
-        pred_path = Path(out_path) / f'prediction-{name}-{version}{cfg.file_suffix}'
-        sitk.WriteImage(pred_img, str(pred_path.absolute()))

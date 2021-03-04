@@ -1,27 +1,45 @@
+from enum import Enum
 import logging
 import os
 
 import numpy as np
 import SimpleITK as sitk
-from numpy.core.fromnumeric import squeeze
 
 from . import config as cfg
-from .NetworkBasis import image as Image
 from .NetworkBasis.dataloader import DataLoader
-import tensorflow as tf
-import elasticdeform
-import matplotlib.pyplot as plt
-
-
-np.seterr(all='raise')
+from .NetworkBasis import image
 
 #configure logger
 logger = logging.getLogger(__name__)
 
+# define enums
+
+class NORMALIZING(Enum):
+    WINDOW = 0
+    MEAN_STD = 1
+    PERCENT5 = 2
+
+
+class NOISETYP(Enum):
+    GAUSSIAN =0
+    POISSON = 1
+
 class SegBasisLoader(DataLoader):
-    """!
-    LitsLoader Class
-    """
+
+    def __init__(self, mode=None, seed=42, name='reader', frac_obj=None):
+        super().__init__(mode=mode, seed=seed, name=name)
+
+        # use caching
+        self.use_caching = True
+
+        # get the fraction of the samples that should contain the object
+        if frac_obj == None:
+            self.frac_obj = cfg.percent_of_object_samples / 100
+        else:
+            self.frac_obj = frac_obj
+
+        self.normalizing_method = cfg.normalizing_method
+        self.do_resampling = cfg.do_resampling
 
     def _set_up_shapes_and_types(self):
         """!
@@ -39,33 +57,14 @@ class SegBasisLoader(DataLoader):
         self.n_channels = cfg.num_channels
         if self.mode is self.MODES.TRAIN or self.mode is self.MODES.VALIDATE:
             self.dtypes = [cfg.dtype, cfg.dtype]
-            self.dshapes = [cfg.train_input_shape, cfg.train_label_shape]
+            self.dshapes = [np.array(cfg.train_input_shape), np.array(cfg.train_label_shape)]
+            # use the same shape for image and labels
+            assert np.all(self.dshapes[0] == self.dshapes[1])
         else:
             self.dtypes = [cfg.dtype]
-            self.dshapes = [cfg.test_data_shape]
+            self.dshapes = [np.array(cfg.test_data_shape)]
 
         self.data_rank = len(self.dshapes[0])
-
-        # Automatically determin data dimension
-        if self.data_rank == 3:
-            # In 2D this parameter describes how many slices are additionally loaded.
-            # They will be interpreted as channels.
-            # Using in_between_slice_factor slices will be skipped.
-            self.slice_shift = 0#((self.n_channels - 1) // 2) * cfg.in_between_slice_factor TODO fix calculation, does not work for 3
-            logger.debug('    Rank of input shape is %s. Loading 2D samples with SS=%s', self.data_rank, self.slice_shift)
-
-        elif self.data_rank == 4:
-            # In 3D this parameter describes the z extend of the sample.
-            # if self.mode is self.MODES.APPLY:
-            #     print("Slice shift will we be set dynamically.")
-            # else:
-            #     self.slice_shift = self.dshapes[0][0] // 2
-            #     print(self.slice_shift)
-            self.slice_shift = self.dshapes[0][0] // 2
-            logger.debug('    Rank of input shape is %s. Loading 3D samples with SS=%s', self.data_rank, self.slice_shift)
-
-        else:
-            raise Exception('rank = \'{}\' is not supported'.format(self.data_rank))
 
     def _set_up_capacities(self):
         """!
@@ -78,68 +77,24 @@ class SegBasisLoader(DataLoader):
         elif self.mode is self.MODES.VALIDATE:
             self.sample_buffer_size = cfg.batch_capacity_train
 
-    @tf.autograph.experimental.do_not_convert
-    def _read_file_and_return_numpy_samples(self, file_id):
-        """!
-        Calls _load_file to load data and label based on the @p file_id and then extracts samples by calling _get_samples_from_volume()
-        @param file_id <em>string,  </em> a file ID correspondinging to a pair of data file and label
-
-        This function operates as follows:
-        - calls _load_file()
-        - calls _get_samples_from_volume()
-
-        @return numpy arrays I (containing input samples) and if mode is not APPLY L (containing according labels)
-
-        """
-        # read and precrocess data, return image and label as 3D numpy matrices
-        data, lbl = self._load_file(file_id)
-        samples, labels = self._get_samples_from_volume(data, lbl)
-        if self.mode is not self.MODES.APPLY:
-            return samples, labels
-        else:
-            return [samples]
-
-    def _load_file(self, file_id):
-        '''!
-        loads nii data file and nii labels file given the @p file_id
-
-        @param file_id <em>string,  </em> should have the format <tt> 'Location\\file_number'</tt>. The @p Location must contain the data file with the @p file_number named as @p volume-file_number.nrrd and the data file with the @p file_number named as @p segmentation-file_number.nrrd to be loaded. For example, <tt>'C:\\DataLoction\\0'</tt> can be a @p file_id. Then <tt> C:\\DataLoction </tt> should contain @p volume-0.nrrd and @p segmetation-0.nrrd.
-
-        Given the @p file_id, this function
-        - Generates the location and file number for the data and label files.
-        - Reads data and labels files using a SimpleITK reader.
-        - Resamples (With augmentation if <tt>  self.mode </tt> is @p 'train'). See resample().
-        - Combines liver and tumor annotations into one label.
-        - Generates data and labels numpy arrays from nii files.
-        - Moves z axis to last dimension.
-
-        @return data and labels as numpy arrays
-        '''
-        file_id = str(file_id, 'utf-8')
-        logger.debug('        Loading %s (%s)', file_id, self.mode)
-        # Use a SimpleITK reader to load the nii images and labels for training
-        data_file, label_file = self._get_filenames(file_id) 
-        data_img = sitk.ReadImage(data_file)
-        label_img = sitk.ReadImage(label_file)
-        data_img, label_img = self.adapt_to_task(data_img, label_img)
-        if cfg.do_resampling:
-            data_img, label_img = self._resample(data_img, label_img)
-        data = sitk.GetArrayFromImage(data_img)
-        data = self.normalize(data)
-        lbl = sitk.GetArrayFromImage(label_img)
-        # move z axis to last index (do not use -1 in case there are 4 dimensions)
-        data = np.moveaxis(data, 0, 2)
-        lbl = np.moveaxis(lbl, 0, 2)
-        self._check_images(data, lbl)
-        if self.mode is self.MODES.APPLY:
-            data = Image.pad_image(data, 'edge', self.slice_shift)
-            lbl = Image.pad_image(lbl, 'constant', self.slice_shift, cfg.label_background_value)
-        # self._check_images(data, lbl)
-
-        return data, lbl
-
     def _get_filenames(self, file_id):
-        """Implements the standard file names, can be changed for custom file names
+        """For compability reasons, get filenames without the preprocessed ones
+
+        Parameters
+        ----------
+        file_id : str
+            The file id
+
+        Returns
+        -------
+        [type]
+            [description]
+        """
+        s, _, l, _ = self._get_filenames_cached(file_id)
+        return s, l
+
+    def _get_filenames_cached(self, file_id):
+        """Gets the filenames and the preprocessed filenames
 
         Parameters
         ----------
@@ -148,297 +103,249 @@ class SegBasisLoader(DataLoader):
 
         Returns
         -------
-        str, str
-            The path to the data_file and label_file
+        str, str, str, str
+            The path to the data_file and label_file in the cached and uncached version
         """
+        # get the folder and id
         folder, file_number = os.path.split(file_id)
-        data_file = os.path.join(folder, (cfg.sample_file_name_prefix + file_number + '.nrrd'))
+
+        # set preprocessing folder name
+        folder_name = f'pre_{self.normalizing_method}'
+        if self.do_resampling:
+            folder_name += '_resampled'
+        pre_folder = os.path.join(cfg.preprocessed_dir, folder_name)
+        if not os.path.exists(pre_folder):
+            os.makedirs(pre_folder)
+
+        # generate the file name for the sample
+        sample_name = cfg.sample_file_name_prefix + file_number
+        data_file = os.path.join(folder, sample_name + cfg.file_suffix)
         if not os.path.exists(data_file):
             raise Exception(f'The file {data_file} could not be found')
-        label_file = os.path.join(folder, (cfg.label_file_name_prefix + file_number + '.nrrd'))
+        # generate the name of the preprocessed file
+        filename = f'{sample_name}.mhd'
+        data_file_pre = os.path.join(pre_folder, filename)
+
+        # generate the file name for the sample
+        label_name = cfg.label_file_name_prefix + file_number
+        label_file = os.path.join(folder, (label_name + cfg.file_suffix))
         if not os.path.exists(data_file):
             raise Exception(f'The file {label_file} could not be found')
-        return data_file, label_file
+        # generate the name of the preprocessed file
+        label_file_pre = os.path.join(pre_folder, (label_name + '.mhd'))
+        return data_file, data_file_pre, label_file, label_file_pre
 
-    def _get_samples_from_volume(self, data, lbl):
-        '''!
-        Get samples for training from image and label data.
+    def _load_file(self, file_name):
+        # save preprocessed files as images, this increases the load time
+        # from 20 ms to 50 ms per image but is not really relevant compared to
+        #  the sampleing time. The advantage is that SimpleITK can be used for augmentation
 
-        @param data <em>numpy array,  </em> input image data with config.num_channels channels
-        @param lbl <em>numpy array,  </em> label image, one channel
-
-        This function operates as follows:
-        - calls _select_indices()
-        - calls _get_samples_by_index() for each index
-        - calls _augment_samples() on the input samples
-
-        @return numpy arrays I (containing input samples) and if mode is not APPLY L (containing according labels)
-        '''
-        indices, sampling_rates = self._select_indices(data, lbl)
-
-        if self.mode is self.MODES.APPLY:
-            I = np.zeros((len(indices), *self.dshapes[0]))
-
-            for i in range(len(indices)):
-                images, _ = self._get_samples_by_index(data, lbl, indices[i], samples_per_slice=1)
-                I[i] = images
-
-            logger.debug('   Image Samples Shape: %s')
-            return [I, None]
-
+        # convert to string if necessary
+        if type(file_name) == bytes:
+            file_id = str(file_name, 'utf-8')
         else:
-            L = []
-            I = []
-
-            for i in range(len(indices)):
-                images, labels = self._get_samples_by_index(data, lbl, indices[i], sampling_rates[i])
-                I.extend(images)
-                L.extend(labels)
-
-            L = np.array(L)
-            I = np.array(I)
-
-            if self.mode is self.MODES.TRAIN:
-                I, L = self._augment_samples(I, L)
-
-            logger.debug('   Image Samples Shape: %s', I.shape)
-            logger.debug('   Label Samples Shape: %s', L.shape)
-
-            return [I, L]
-
-    def _select_indices(self, data, lbl):
-        '''!
-        select slice indices from which samples should be taken
-        # TODO: update description
-
-        @param lbl <em>numpy array,  </em> label image, where background is zero
-
-        Z-axis / craniocaudal axis is assumed to be third dimension. Across the third dimension the slices are differentiated
-        into zero (empty slices/no segmentation) and non-zero slices.
-        For <tt>  self.mode </tt> = @p 'train' all non-zero slices are added to the index list.
-        For <tt>  self.mode </tt> = @p 'validate' the number of slices is restricted by config.validation_num_non_zero_indices.
-        The number of zero samples is calculated in relation to the non-zero samples based on config.non_zero_sample_percent. Should this number
-        be higher than the number actual number of zero indices, then only the available indices are added.
-
-        @return slice indices as numpy array
-        '''
-        s = lbl.shape[2]  # third dimension is z-axis
-        if self.data_rank == 4 and self.mode == self.MODES.APPLY:
-            least_number_of_samples = np.int(np.ceil((s - 2 * self.slice_shift)/(self.slice_shift * 2)))
-            number_of_samples = 2 * least_number_of_samples - 1
-            center = s // 2
-            indices = np.arange(center - (number_of_samples // 2) * self.slice_shift,
-                                center + (number_of_samples // 2 + 1) * self.slice_shift, self.slice_shift, dtype=np.int)
-            logger.debug('M: %s S: %s Indices: %s', number_of_samples, s, indices)
-            return indices, np.ones(indices.size, dtype=np.int)
+            file_id = str(file_name)
+        logger.debug('        Loading %s (%s)', file_id, self.mode)
+        # Use a SimpleITK reader to load the nii images and labels for training
+        data_file, data_file_pre, label_file, label_file_pre = self._get_filenames_cached(file_id) 
+        # see if the preprocessed files exist
+        if os.path.exists(data_file_pre) and os.path.exists(label_file_pre) and self.use_caching:
+            # load images
+            data = sitk.ReadImage(str(data_file_pre))
+            lbl = sitk.ReadImage(str(label_file_pre))
         else:
-            indices = np.arange(0 + self.slice_shift, s - self.slice_shift, 1)
-            if self.mode == self.MODES.APPLY:
-                return indices, np.ones(indices.size, dtype=np.int)
-            else:
-                return np.random.permutation(indices), np.ones(indices.size, dtype=np.int) * cfg.samples_per_slice_uni
+            # load images
+            data_img = sitk.ReadImage(data_file)
+            label_img = sitk.ReadImage(label_file)
+            # adapt, resample and normalize them
+            data_img, label_img = self.adapt_to_task(data_img, label_img)
+            if self.do_resampling:
+                data_img, label_img = self._resample(data_img, label_img)
+            data = sitk.GetArrayFromImage(data_img)
+            data = self.normalize(data)
+            lbl = sitk.GetArrayFromImage(label_img)
+            # then check them
+            self._check_images(data, lbl)
+            # if everything is ok, save the preprocessed images
+            data_img_proc = sitk.GetImageFromArray(data)
+            data_img_proc.CopyInformation(data_img)
+            label_img_proc = sitk.GetImageFromArray(lbl)
+            label_img_proc.CopyInformation(label_img)
+            sitk.WriteImage(data_img_proc, str(data_file_pre))
+            sitk.WriteImage(label_img_proc, str(label_file_pre))
+            data = data_img_proc
+            lbl = label_img_proc
 
-    def _get_samples_by_index(self, data, label, index, samples_per_slice=cfg.samples_per_slice_uni, object_sampling=True):
+        return data, lbl
+
+    def _check_images(self, data, labels):
+        raise NotImplementedError('Should be implemented according to the task.')
+
+
+    def normalize(self, img, eps=np.finfo(float).min):
+        img_no_nan = np.nan_to_num(img, nan=cfg.data_background_value)
+        # clip outliers and rescale to between zero and one
+        a_min = np.quantile(img_no_nan, cfg.norm_min_q)
+        a_max = np.quantile(img_no_nan, cfg.norm_max_q)
+        if self.normalizing_method == NORMALIZING.PERCENT5:
+            img = np.clip(img_no_nan, a_min=a_min, a_max=a_max)
+            img = (img - a_min) / (a_max - a_min)
+            img = (img * 2) - 1
+        elif self.normalizing_method == NORMALIZING.MEAN_STD:
+            img = np.clip(img_no_nan, a_min=a_min, a_max=a_max)
+            img = img - np.mean(img)
+            std = np.std(img)
+            img = img / (std if std != 0 else eps)
+        elif self.normalizing_method == NORMALIZING.WINDOW:
+            img = np.clip(img_no_nan, a_min=cfg.norm_min_v, a_max=cfg.norm_max_v)
+            img = (img - cfg.norm_min_v) / (cfg.norm_max_v - cfg.norm_min_v + eps)
+            img = (img * 2) - 1
+        else:
+            raise NotImplementedError(f'{self.normalizing_method} is not implemented')
+
+        return img
+
+    def _resample(self, data, label=None):
         '''!
-        Get samples from index slice.
-
-        @param data <em>numpy array,  </em> input image
-        @param label <em>numpy array,  </em> label image
-        @param index <em>int,  </em> index of the slices that should be processed
-        @param samples_per_slice <em>int,  </em> how many samples will be taken from this slice
-
-        This is for Training.
         This function operates as follows:
-        - based on cfg.random_sampling_mode patch centers are selected.
-        - data and label are then extracted
+        - extract image meta information and assigns it to label as well
+        - calls the static function _resample()
 
-        @return numpy arrays I (containing input samples) and L (containing according labels), if mode is APPLY L is None
+        @param data <em>ITK image,  </em> patient image
+        @param label <em>ITK image,  </em> label image, 0 is background class
+
+        @return resampled data and label images
         '''
+        data_info = image.get_data_info(data)
+        # assure that the images are similar
+        if label is not None:
+            assert np.allclose(data_info['orig_direction'], label.GetDirection(), atol=0.01), 'label and image do not have the same direction'
+            assert np.allclose(data_info['orig_origin'], label.GetOrigin(), atol=0.01), 'label and image do not have the same origin'
+            assert np.allclose(data_info['orig_spacing'], label.GetSpacing(), atol=0.01), 'label and image do not have the same spacing'
 
-        data_shape = data.shape
+        target_info = {}
+        target_info['target_spacing'] = cfg.target_spacing
+
+        # make sure the spacing is orthogonal
+        orig_dirs = np.array(data_info['orig_direction']).reshape(3,3)
+        assert np.isclose(np.dot(orig_dirs[0],orig_dirs[1]), 0, atol=0.01), 'x and y not orthogonal'
+        assert np.isclose(np.dot(orig_dirs[0],orig_dirs[2]), 0, atol=0.01), 'x and z not orthogonal'
+        assert np.isclose(np.dot(orig_dirs[1],orig_dirs[2]), 0, atol=0.01), 'y and z not orthogonal'
+        target_info['target_direction'] = data_info['orig_direction']
+
+        # calculate the new size
+        orig_size = np.array(data_info['orig_size']) * np.array(data_info['orig_spacing'])
+        target_info['target_size'] = list((orig_size / np.array(cfg.target_spacing)).astype(int))
+
+        target_info['target_type_image'] = cfg.target_type_image
+        target_info['target_type_label'] = cfg.target_type_label
+
+        return image.resample_sitk_image(data, target_info, data_background_value=cfg.data_background_value,
+                                         do_adapt_resolution=self.do_resampling, label=label,
+                                         label_background_value=cfg.label_background_value, do_augment=False)
+
+
+    def _read_file_and_return_numpy_samples(self, file_name_queue:bytes):
+        data_img, label_img = self._load_file(file_name_queue)
+        samples, labels = self._get_samples_from_volume(data_img, label_img)
+        if self.mode is not self.MODES.APPLY:
+            return samples, labels
+        else:
+            return [samples]
+        
+
+    def _get_samples_from_volume(self, data_img, label_img):
+
+        # augment whole images
+        data_img, label_img = self._augment_images(data_img, label_img)
+
+        # convert samples to numpy arrays
+        data = sitk.GetArrayFromImage(data_img)
+        lbl = sitk.GetArrayFromImage(label_img)
+
+        # augment the numpy arrays
+        data, lbl = self._augment_numpy(data, lbl)
+
+        # check that there are labels
+        assert np.any(lbl != 0), 'no labels found'
+        # check shape
+        assert np.all(data.shape[:-1] == lbl.shape)
+        assert len(data.shape) == 4, 'data should be 4d'
+        assert len(lbl.shape) == 3, 'labels should be 3d'
+        
+        # determine the number of background and foreground samples
+        n_foreground = int(cfg.samples_per_volume * self.frac_obj)
+        n_background = int(cfg.samples_per_volume * (1 - self.frac_obj))
+
+        # calculate the maximum padding, so that at least three quarters in 
+        # each dimension is inside the image
+        # sample shape is without the number of channels
+        if self.data_rank == 4:
+            sample_shape = self.dshapes[0][:-1]
+        # if the rank is three, add a dimension for the z-extent
+        elif self.data_rank == 3:
+            sample_shape = np.array([1,]+list(self.dshapes[0][:2]))
+        assert sample_shape.size == len(data.shape)-1, 'sample dims do not match data dims'
+        max_padding = sample_shape // 4
+
+        # pad the data (using 0s)
+        pad_with = ((max_padding[0],)*2, (max_padding[1],)*2, (max_padding[2],)*2)
+        data_padded = np.pad(data, pad_with + ((0, 0),))
+        label_padded = np.pad(lbl, pad_with)
+
+        # calculate the allowed indices
+        # the indices are applied to the padded data, so the minimum is 0
+        # the last dimension, which is the number of channels is ignored
+        min_index = np.zeros(3, dtype=int)
+        # the maximum is the new data shape minus the sample shape (accounting for the padding)
+        max_index = data_padded.shape[:-1] - sample_shape 
+        assert np.all(min_index <= max_index), 'image to small to get patches'
+
+        # get the background origins
+        background_shape = (n_background, 3)
+        origins_background = np.random.randint(low=min_index, high=max_index, size=background_shape)
+
+        # get the foreground center
+        valid_centers = np.argwhere(lbl)
+        indices = np.random.randint(low=0, high=valid_centers.shape[0], size=n_foreground)
+        origins_foreground = valid_centers[indices] + max_padding - sample_shape // 2
+        # check that they are below the maximum amount of padding
+        for i, m in enumerate(max_index):
+            origins_foreground[:,i] = np.clip(origins_foreground[:,i], 0, m)
+
+        # extract patches (pad if necessary), in separate function, do augmentation beforehand or with patches
+        origins = np.concatenate([origins_foreground, origins_background])
+        batch_shape = (n_foreground+n_background,) + tuple(sample_shape)
+        samples = np.zeros(batch_shape + (self.n_channels,), dtype=cfg.dtype_np)
+        labels = np.zeros(batch_shape, dtype=np.uint8)
+        for num, (i,j,k) in enumerate(origins):
+            sample_patch = data_padded[i:i+sample_shape[0],j:j+sample_shape[1],k:k+sample_shape[2]]
+            label_patch = label_padded[i:i+sample_shape[0],j:j+sample_shape[1],k:k+sample_shape[2]]
+            samples[num] = sample_patch
+            labels[num] = label_patch
+            # if num < n_foreground: # only for debugging
+            #     assert np.sum(label_patch) > 0
+
+        if self.mode == self.MODES.APPLY:
+            raise NotImplementedError('Use the original data loader')
+
+        # if rank is 3, squash the z-axes
         if self.data_rank == 3:
-            bb_dim = [self.dshapes[0][0], self.dshapes[0][1]]
-        else:
-            bb_dim = [self.dshapes[0][1], self.dshapes[0][2]]
-        use_bb_boundaries = False
-        slice_is_empty = False
+            samples = samples.squeeze(axis=1)
+            labels = labels.squeeze(axis=1)
 
+        # assert np.sum(labels) > 0 # only for debugging
+
+        # augment and convert to one_hot_label
         if self.mode is not self.MODES.APPLY:
-            if object_sampling:
-                if cfg.normalizing_method == cfg.NORMALIZING.WINDOW:
-                    if len(data.shape) == 4:
-                        n_z = np.nonzero(label[:, :, index] * np.greater(data[:, :, index, 0], -1))  # do not use air
-                    else:
-                        n_z = np.nonzero(label[:, :, index] * np.greater(data[:, :, index], -1))  # do not use air
-                else:
-                    n_z = np.nonzero(label[:, :, index])
-            else:
-                if cfg.normalizing_method == cfg.NORMALIZING.WINDOW:
-                    if len(data.shape) == 4:
-                        n_z = np.where(
-                        label[:, :, index] * np.greater(data[:, :, index, 0], -1) == 0)  # do not use air
-                    else:
-                        n_z = np.where(
-                        label[:, :, index] * np.greater(data[:, :, index], -1) == 0)  # do not use air
-                else:
-                    n_z = np.where(label[:, :, index] == 0)
+            # augment
+            labels_onehot = np.squeeze(np.eye(cfg.num_classes_seg)[labels.flat]).reshape(labels.shape + (-1,))
 
-            if cfg.random_sampling_mode == cfg.SAMPLINGMODES.CONSTRAINED_LABEL:
-                # if there are no lables on the slice, sample uniformly for CONSTRAINED_LABEL
-                use_bb_boundaries = True
-
-            if n_z[0].size == 0:
-                slice_is_empty = True
-                if cfg.random_sampling_mode == cfg.SAMPLINGMODES.CONSTRAINED_MUSTD:
-                    # if there are no lables on the slice, sample in the body for CONSTRAINED_MUSTD
-                    if cfg.normalizing_method == cfg.NORMALIZING.WINDOW:
-                        if len(data.shape) == 4:
-                            n_z = np.nonzero(np.greater(data[:, :, index, 0], cfg.norm_min_v))
-                        else:
-                            n_z = np.nonzero(np.greater(data[:, :, index], cfg.norm_min_v))
-                    elif cfg.normalizing_method == cfg.NORMALIZING.MEAN_STD:
-                        if len(data.shape) == 4:
-                            n_z = np.nonzero(np.greater(data[:, :, index, 0], 0))
-                        else:
-                            n_z = np.nonzero(np.greater(data[:, :, index], 0))
-
-            if cfg.random_sampling_mode == cfg.SAMPLINGMODES.CONSTRAINED_MUSTD:
-                if n_z[0].size > 0:
-                    mean_x = np.mean(n_z[0], dtype=np.int32)
-                    std_x = np.std(n_z[0], dtype=np.int32) * cfg.patch_shift_factor
-                    mean_y = np.mean(n_z[1], dtype=np.int32)
-                    std_y = np.std(n_z[1], dtype=np.int32) * cfg.patch_shift_factor
-
-                    # ensure that bounding box is inside data
-                    min_x = min(max(mean_x - std_x, bb_dim[0] // 2), data_shape[0] - bb_dim[0] // 2)
-                    max_x = max(min(mean_x + std_x + 1, data_shape[0] - bb_dim[0] // 2), bb_dim[0] // 2)
-                    min_y = min(max(mean_y - std_y, bb_dim[1] // 2), data_shape[1] - bb_dim[1] // 2)
-                    max_y = max(min(mean_y + std_y, data_shape[1] - bb_dim[1] // 2), bb_dim[1] // 2)
-                else:
-                    use_bb_boundaries = True
-
-        if self.mode is self.MODES.APPLY or cfg.random_sampling_mode == cfg.SAMPLINGMODES.UNIFORM or use_bb_boundaries:
-            min_x = bb_dim[0] // 2
-            max_x = data_shape[0] - bb_dim[0] // 2
-            min_y = bb_dim[1] // 2
-            max_y = data_shape[1] - bb_dim[1] // 2
+        return samples, labels_onehot
 
 
-        I = np.zeros((samples_per_slice, *self.dshapes[0]))
-
-        if self.mode is not self.MODES.APPLY:
-            L = np.zeros((samples_per_slice, *self.dshapes[1][:-1]))
-
-        # select samples
-        if cfg.random_sampling_mode == cfg.SAMPLINGMODES.UNIFORM or cfg.random_sampling_mode == cfg.SAMPLINGMODES.CONSTRAINED_MUSTD or slice_is_empty:
-            sample_x = np.random.random_integers(min_x, max_x, samples_per_slice)
-            sample_y = np.random.random_integers(min_y, max_y, samples_per_slice)
-
-        elif cfg.random_sampling_mode == cfg.SAMPLINGMODES.CONSTRAINED_LABEL:
-            # select patch centers from mask points inside the bounding box
-            valid_locations = np.nonzero(np.logical_and(np.logical_and(n_z[0] >= min_x, n_z[0] <= max_x),
-                                                        np.logical_and(n_z[1] >= min_y, n_z[1] <= max_y)))[0]
-            # If there are not enough centers, select voxels close by
-            if len(valid_locations) > 0 and len(valid_locations) < samples_per_slice:
-                n_missing_samples = samples_per_slice - len(valid_locations)
-
-                def find_nearest(array, value):
-                    array = np.asarray(array)
-                    dist = np.abs(array - value)
-                    idx = dist.argmin()
-                    distance = min(dist[idx], array[1] - array[0])
-                    # don't touch this
-                    distance = distance if distance > 1 else 1
-                    return idx, distance
-
-                x_idx, x_dist = find_nearest([min_x, max_x], np.mean(n_z[0]))
-                y_idx, y_dist = find_nearest([min_y, max_y], np.mean(n_z[1]))
-
-                if x_idx == 0:  # if minimum
-                    sample_x = min_x + np.random.random_integers(0, x_dist, n_missing_samples)
-                else:
-                    sample_x = max_x - np.random.random_integers(0, x_dist, n_missing_samples)
-
-                if y_idx == 0:
-                    sample_y = min_y + np.random.random_integers(0, y_dist, n_missing_samples)
-                else:
-                    sample_y = max_y - np.random.random_integers(0, y_dist, n_missing_samples)
-
-                sample_x = np.append(sample_x, n_z[0][valid_locations])
-                sample_y = np.append(sample_y, n_z[1][valid_locations])
-
-            # Otherwise select randomly
-            elif len(valid_locations) > 0 and len(valid_locations) > samples_per_slice:
-                selection = np.random.choice(valid_locations, samples_per_slice, replace=False)
-                sample_x = n_z[0][selection]
-                sample_y = n_z[1][selection]
-            else:
-                sample_x = np.random.random_integers(min_x, max_x, samples_per_slice)
-                sample_y = np.random.random_integers(min_y, max_y, samples_per_slice)
-
-        else:
-            raise Exception('Mode not allowed')
-
-        # Get Sample Data from Volumes
-        for i in range(samples_per_slice):
-            # set the window of the sample
-            x_start = sample_x[i] - (bb_dim[0] // 2)
-            x_end = sample_x[i] + (bb_dim[0] // 2)
-            y_start = sample_y[i] - (bb_dim[1] // 2)
-            y_end = sample_y[i] + (bb_dim[1] // 2)         
-            if self.data_rank == 3:
-                I[i] = data[x_start:x_end, 
-                       y_start:y_end,
-                       index - self.slice_shift:index + self.slice_shift + 1:cfg.in_between_slice_factor].squeeze()
-            else:
-                I[i] = np.expand_dims(np.moveaxis(data[x_start:x_end,
-                                  y_start:y_end,
-                                  index - self.slice_shift:index + self.slice_shift:1], 2, 0), -1).squeeze()
-
-            if self.mode is not self.MODES.APPLY:
-                if self.data_rank == 3:
-                    L[i] = label[x_start: x_end,
-                           y_start: y_end,
-                           index]
-                else:
-                    L[i] = np.moveaxis(label[x_start: x_end,
-                                       y_start: y_end,
-                                       index - self.slice_shift:index + self.slice_shift:1], -1, 0)
-
-        if self.mode is not self.MODES.APPLY:
-            L = np.expand_dims(L, -1)
-            return [I, L]
-        else:
-            return [I, None]
-
-
-    @staticmethod
-    def one_hot_label(label):
-        '''!
-        convert a one-channel binary label image into a one-hot label image
-
-        @param label <em>numpy array,  </em> label image, where background is zero and object is 1 (only works for binary problems)
-
-        @return two-channel one-hot label as numpy array
-        '''
-        # add empty last dimension
-        if label.shape[-1] > 1:
-            label = np.expand_dims(label, axis=-1)
-
-        if cfg.num_classes_seg == 2:
-            # Todo: add empty first dimension if single sample
-            # if label.ndim < 3:
-            #     label = np.expand_dims(label, axis=0)
-
-            invert_label = 1 - label  # complementary binary mask
-            return np.concatenate([invert_label, label], axis=-1)  # fuse
-        else:
-            label_list = []
-            for i in range(cfg.num_classes_seg):
-                label_list.append(label == i)
-            return np.concatenate(label_list, axis=-1)  # fuse
-
-    def _augment_samples(self, I, L):
+    # TODO: clean up and document
+    def _augment_numpy(self, I, L):
         '''!
         samplewise data augmentation
 
@@ -451,68 +358,25 @@ class SegBasisLoader(DataLoader):
         - intensity variation
         - deformation
         '''
-        if cfg.do_flip_coronal or cfg.do_flip_sagittal or cfg.do_variate_intensities or cfg.do_deform or cfg.add_noise:
-            for sample in range(I.shape[0]):
-                if cfg.do_flip_coronal:
-                    if np.random.randint(0, 2) > 0:
-                        I[sample] = np.flip(I[sample], 1)
-                        L[sample] = np.flip(L[sample], 1)
-                if cfg.do_flip_sagittal:
-                    if np.random.randint(0, 2) > 0:
-                        I[sample, :, :, :] = np.flip(I[sample, :, :, :], 0)
-                        L[sample, :, :, :] = np.flip(L[sample, :, :, :], 0)
-                if cfg.do_variate_intensities:
-                        variation = (np.random.random_sample() * 2.0 * cfg.intensity_variation_interval) - cfg.intensity_variation_interval
-                        I[sample] = I[sample] + variation
-                        if cfg.normalizing_method == cfg.NORMALIZING.WINDOW:
-                            flags = I[sample] < -1
-                            I[sample][flags] = -1
-                            flags = I[sample] > 1
-                            I[sample][flags] = 1
-                if cfg.do_deform:
-                    if np.random.randint(0, 2) > 0:
-                        if cfg.normalizing_method == cfg.NORMALIZING.WINDOW:
-                            [i_sample, i_label] = elasticdeform.deform_random_grid([np.squeeze(I[sample]), np.squeeze(L[sample])], cfg.deform_sigma, cfg.points, cval=[-1, 0])
-                            I[sample] = np.expand_dims(i_sample, -1)
-                            L[sample] = np.expand_dims(i_label, -1)
-                            flags = I[sample] < -1
-                            I[sample][flags] = -1
-                            flags = I[sample] > 1
-                            I[sample][flags] = 1
-                            L[sample] = (L[sample] > 0.5).astype(int)
-                        else:
-                            # ToDo throw exception not allowed mode
-                            raise ValueError("Not allowed mode. Try NORMALIZING.WINDOW method.")
-                # ToDo: do_add_noise
-                if cfg.add_noise:
 
-                    if cfg.noise_typ == cfg.NOISETYP.GAUSSIAN:
-                        gaussian = np.random.normal(0, cfg.standard_deviation, self.dshapes[0])
-                        gaussian = gaussian * 2/(np.abs(cfg.norm_min_v) + cfg.norm_max_v)
-                        print("Min gaus:", gaussian.min())
-                        print("Max gaus:", gaussian.max())
-                        I[sample] = I[sample] + gaussian
+        if cfg.add_noise and self.mode is self.MODES.TRAIN:
+            if cfg.noise_typ == NOISETYP.GAUSSIAN:
+                gaussian = np.random.normal(0, cfg.standard_deviation, I.shape)
+                logger.debug(f'Minimum Gauss{gaussian.min():.3f}:')
+                logger.debug(f'Maximum Gauss {gaussian.max():.3f}:')
+                I = I + gaussian
 
-                    elif cfg.noise_typ == cfg.NOISETYP.POISSON:
-                        #I[sample] = I[sample]-10
-                        poisson = np.random.poisson(cfg.mean_poisson, self.dshapes[0])
-                        print("STD vorher:", np.std(poisson))
-                        poisson = poisson * -cfg.mean_poisson/2 * 2/(np.abs(cfg.norm_min_v) + cfg.norm_max_v)
-                        print("STD:", np.std(poisson))
-
-                        print("Minimum Poisson:", np.min(poisson))
-                        print("Maximum Poisson:", np.max(poisson))
-                        I[sample] = I[sample] + poisson
-                        #I[sample] = I[sample] + (poisson - 13*0.0025)
-
-                    flags = I[sample] < -1
-                    I[sample][flags] = -1
-                    flags = I[sample] > 1
-                    I[sample][flags] = 1
+            elif cfg.noise_typ == NOISETYP.POISSON:
+                poisson = np.random.poisson(cfg.mean_poisson, I.shape)
+                # scale according to the values
+                poisson = poisson * -cfg.mean_poisson/(cfg.norm_max_v - cfg.norm_min_v)
+                logger.debug(f'Minimum Poisson {poisson.min():.3f}:')
+                logger.debug(f'Maximum Poisson {poisson.max():.3f}:')
+                I = I + poisson
 
         return I, L
 
-    def _resample(self, data, label):
+    def _augment_images(self, data, label):
         '''!
         This function operates as follows:
         - extract image meta information and assigns it to label as well
@@ -524,77 +388,185 @@ class SegBasisLoader(DataLoader):
 
         @return resampled data and label images
         '''
-        data_info = Image.get_data_info(data)
-        label.SetDirection(data_info['orig_direction'])
-        label.SetOrigin(data_info['orig_origin'])
-        label.SetSpacing(data_info['orig_spacing'])
+        data_info = image.get_data_info(data)
 
         target_info = {}
-        target_info['target_spacing'] = cfg.target_spacing
-        target_info['target_direction'] = cfg.target_direction
-        target_info['target_size'] = cfg.target_size
+        target_info['target_spacing'] = data_info['orig_spacing']
+        target_info['target_direction'] = data_info['orig_direction']
+
+        # do not change the resolution
+        target_info['target_size'] = data_info['orig_size']
         target_info['target_type_image'] = cfg.target_type_image
-        target_info['target_type_label'] = cfg.target_type_image
+        target_info['target_type_label'] = cfg.target_type_label
 
         if self.mode is self.MODES.TRAIN:
-            do_augment = True
+            return image.resample_sitk_image(
+                data,
+                target_info=target_info,
+                data_background_value=cfg.data_background_value,
+                do_adapt_resolution=False,
+                label=label,
+                label_background_value=cfg.label_background_value,
+                do_augment=True,
+                max_rotation_augment=cfg.max_rotation,
+                min_resolution_augment=cfg.min_resolution_augment,
+                max_resolution_augment=cfg.max_resolution_augment
+            )
         else:
-            do_augment = False
+            return data, label
 
-        return Image.resample_sitk_image(data, target_info, data_background_value=cfg.data_background_value,
-                                         do_adapt_resolution=cfg.adapt_resolution, label=label,
-                                         label_background_value=cfg.label_background_value, do_augment=do_augment,
-                                         max_rotation_augment=cfg.max_rotation)
+class ApplyBasisLoader(SegBasisLoader):
+    def __init__(self, mode=None, seed=42, name='apply_loader'):
+        if mode is None:
+            mode = self.MODES.APPLY
+        assert(mode == self.MODES.APPLY), 'Use this loader only to apply data to an image'
+        super().__init__(mode=mode, seed=seed, name=name)
+        self.training_shape = np.array(cfg.train_input_shape)
+        # do not use caching when applying
+        self.use_caching = False
+        self.label = False
 
-    ### Static Functions ###
+    # if called with filename, just return the padded test sample
+    def __call__(self, filename, *args, **kwargs):
+        return self.get_padded_test_sample(filename)
 
-    @staticmethod
-    def normalize(img, eps=np.finfo(np.float).min):
-        '''
-        Truncates input to interval [config.norm_min_v, config.norm_max_v] an
-         normalizes it to interval [-1, 1] when using WINDOW and to mean = 0 and std = 1 when MEAN_STD.
-        '''
-        # remove nans and set them to the background value
-        # check for the number of nans first (find the reason)
-        # nan_frac = np.mean(np.isnan(img))
-        # if nan_frac > 0.02:
-        #     logging.error(f'More than 2% nans in the image ({int(nan_frac*100)}%).') 
-        # TODO: find out where the nans come from
-        img_no_nan = np.nan_to_num(img, nan=cfg.data_background_value)
-        # clip outliers and rescale to between zero and one
-        a_min = np.quantile(img_no_nan, cfg.norm_min_q)
-        a_max = np.quantile(img_no_nan, cfg.norm_max_q)
-        if cfg.normalizing_method == cfg.NORMALIZING.PERCENT5:
-            img = np.clip(img_no_nan, a_min=a_min, a_max=a_max)
-            img = (img_no_nan - a_min) / (a_max - a_min)
-            img = (img * 2) - 1
-        elif cfg.normalizing_method == cfg.NORMALIZING.MEAN_STD:
-            img = np.clip(img_no_nan, a_min=a_min, a_max=a_max)
-            img = img_no_nan - np.mean(img_no_nan)
-            std = np.std(img)
-            img = img / (std if std != 0 else eps)
-        elif cfg.normalizing_method == cfg.NORMALIZING.WINDOW:
-            img = np.clip(img_no_nan, a_min=cfg.norm_min_v, a_max=cfg.norm_max_v)
-            img = (img - cfg.norm_min_v) / (cfg.norm_max_v - cfg.norm_min_v + cfg.norm_eps)
-            img = (img * 2) - 1
+    def _set_up_shapes_and_types(self):
+        """!
+        sets all important configurations from the config file:
+        - n_channels
+        - dtypes
+        - dshapes
+        - slice_shift
+
+        also derives:
+        - data_rank
+        - slice_shift
+
+        """
+        self.n_channels = cfg.num_channels
+        self.dtypes = [cfg.dtype]
+        self.data_rank = len(cfg.train_input_shape)
+        self.dshapes = []
+
+
+    def _get_samples_from_volume(self, data_img, label_img=None):
+
+        # convert samples to numpy arrays
+        data = sitk.GetArrayFromImage(data_img)
+
+        if self.mode != self.MODES.APPLY:
+            raise NotImplementedError('Use this loader only to apply data to an image')
+
+        # if rank is 4, add batch dimension
+        if self.data_rank == 4:
+            data = np.expand_dims(data, axis=0)
+
+        # set shape
+        self.dshapes = [data.shape[1:]]
+        self.rank = len(self.dshapes[0])
+
+        return [data, None]
+
+    def _load_file(self, file_name):
+        # convert to string if necessary
+        if type(file_name) == bytes:
+            file_name = str(file_name, 'utf-8')
         else:
-            raise NotImplementedError(f'{cfg.normalizing_method} is not implemented')
+            file_name = str(file_name)
 
-        return img
+        # see if there is a saved file
+        if hasattr(self, 'last_file'):
+            # if the file name is the same
+            if self.last_file_name == file_name:
+                return self.last_file, None
 
-    @staticmethod
-    def normalize_sitk_image(img_data):
-        """
-        This method calls the normalize method on SimpleITK Images.
-        It firstly extracts the data from SitkImage class,
-        secondly applies the normalization and
-        thirdly rebuilds the Data as SitkImage class and copies the image information (spacing and so on)
+        # see if filename should be converted
+        if os.path.exists(file_name):
+            logger.debug('        Loading %s (%s)', file_name, self.mode)
+            # load image
+            data_img = sitk.ReadImage(file_name)
+            # adapt, resample and normalize them
+            data_img, _ = self.adapt_to_task(data_img, None)
+            if self.do_resampling:
+                data_img = self._resample(data_img)
+            data = sitk.GetArrayFromImage(data_img)
+            data = self.normalize(data)
+            # if everything is ok, save the preprocessed images
+            data_img_proc = sitk.GetImageFromArray(data)
+            data_img_proc.CopyInformation(data_img)
 
-        :param img_data: image data to be normalized as SimpleITK.image
-        :return: SimpleITK.image
-        """
-        img = sitk.GetArrayFromImage(img_data)
-        img = SegBasisLoader.normalize(img)
-        tmp_image_data = sitk.GetImageFromArray(img)
-        tmp_image_data.CopyInformation(img_data)
-        return tmp_image_data
+            # cache it in memory
+            self.last_file = data_img_proc
+            self.last_file_name = file_name
+
+            return data_img_proc, None
+
+        # if it does not exist, dataset conversion will be tried 
+        else:
+            # attemp to convert it
+            file_name_converted, _ = self._get_filenames(file_name)
+            # if that also does not work, raise error
+            if not os.path.exists(file_name_converted):
+                raise FileNotFoundError(f'The test file {file_name} could not be found.')
+            # otherwise, load it
+            data, _ = super()._load_file(file_name)
+            return data, None
+
+    def get_test_sample(self, filename):
+        data, _ = self._load_file(filename)
+        return self._get_samples_from_volume(data)[0]
+
+    def get_padded_test_sample(self, filename):
+        data = self.get_test_sample(filename)
+
+        pad_with = np.zeros((1 + self.data_rank, 2), dtype=int)
+        # do not pad the batch axis (z for the 2D case) and the last axis (channels)
+        min_dim = 1
+        for num, size in zip(range(min_dim, 4), data.shape[min_dim:-1]):
+            # calculate the minimum padding (for rank==3, there is no z-dim)
+            min_p = self.training_shape[num-min_dim] // 2
+            if size % 2 == 0:
+                # and make sure have of the final size is divisible by 16
+                pad_with[num] = min_p + 8 - ((size // 2 + min_p) % 8)
+            else:
+                # and make sure have of the final size is divisible by 16
+                p = min_p + 8 - (((size + 1) // 2 + min_p) % 8)
+                # pad asymmetrical
+                pad_with[num, 0] = p + 1
+                pad_with[num, 1] = p            
+        
+        # pad the data (using 0s)
+        data_padded = np.pad(data, pad_with)
+
+        # remember padding
+        self.last_padding = pad_with
+        self.last_shape = data_padded.shape
+
+        return data_padded
+
+    def remove_padding(self, data):
+        padding = self.last_padding
+        assert data.shape==self.last_shape, 'data shape does not match the padding'
+
+        if self.data_rank == 3:
+            assert padding.shape == (4, 2)
+        if self.data_rank == 4:
+            assert padding.shape == (5, 2)
+
+        # cut off the padding
+        for num, (first, last) in enumerate(padding):
+            data = np.take(
+                data,
+                indices=np.arange(first, data.shape[num]-last),
+                axis=num
+            )
+
+        return data
+
+    def get_original_image(self, filename):
+        img, _ = self._get_filenames(filename)
+        return sitk.ReadImage(img)
+
+    def get_processed_image(self, filename):
+        data, _ = self._load_file(filename)
+        return data

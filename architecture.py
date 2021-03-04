@@ -4,19 +4,18 @@ import numpy as np
 import tensorflow as tf
 
 from . import config as cfg
-from .NetworkBasis import block as block
-from .NetworkBasis import layer as layer
+from .NetworkBasis import block, layer
 from .segbasisnet import SegBasisNet
 
 #configure logger
 logger = logging.getLogger(__name__)
 
-# TODO: update references
+# TODO: add regularizer
 class UNet(SegBasisNet):
     '''!
-    U-Net TODO: add reference
+    U-Net # TODO: add reference
 
-    %Network Architecture from paper TODO: revise for implementation
+    %Network Architecture from paper # TODO: revise for implementation
 
     - **Encoding Path** (4 Encoding Blocks): 4x{
         -  3x3 convolution + ReLU
@@ -27,7 +26,7 @@ class UNet(SegBasisNet):
         -  3x3 convolution + ReLU
         -  3x3 convolution + ReLU
     - **Decoding Path** (4 Decoding Blocks): 4x{
-        -  an upsampling of the feature map followed by a 2x2 up-convolution  TODO: revise
+        -  an upsampling of the feature map followed by a 2x2 up-convolution  # TODO: revise
         -  a concatenation with the correspondingly cropped feature map from the encoding path,
         -  3x3 convolution + ReLU
         -  3x3 convolution + ReLU}
@@ -144,9 +143,9 @@ class UNet(SegBasisNet):
 
 class ResNet(SegBasisNet):
     '''!
-    U-Net TODO: add reference
+    U-Net # TODO: add reference
 
-    %Network Architecture from paper TODO: revise for implementation
+    %Network Architecture from paper # TODO: revise for implementation
 
     - **Encoding Path** (4 Encoding Blocks): 4x{
         -  3x3 convolution + ReLU
@@ -157,7 +156,7 @@ class ResNet(SegBasisNet):
         -  3x3 convolution + ReLU
         -  3x3 convolution + ReLU
     - **Decoding Path** (4 Decoding Blocks): 4x{
-        -  an upsampling of the feature map followed by a 2x2 up-convolution  TODO: revise
+        -  an upsampling of the feature map followed by a 2x2 up-convolution  # TODO: revise
         -  a concatenation with the correspondingly cropped feature map from the encoding path,
         -  3x3 convolution + ReLU
         -  3x3 convolution + ReLU}
@@ -292,7 +291,7 @@ class ResNet(SegBasisNet):
 
 class DVN(SegBasisNet):
     '''!
-    DeepVesselNet TODO: add reference
+    DeepVesselNet # TODO: add reference
 
     %Network Architecture from paper TODO: revise for implementation
 
@@ -371,7 +370,7 @@ class DVN(SegBasisNet):
 
 class VNet(SegBasisNet):
     '''!
-    U-Net TODO: add reference
+    U-Net # TODO: add reference
 
     %Network Architecture from paper TODO: revise for implementation
 
