@@ -181,7 +181,8 @@ class SegBasisNet(Network):
                              self.options['out_channels'], 'output channels.')
 
     def _run_train(self, logs_path, folder_name, training_dataset, validation_dataset, epochs,
-                   l_r=0.001, optimizer='Adam', early_stopping=False, reduce_lr_on_plateau=False, **kwargs):
+                   l_r=0.001, optimizer='Adam', early_stopping=False, reduce_lr_on_plateau=False,
+                   visualization_dataset=None, **kwargs):
         """Run the training using the keras.Model.fit interface with a lot of callbacks.
 
         Parameters
@@ -204,6 +205,9 @@ class SegBasisNet(Network):
             If early stopping should be used, by default False
         reduce_lr_on_plateau : bool, optional
             If the learning rate should be reduced on a plateau, by default False
+        visualization_dataset: SegBasisLoader, optional
+            If provided, this dataset will be used to visualize the training results for debugging.
+            Writing the images can take a bit, so only use this for debugging purposes.
         """
 
         # set path
@@ -279,18 +283,26 @@ class SegBasisNet(Network):
             )
             callbacks.append(lr_reduce_callback)
 
-            class LRLogCallback(tf.keras.callbacks.Callback):
+        # add callback vor visualization
+        if visualization_dataset != None:
+            class ImageCallback(tf.keras.callbacks.Callback):
 
-                def __init__(self, tb_callback):
-                    self.tb_callback = tb_callback
+                def __init__(self, visualization_dataset, writer):
+                    self.visualization_dataset = visualization_dataset
+                    self.writer = writer
 
                 def on_epoch_end(self, epoch, logs):
-                    with self.tb_callback._writers['train'].as_default():
-                        tf.summary.scalar('learning rate', data=logs['lr'], step=epoch)
+                    # take one sample from the visualization dataset
+                    for sample in self.visualization_dataset.take(1):
+                        x, y = sample
+                        probabilities = self.model(x)
+                        with self.writer.as_default():
+                            write_images(x, y, probabilities, step=epoch)
 
             # log additional data (using the tensorboard writer)
-            log_callback = LRLogCallback(tb_callback)
-            callbacks.append(log_callback)
+            image_writer = tf.summary.create_file_writer(str(output_path / 'logs' / 'images'))
+            image_visualization_callback = ImageCallback(visualization_dataset, image_writer)
+            callbacks.append(image_visualization_callback)   
 
         # callback for hyperparameters
         hparams = self.get_hyperparameter_dict()
@@ -458,107 +470,81 @@ class SegBasisNet(Network):
         return
 
 
-    # TODO: add hook for summaries in test_step
-    def _summaries(self, x, y, probabilities, objective, acccuracy, step, writer, max_image_output=2, histo_buckets=50, mode=None):
+def write_images(x, y, probabilities, step):
+    """Write images for the summary. If 3D data is provided, the central slice
+    is used. All channels are written, the labels are written and the
+    probabilites.
 
-        predictions = tf.argmax(probabilities, -1)
+    Parameters
+    ----------
+    x : tf.Tensor
+        The input images as Tensor
+    y : tf.Tensor
+        The input labels
+    probabilities : tf.Tensor
+        The output of the network as probabilites (one per class)
+    step : int
+        Step number used for slider in tensorboard
+    """
 
-        with writer.as_default():
-            
-            #save hyperparameters for tensorboard
-            hp.hparams(self.get_hyperparameter_dict(), trial_id=cfg.trial_id)
+    in_channels = x.shape[-1]
+    dim_in_plane = x.shape[-2]
+    rank = len(x.shape) - 2 # substract one dimension for batches and channels
+    max_image_output=1
 
-            with tf.name_scope('01_Objective'):
-                tf.summary.scalar('average_objective', objective, step=step)
-                tf.summary.scalar('iteration_' + self.options['loss'], self.outputs['loss'](y, probabilities), step=step)
-                # if self.options['regularize'][0]:
-                #     tf.summary.scalar('iteration_' + self.options['regularize'][1], self.outputs['reg'], step=step)
+    # take central slice of 3D data
+    if rank == 4:
+        x = x[:, dim_in_plane // 2, :, :]
+        y = y[:, dim_in_plane // 2, :, :]
+        probabilities = probabilities[:, dim_in_plane // 2, :, :]
 
-            with tf.name_scope('02_Accuracy'):
-                tf.summary.scalar('average_acccuracy', acccuracy, step=step)
-                if mode != None:
-                    tf.summary.scalar(f'average_acccuracy_{mode}', acccuracy, step=step)
+    predictions = tf.argmax(probabilities, -1)
 
-            with tf.name_scope('03_Data_Statistics'):
-                tf.summary.scalar('one_hot_max_train_img', tf.reduce_max(y), step=step)
-                tf.summary.histogram('train_img', x, step, buckets=histo_buckets)
-                tf.summary.histogram('label_img', y, step, buckets=histo_buckets)
 
-            with tf.name_scope('04_Output_Statistics'):
-                # tf.summary.histogram('logits', self.outputs['logits'], step, buckets=histo_buckets)
-                tf.summary.histogram('probabilities', probabilities, step, buckets=histo_buckets)
-                tf.summary.histogram('predictions', predictions, step, buckets=histo_buckets)
+    with tf.name_scope('01_Input_and_Predictions'):
+        if in_channels == 1:
+            image_fc = tf.expand_dims(tf.cast((tf.clip_by_value(x, -1, 1) + 1) * 255 / 2, tf.uint8), axis=-1)
+            tf.summary.image('train_img', image_fc, step, max_image_output)
+        else:
+            for c in range(in_channels):
+                image = tf.expand_dims(tf.cast((tf.clip_by_value(x[:, :, :, c], -1, 1) + 1) * 255 / 2, tf.uint8), axis=-1)
+                if c == 0:
+                    image_fc = image
+                tf.summary.image('train_img_c'+str(c), image, step, max_image_output)
 
-            with tf.name_scope('01_Input_and_Predictions'):
-                if self.options['rank'] == 2:
-                    if self.options['in_channels'] == 1:
-                        image_fc = tf.cast((tf.gather(x, [0, cfg.batch_size_train - 1]) + 1) * 255 / 2, tf.uint8)
-                        tf.summary.image('train_img', image_fc, step, max_image_output)
-                    else:
-                        for c in range(self.options['in_channels']):
-                            image = tf.expand_dims(tf.cast( (tf.gather(x[:, :, :, c], [0, cfg.batch_size_train - 1]) + 1)
-                                 * 255 / 2, tf.uint8), axis=-1)
-                            if c == 0:
-                                image_fc = image
-                            tf.summary.image('train_img_c'+str(c), image, step, max_image_output)
+        label = tf.expand_dims(tf.cast(tf.argmax(y, -1)
+                * (255 // (cfg.num_classes_seg - 1)), tf.uint8), axis=-1)
+        tf.summary.image('train_seg_lbl', label, step, max_image_output)
+        pred = tf.expand_dims(tf.cast(predictions
+                * (255 // (cfg.num_classes_seg - 1)), tf.uint8), axis=-1)
+        tf.summary.image('train_seg_pred', pred, step, max_image_output)
 
-                    label = tf.expand_dims(tf.cast(tf.argmax( tf.gather(y, [0, cfg.batch_size_train - 1]) , -1)
-                         * (255 // (cfg.num_classes_seg - 1)), tf.uint8), axis=-1)
-                    tf.summary.image('train_seg_lbl', label, step, max_image_output)
-                    pred = tf.expand_dims(tf.cast( tf.gather(predictions, [0, cfg.batch_size_train - 1])
-                         * (255 // (cfg.num_classes_seg - 1)), tf.uint8), axis=-1)
-                    tf.summary.image('train_seg_pred', pred, step, max_image_output)
 
-                else:
-                    if self.options['in_channels'] == 1:
-                        image_fc = tf.cast((tf.gather(x[:, self.inputs['x'].shape[1] // 2, :, :], 
-                            [0, cfg.batch_size_train - 1]) + 1) * 255 / 2, tf.uint8)
-                        tf.summary.image('train_img', image_fc, step, max_image_output)
-                    else:
-                        for c in range(self.options['in_channels']):
-                            image = tf.expand_dims(tf.cast((tf.gather(x[:, self.inputs['x'].shape[1] // 2, :, :, c], 
-                            [0, cfg.batch_size_train - 1]) + 1) * 255 / 2, tf.uint8), axis=-1)
-                            if c == 0:
-                                image_fc = image
-                            tf.summary.image('train_img_c'+str(c), image, step, max_image_output)
+    with tf.name_scope('02_Combined_predictions (prediction in red, label in green, both in yellow)'):
+        # set to first channel where both labels are zero
+        mask = tf.cast(tf.math.logical_and(pred == 0, label == 0), tf.uint8)
+        # set those values to the mask
+        label += image_fc*mask
+        pred += image_fc*mask
+        # set the opposite values of the image to zero
+        image_fc -= image_fc*(1-mask)
+        combined = tf.concat([pred, label, image_fc], -1)
+        tf.summary.image('train_seg_combined', combined, step, max_image_output)
 
-                    label = tf.expand_dims(tf.cast(tf.argmax( tf.gather(y[:, self.inputs['x'].shape[1] // 2],
-                         [0, cfg.batch_size_train - 1]), -1) * (255 // (cfg.num_classes_seg - 1)), tf.uint8), axis=-1)
-                    tf.summary.image('train_seg_lbl', label, step, max_image_output)
 
-                    pred = tf.expand_dims(tf.cast( tf.gather(predictions[:, self.inputs['x'].shape[1] // 2], 
-                        [0, cfg.batch_size_train - 1]) * (255 // (cfg.num_classes_seg - 1)), tf.uint8), axis=-1)
-                    tf.summary.image('train_seg_pred', pred, step, max_image_output)
+    with tf.name_scope('03_Probabilities'):
+        if rank == 2:
+            for c in range(cfg.num_classes_seg):
+                tf.summary.image('train_seg_prob_' + str(c), tf.expand_dims(tf.cast(probabilities[:, :, :, c]
+                    * 255, tf.uint8), axis=-1), step, max_image_output)
 
-            with tf.name_scope('02_Combined_predictions'): # (prediction in red, label in green, both in yellow)'):
-                # set to first channel where both labels are zero
-                mask = tf.cast(tf.math.logical_and(pred == 0, label == 0), tf.uint8)
-                # set those values to the mask
-                label += image_fc*mask
-                pred += image_fc*mask
-                # set the opposite values of the image to zero
-                image_fc -= image_fc*(1-mask)
-                combined = tf.concat([pred, label, image_fc], -1)
-                tf.summary.image('train_seg_combined', combined, step, max_image_output)
 
-            with tf.name_scope('03_Probabilities'):
-                if self.options['rank'] == 2:
-                    for c in range(cfg.num_classes_seg):
-                        tf.summary.image('train_seg_prob_' + str(c), tf.expand_dims(tf.cast(
-                            tf.gather(probabilities[:, :, :, c], [0, cfg.batch_size_train - 1])
-                            * 255, tf.uint8), axis=-1), step, max_image_output)
-                else:
-                    for c in range(cfg.num_classes_seg):
-                        tf.summary.image('train_seg_prob_class' + str(c), tf.expand_dims(tf.cast(
-                            tf.gather(probabilities[:, self.inputs['x'].shape[1] // 2, :, :, c],
-                                      [0, cfg.batch_size_train - 1])
-                            * 255, tf.uint8), axis=-1), step, max_image_output)
+    with tf.name_scope('04_Class_Labels'):
+        if cfg.num_classes_seg == 2:
+            pass
+        else:
+            for c in range(cfg.num_classes_seg):
+                tf.summary.image('train_seg_lbl' + str(c), tf.expand_dims(tf.cast(y[:, :, :, c]
+                    * 255, tf.uint8), axis=-1), step, max_image_output)
 
-            with tf.name_scope('04_Class_Labels'):
-                if self.options['rank'] == 2:
-                    pass
-                else:
-                    for c in range(cfg.num_classes_seg):
-                        tf.summary.image('train_seg_lbl' + str(c), tf.expand_dims(tf.cast(
-                            tf.gather(y[:, self.inputs['x'].shape[1] // 2, :, :, c], [0, cfg.batch_size_train - 1])
-                            * 255, tf.uint8), axis=-1), step, max_image_output)
+    return

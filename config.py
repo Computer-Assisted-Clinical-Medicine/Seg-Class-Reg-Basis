@@ -54,13 +54,11 @@ num_classes_seg = 2  #the number of classes including the background
 num_dimensions = 3
 #has to be smaller than the target size
 train_dim = 128
-train_input_shape = [train_dim, train_dim, num_channels]
-train_label_shape = [train_dim, train_dim, num_classes_seg]
-test_dim = 256
-test_data_shape = [test_dim, test_dim, num_channels]
-test_label_shape = [test_dim, test_dim, num_classes_seg]
 
-if num_dimensions == 3:
+if num_dimensions == 2:
+    train_input_shape = [train_dim, train_dim, num_channels]
+    train_label_shape = [train_dim, train_dim, num_classes_seg]
+elif num_dimensions == 3:
     num_slices_train = 16 # should be divisible by 16
     train_input_shape = [num_slices_train, train_dim, train_dim, num_channels]
     train_label_shape = [num_slices_train, train_dim, train_dim, num_classes_seg]

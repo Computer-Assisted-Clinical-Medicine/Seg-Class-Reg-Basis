@@ -46,8 +46,10 @@ class SegBasisLoader(DataLoader):
         The fraction of samples that should be taken from the foreground if None,
         the values set in the config file will be used, if set to 0, sampling
         will be completely random, by default None
+    samples_per_volume : int, optional:
+        The number of samples that should be taken from one volume per epoch.
     """
-    def __init__(self, mode=None, seed=42, name='reader', frac_obj=None):
+    def __init__(self, mode=None, seed=42, name='reader', frac_obj=None, samples_per_volume=None):
         super().__init__(mode=mode, seed=seed, name=name)
 
         # use caching
@@ -58,6 +60,12 @@ class SegBasisLoader(DataLoader):
             self.frac_obj = cfg.percent_of_object_samples / 100
         else:
             self.frac_obj = frac_obj
+
+        # set the samples per volume
+        if samples_per_volume == None:
+            self.samples_per_volume = cfg.samples_per_volume
+        else:
+            self.samples_per_volume = samples_per_volume
 
         self.normalizing_method = cfg.normalizing_method
         self.do_resampling = cfg.do_resampling
@@ -82,8 +90,7 @@ class SegBasisLoader(DataLoader):
             # use the same shape for image and labels
             assert np.all(self.dshapes[0] == self.dshapes[1])
         else:
-            self.dtypes = [cfg.dtype]
-            self.dshapes = [np.array(cfg.test_data_shape)]
+            raise ValueError(f'Not allowed mode {self.mode}')
 
         self.data_rank = len(self.dshapes[0])
 
@@ -382,8 +389,8 @@ class SegBasisLoader(DataLoader):
         assert len(lbl.shape) == 3, 'labels should be 3d'
         
         # determine the number of background and foreground samples
-        n_foreground = int(cfg.samples_per_volume * self.frac_obj)
-        n_background = int(cfg.samples_per_volume * (1 - self.frac_obj))
+        n_foreground = int(self.samples_per_volume * self.frac_obj)
+        n_background = int(self.samples_per_volume * (1 - self.frac_obj))
 
         # calculate the maximum padding, so that at least three quarters in 
         # each dimension is inside the image
