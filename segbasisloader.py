@@ -25,7 +25,28 @@ class NOISETYP(Enum):
     POISSON = 1
 
 class SegBasisLoader(DataLoader):
+    """A basis loader for segmentation network, should be extended for specific
+    task implementing the _adapt_to_task method. The Image is padded by a quarter of
+    the sample size in each direction and the random patches are extracted.
 
+    If frac_obj is > 0, the specific fraction of the samples_per_volume will be 
+    selected, so that the center is on a foreground class. Due to the other samples
+    being truly random, the fraction containing a sample can be higher, but this is
+    not a problem if the foreground is strongly underrepresented. If this is not
+    the case, the samples should be chosen truly randomly.
+
+    Parameters
+    ----------
+    seed : int, optional
+        set a fixed seed for the loader, by default 42
+    mode : has no effect, should not be Apply
+    name : str, optional
+        the name of the loader, by default 'reader'
+    frac_obj : float, optional
+        The fraction of samples that should be taken from the foreground if None,
+        the values set in the config file will be used, if set to 0, sampling
+        will be completely random, by default None
+    """
     def __init__(self, mode=None, seed=42, name='reader', frac_obj=None):
         super().__init__(mode=mode, seed=seed, name=name)
 
@@ -136,9 +157,24 @@ class SegBasisLoader(DataLoader):
         return data_file, data_file_pre, label_file, label_file_pre
 
     def _load_file(self, file_name):
-        # save preprocessed files as images, this increases the load time
-        # from 20 ms to 50 ms per image but is not really relevant compared to
-        #  the sampleing time. The advantage is that SimpleITK can be used for augmentation
+        """Load a file, if the file is found in the chache, this is used, otherwise
+        the file is preprocessed and added to the chache
+
+        Preprocessed files are saved as images, this increases the load time
+        from 20 ms to 50 ms per image but is not really relevant compared to
+        the sampleing time. The advantage is that SimpleITK can be used for
+        augmentation, which does not work when storing numpy arrays.
+
+        Parameters
+        ----------
+        file_name : str or bytes
+            Filename must be either a string or utf-8 bytes as returned by tf.
+
+        Returns
+        -------
+        data, lbl
+            The preprocessed data and label files
+        """
 
         # convert to string if necessary
         if type(file_name) == bytes:
@@ -178,11 +214,46 @@ class SegBasisLoader(DataLoader):
 
         return data, lbl
 
-    def _check_images(self, data, labels):
-        raise NotImplementedError('Should be implemented according to the task.')
+    def _check_images(self, data:np.array, lbl:np.array):
+        """Check the images for problems
+
+        Parameters
+        ----------
+        data : np.array
+            Numpy array containing the data
+        lbl : np.array
+            Numpy array containing the labels
+        """
+        assert np.any(np.isnan(data)) == False, 'Nans in the image'
+        assert np.any(np.isnan(lbl)) == False, 'Nans in the labels'
+        assert np.sum(lbl) > 100, 'Not enough labels in the image'
+        logger.debug('          Checking Labels (min, max) %s %s:', np.min(lbl), np.max(lbl))
+        logger.debug('          Shapes (Data, Label): %s %s', data.shape, lbl.shape)
 
 
-    def normalize(self, img, eps=np.finfo(float).min):
+    def normalize(self, img:np.array, eps=np.finfo(float).min)->np.array:
+        """Normaize an image. Right now the normalisation can be choses to use
+        percentiles as minimum and maximum (set in config) or fixed values.
+        If MEAN_STD is chosen, the mean is substraced and the image is divided
+        by the standard
+
+        Parameters
+        ----------
+        img : np.array, optional
+            the image to normalize
+        eps : float, optional
+            Small factor for numerical stability, by default np.finfo(float).min
+
+        Returns
+        -------
+        np.array
+            Normalized image
+
+        Raises
+        ------
+        NotImplementedError
+            When a method is selected, that is not implemented
+        """
         img_no_nan = np.nan_to_num(img, nan=cfg.data_background_value)
         # clip outliers and rescale to between zero and one
         a_min = np.quantile(img_no_nan, cfg.norm_min_q)
@@ -205,17 +276,23 @@ class SegBasisLoader(DataLoader):
 
         return img
 
-    def _resample(self, data, label=None):
-        '''!
-        This function operates as follows:
-        - extract image meta information and assigns it to label as well
-        - calls the static function _resample()
+    def _resample(self, data:sitk.Image, label=None):
+        """Resample the image and labels to the spacing specified in the config.
+        The orientation is not changed, but it is checked, that all directions are
+        perpendicular to each other.
 
-        @param data <em>ITK image,  </em> patient image
-        @param label <em>ITK image,  </em> label image, 0 is background class
+        Parameters
+        ----------
+        data : sitk.Image
+            The image
+        label : sitk.Image, optional
+            The labels, optional, by default None
 
-        @return resampled data and label images
-        '''
+        Returns
+        -------
+        sitk.Image
+            One or two images, depending if labels are provided
+        """
         data_info = image.get_data_info(data)
         # assure that the images are similar
         if label is not None:
@@ -246,15 +323,46 @@ class SegBasisLoader(DataLoader):
 
 
     def _read_file_and_return_numpy_samples(self, file_name_queue:bytes):
+        """Helper function getting the actual samples
+
+        Parameters
+        ----------
+        file_name_queue : bytes
+            The filename
+
+        Returns
+        -------
+        np.array, np.array
+            The samples and labels
+        """
         data_img, label_img = self._load_file(file_name_queue)
         samples, labels = self._get_samples_from_volume(data_img, label_img)
-        if self.mode is not self.MODES.APPLY:
-            return samples, labels
-        else:
-            return [samples]
+        return samples, labels
         
 
-    def _get_samples_from_volume(self, data_img, label_img):
+    def _get_samples_from_volume(self, data_img:sitk.Image, label_img:sitk.Image):
+        """This is where the sampling actually takes place. The images are first
+        augmented using sitk functions and the augmented using numpy functions.
+        Then they are converted to numpy array and sampled as described in the 
+        class description
+
+        Parameters
+        ----------
+        data_img : sitk.Image
+            The sample image
+        label_img : sitk.Image
+            The labels as integers
+
+        Returns
+        -------
+        np.array, np.array
+            The image samples and the lables as one hot labels
+
+        Raises
+        ------
+        NotImplementedError
+            If mode is apply, this is raised, the Apply loader should be used instead
+        """
 
         # augment whole images
         data_img, label_img = self._augment_images(data_img, label_img)
@@ -353,10 +461,7 @@ class SegBasisLoader(DataLoader):
         @param L <em>numpy array,  </em> label samples
 
         Three augmentations are available:
-        - flipping coronal
-        - flipping sagittal
         - intensity variation
-        - deformation
         '''
 
         if cfg.add_noise and self.mode is self.MODES.TRAIN:
@@ -376,18 +481,23 @@ class SegBasisLoader(DataLoader):
 
         return I, L
 
-    def _augment_images(self, data, label):
-        '''!
-        This function operates as follows:
-        - extract image meta information and assigns it to label as well
-        - augmentation is only on in training
-        - calls the static function _resample()
+    def _augment_images(self, data:sitk.Image, label:sitk.Image):
+        """Augment images using sitk. Right now, rotations and scale changes are
+        implemented. The values are set in the config. Images should already be
+        resampled.
 
-        @param data <em>ITK image,  </em> patient image
-        @param label <em>ITK image,  </em> label image, 0 is background class
+        Parameters
+        ----------
+        data : sitk.Image
+            the image
+        label : sitk.Image
+            the labels
 
-        @return resampled data and label images
-        '''
+        Returns
+        -------
+        sitk.Image, sitk.Image
+            the augmented data and labels
+        """
         data_info = image.get_data_info(data)
 
         target_info = {}
@@ -416,6 +526,21 @@ class SegBasisLoader(DataLoader):
             return data, label
 
 class ApplyBasisLoader(SegBasisLoader):
+    """The loader to apply the data to an image. It will mainly just preprocess 
+    and pad the image and return the values if called, it will not be converted 
+    to a data loader and should just be used for single images.
+
+    There are also a few functions which can be used to make the loading
+    easier, caching is used and the loader can also remove the added padding.
+
+    Parameters
+    ----------
+    mode : has no effect, should be None or APPLY
+    seed : int, optional
+        Has no effect, by default 42
+    name : str, optional
+        The name, by default 'apply_loader'
+    """
     def __init__(self, mode=None, seed=42, name='apply_loader'):
         if mode is None:
             mode = self.MODES.APPLY
@@ -428,6 +553,19 @@ class ApplyBasisLoader(SegBasisLoader):
 
     # if called with filename, just return the padded test sample
     def __call__(self, filename, *args, **kwargs):
+        """Returns the padded  and preprocessed test sample
+
+        Parameters
+        ----------
+        filename : str
+            The filename, if it does not exist, it will be converted using the 
+            framework format. If it is already processed, that will be used
+
+        Returns
+        -------
+        np.array
+            the padded sample
+        """
         return self.get_padded_test_sample(filename)
 
     def _set_up_shapes_and_types(self):
@@ -513,6 +651,18 @@ class ApplyBasisLoader(SegBasisLoader):
             return data, None
 
     def get_test_sample(self, filename):
+        """Get the preprocessed test sample without padding
+
+        Parameters
+        ----------
+        filename : str
+            The filename
+
+        Returns
+        -------
+        np.array
+            the test file
+        """
         data, _ = self._load_file(filename)
         return self._get_samples_from_volume(data)[0]
 
@@ -544,7 +694,19 @@ class ApplyBasisLoader(SegBasisLoader):
 
         return data_padded
 
-    def remove_padding(self, data):
+    def remove_padding(self, data:np.array):
+        """Remove the padding, shape has to be the same as the test image.
+
+        Parameters
+        ----------
+        data : np.array
+            The padded output data
+
+        Returns
+        -------
+        np.array
+            The output without padding
+        """
         padding = self.last_padding
         assert data.shape==self.last_shape, 'data shape does not match the padding'
 
@@ -564,9 +726,34 @@ class ApplyBasisLoader(SegBasisLoader):
         return data
 
     def get_original_image(self, filename):
+        """Get the original image, without any preprocessing, this can be saved
+        somewhere else or as a reference for resampling
+
+        Parameters
+        ----------
+        filename : str
+            The filename
+
+        Returns
+        -------
+        sitk.Image
+            The original image
+        """
         img, _ = self._get_filenames(filename)
         return sitk.ReadImage(img)
 
     def get_processed_image(self, filename):
+        """Get the preprocessed image
+
+        Parameters
+        ----------
+        filename : str
+            The filename
+
+        Returns
+        -------
+        sitk.Image
+            The preprocessed image
+        """
         data, _ = self._load_file(filename)
         return data

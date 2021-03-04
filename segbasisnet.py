@@ -102,6 +102,8 @@ class SegBasisNet(Network):
             self.options[key] = value
 
     def _set_up_inputs(self):
+        """setup the inputs. Inputs are taken from the config file.
+        """
         self.inputs['x'] = tf.keras.Input(shape=cfg.train_input_shape, batch_size=cfg.batch_size_train, dtype=cfg.dtype)
         self.options['out_channels'] = cfg.num_classes_seg
 
@@ -180,6 +182,29 @@ class SegBasisNet(Network):
 
     def _run_train(self, logs_path, folder_name, training_dataset, validation_dataset, epochs,
                    l_r=0.001, optimizer='Adam', early_stopping=False, reduce_lr_on_plateau=False, **kwargs):
+        """Run the training using the keras.Model.fit interface with a lot of callbacks.
+
+        Parameters
+        ----------
+        logs_path : str
+            The path for the output of the different networks
+        folder_name : str
+            This is used as the folder name, so the output is logs_path / folder_name
+        training_dataset : Tensorflow dataset
+            The dataset for training, you can use the SegBasisLoader ofr this (call it)
+        validation_dataset : Tensorflow dataset
+            The dataset for validation, you can use the SegBasisLoader ofr this (call it)
+        epochs : int
+            The number of epochs
+        l_r : float, optional
+            The learning rate, by default 0.001
+        optimizer : str, optional
+            The name of the optimizer, by default 'Adam'
+        early_stopping : bool, optional
+            If early stopping should be used, by default False
+        reduce_lr_on_plateau : bool, optional
+            If the learning rate should be reduced on a plateau, by default False
+        """
 
         # set path
         output_path = Path(logs_path) / folder_name
@@ -341,6 +366,24 @@ class SegBasisNet(Network):
 
     # TODO: simplify and document
     def _run_apply(self, version, model_path, application_dataset, filename, apply_path):
+        """Apply the network to test data. If the network is 2D, it is applied 
+        slice by slice. If it is 3D, it is applied to the whole images. If that
+        runs out of memory, it is applied in patches in z-direction with the same
+        size as used in training.
+
+        Parameters
+        ----------
+        version : int or str
+            The epoch, can be int or identifier (final for example)
+        model_path : str
+            Not used
+        application_dataset : ApplyBasisLoader
+            The dataset
+        filename : str
+            The file that is being processed, used to generate the new file name
+        apply_path : str
+            Where the files are written
+        """
 
         if not os.path.exists(apply_path):
             os.makedirs(apply_path)
