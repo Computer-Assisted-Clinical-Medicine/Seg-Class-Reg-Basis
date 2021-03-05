@@ -213,6 +213,9 @@ class SegBasisNet(Network):
         # set path
         output_path = Path(logs_path) / folder_name
 
+        # do summary
+        self.model.summary(print_fn=logger.info)
+
         # compile model
         self.model.compile(
             optimizer=self._get_optimizer(optimizer, l_r, 0),
@@ -292,12 +295,16 @@ class SegBasisNet(Network):
                     self.writer = writer
 
                 def on_epoch_end(self, epoch, logs):
+                    # only write on every 5th epoch
+                    if epoch %5 != 0:
+                        return
                     # take one sample from the visualization dataset
                     for sample in self.visualization_dataset.take(1):
                         x, y = sample
                         probabilities = self.model(x)
                         with self.writer.as_default():
                             write_images(x, y, probabilities, step=epoch)
+                    return
 
             # log additional data (using the tensorboard writer)
             image_writer = tf.summary.create_file_writer(str(output_path / 'logs' / 'images'))
@@ -489,11 +496,11 @@ def write_images(x, y, probabilities, step):
 
     in_channels = x.shape[-1]
     dim_in_plane = x.shape[-2]
-    rank = len(x.shape) - 2 # substract one dimension for batches and channels
+    dimension = len(x.shape) - 2 # substract one dimension for batches and channels
     max_image_output=1
 
     # take central slice of 3D data
-    if rank == 4:
+    if dimension == 3:
         x = x[:, dim_in_plane // 2, :, :]
         y = y[:, dim_in_plane // 2, :, :]
         probabilities = probabilities[:, dim_in_plane // 2, :, :]
@@ -533,7 +540,7 @@ def write_images(x, y, probabilities, step):
 
 
     with tf.name_scope('03_Probabilities'):
-        if rank == 2:
+        if dimension == 2:
             for c in range(cfg.num_classes_seg):
                 tf.summary.image('train_seg_prob_' + str(c), tf.expand_dims(tf.cast(probabilities[:, :, :, c]
                     * 255, tf.uint8), axis=-1), step, max_image_output)
