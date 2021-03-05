@@ -182,7 +182,7 @@ class SegBasisNet(Network):
 
     def _run_train(self, logs_path, folder_name, training_dataset, validation_dataset, epochs,
                    l_r=0.001, optimizer='Adam', early_stopping=False, reduce_lr_on_plateau=False,
-                   visualization_dataset=None, **kwargs):
+                   visualization_dataset=None, write_graph=True, **kwargs):
         """Run the training using the keras.Model.fit interface with a lot of callbacks.
 
         Parameters
@@ -208,6 +208,9 @@ class SegBasisNet(Network):
         visualization_dataset: SegBasisLoader, optional
             If provided, this dataset will be used to visualize the training results for debugging.
             Writing the images can take a bit, so only use this for debugging purposes.
+        write_graph : bool, optional
+            Controls if a graph should be written, can be used than only the first fold will
+            get a graph, to prevent cluttering the output.
         """
 
         # set path
@@ -230,13 +233,16 @@ class SegBasisNet(Network):
         # define callbacks
         callbacks = []
         iter_per_epoch = cfg.samples_per_volume * cfg.num_files // cfg.batch_size_train
-        iter_per_vald = cfg.samples_per_volume * cfg.num_files_vald // cfg.batch_size_train
+        assert(iter_per_epoch > 0), 'Steps per epoch is zero, lower the batch size'
+        iter_per_vald = cfg.samples_per_volume * cfg.num_files_vald // cfg.batch_size_valid
+        assert(iter_per_vald > 0), 'Steps per epoch is zero for the validation, lower the batch size'
         # for tensorboard
         tb_callback = tf.keras.callbacks.TensorBoard(
             output_path / 'logs',
             update_freq='epoch',
             profile_batch=(2, 12),
-            histogram_freq=1
+            histogram_freq=1,
+            write_graph=write_graph
         )
         callbacks.append(tb_callback)
 
@@ -248,13 +254,13 @@ class SegBasisNet(Network):
             filepath=model_dir / 'weights_{epoch:03d}.hdf5',
             save_weights_only=True,
             verbose=0,
-            save_freq=10*iter_per_epoch
+            save_freq=int(10*iter_per_epoch)
         )
         callbacks.append(cp_callback)
 
         # to save the best model
         cp_best_callback = tf.keras.callbacks.ModelCheckpoint(
-            filepath=model_dir / 'weights_best_{epoch:03d}-{val_dice:1.3f}.hdf5',
+            filepath=model_dir / 'weights_best_{epoch:03d}-best{val_dice:1.3f}.hdf5',
             save_weights_only=True,
             verbose=0,
             save_freq='epoch',
@@ -278,38 +284,41 @@ class SegBasisNet(Network):
         if reduce_lr_on_plateau:
             lr_reduce_callback = tf.keras.callbacks.ReduceLROnPlateau(
                 monitor='val_dice',
-                patience=10,
+                patience=5,
                 mode='max',
-                factor=0.2,
+                factor=0.5,
                 verbose=1,
-                cooldown=10
+                cooldown=5
             )
             callbacks.append(lr_reduce_callback)
 
         # add callback vor visualization
-        if visualization_dataset != None:
-            class ImageCallback(tf.keras.callbacks.Callback):
+        class Logger_Callback(tf.keras.callbacks.Callback):
 
-                def __init__(self, visualization_dataset, writer):
-                    self.visualization_dataset = visualization_dataset
-                    self.writer = writer
+            def __init__(self, visualization_dataset, writer):
+                self.visualization_dataset = visualization_dataset
+                self.writer = writer
 
-                def on_epoch_end(self, epoch, logs):
+            def on_epoch_end(self, epoch, logs):
+                with self.writer.as_default():
+                    # write learning rate
+                    with tf.name_scope('learning_rate'):
+                        tf.summary.scalar(f'learning_rate', self.model.optimizer.learning_rate, step=epoch)
                     # only write on every 5th epoch
                     if epoch %5 != 0:
                         return
-                    # take one sample from the visualization dataset
-                    for sample in self.visualization_dataset.take(1):
-                        x, y = sample
-                        probabilities = self.model(x)
-                        with self.writer.as_default():
+                    if visualization_dataset != None:
+                        # take one sample from the visualization dataset
+                        for sample in self.visualization_dataset.take(1):
+                            x, y = sample
+                            probabilities = self.model(x)
                             write_images(x, y, probabilities, step=epoch)
-                    return
+                        return
 
-            # log additional data (using the tensorboard writer)
-            image_writer = tf.summary.create_file_writer(str(output_path / 'logs' / 'images'))
-            image_visualization_callback = ImageCallback(visualization_dataset, image_writer)
-            callbacks.append(image_visualization_callback)   
+        # log additional data (using the tensorboard writer)
+        writer = tf.summary.create_file_writer(str(output_path / 'logs' / 'lr_and_images'))
+        image_visualization_and_lr_callback = Logger_Callback(visualization_dataset, writer)
+        callbacks.append(image_visualization_and_lr_callback)   
 
         # callback for hyperparameters
         hparams = self.get_hyperparameter_dict()
@@ -495,15 +504,15 @@ def write_images(x, y, probabilities, step):
     """
 
     in_channels = x.shape[-1]
-    dim_in_plane = x.shape[-2]
     dimension = len(x.shape) - 2 # substract one dimension for batches and channels
     max_image_output=1
 
     # take central slice of 3D data
     if dimension == 3:
-        x = x[:, dim_in_plane // 2, :, :]
-        y = y[:, dim_in_plane // 2, :, :]
-        probabilities = probabilities[:, dim_in_plane // 2, :, :]
+        dim_z = x.shape[1]
+        x = x[:, dim_z // 2, :, :]
+        y = y[:, dim_z // 2, :, :]
+        probabilities = probabilities[:, dim_z // 2, :, :]
 
     predictions = tf.argmax(probabilities, -1)
 

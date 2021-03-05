@@ -141,149 +141,6 @@ class UNet(SegBasisNet):
         return tf.keras.Model(inputs=self.inputs['x'], outputs=self.outputs['probabilities'])
 
 
-class ResNet(SegBasisNet):
-    '''!
-    U-Net # TODO: add reference
-
-    %Network Architecture from paper # TODO: revise for implementation
-
-    - **Encoding Path** (4 Encoding Blocks): 4x{
-        -  3x3 convolution + ReLU
-        -  3x3 convolution + ReLU
-        -  2x2 max pooling operation with stride 2 for downsampling
-        ( double the number of feature channels)}
-    - **Bottom**
-        -  3x3 convolution + ReLU
-        -  3x3 convolution + ReLU
-    - **Decoding Path** (4 Decoding Blocks): 4x{
-        -  an upsampling of the feature map followed by a 2x2 up-convolution  # TODO: revise
-        -  a concatenation with the correspondingly cropped feature map from the encoding path,
-        -  3x3 convolution + ReLU
-        -  3x3 convolution + ReLU}
-    -  **Final Layer**  to compute logits.
-        - 1x1 convolution.
-    '''
-    def __init__(self, loss, is_training=True, do_finetune=False, model_path="",
-                 n_filters=[64, 128, 256, 512, 1024], kernel_dims=3, n_convolutions=[2, 3, 2], drop_out=[False, 0.2],
-                 regularize=[True, 'L2', 0.00001], do_batch_normalization=False, do_bias=True,
-                 activation='relu', upscale='TRANS_CONV', downscale='MAX_POOL', res_connect=True, skip_connect=False,
-                 cross_hair=False, **kwargs):
-            super(ResNet, self).__init__(loss, is_training, do_finetune, model_path,
-                 n_filters, kernel_dims, n_convolutions, drop_out,
-                 regularize, do_batch_normalization, do_bias,
-                 activation, upscale, downscale, res_connect, skip_connect, cross_hair, **kwargs)
-
-    @staticmethod
-    def get_name():
-        return 'ResNet'
-
-    def _build_model(self):
-        '''!
-        Builds U-Net
-
-        '''
-        ## Name of the network
-        self.options['name'] = 'ResNet'
-        self.options['n_filters_per_block'] = [*self.options['n_filters'], *self.options['n_filters'][-2::-1]]
-        self.options['n_blocks'] = len(self.options['n_filters_per_block'])
-        self.options['batch_normalization_per_block'] = [self.options['batch_normalization']] * self.options['n_blocks']
-        self.options['activation_per_block'] = [self.options['activation']] * self.options['n_blocks']
-        self.options['padding_per_block'] = [self.options['padding']] * self.options['n_blocks']
-        self.options['kernel_dims_per_block'] = [self.options['kernel_dims']] * self.options['n_blocks']
-
-        #self._print_init()
-
-        x = self.inputs['x']
-
-        # Encoding
-        for block_index in range(0, 2):
-            with tf.name_scope('%02d_enc_block' % (block_index)):
-                logger.debug(' Encoding Block %s', block_index)
-                x = block.encoding(x, self.options, self.variables, self.options['n_convolutions'][0],
-                                   self.options['kernel_dims_per_block'][block_index],
-                                   self.options['n_filters_per_block'][block_index], self.options['dilation_rate'],
-                                   self.options['padding_per_block'][block_index], self.options['dilation_rate'],
-                                   self.options['activation_per_block'][block_index], self.options['use_bias'],
-                                   self.options['batch_normalization_per_block'][block_index], self.options['drop_out'])
-                # self.variables['feature_maps'].append(x) is performed in the encoding block
-                logger.debug(' Result is Tensor with shape %s', x.shape)
-
-        # Encoding
-        for block_index in range(2, 4):
-            with tf.name_scope('%02d_enc_block' % (block_index)):
-                logger.debug(' Encoding Block %s', block_index)
-                x = block.encoding(x, self.options, self.variables, self.options['n_convolutions'][1],
-                                   self.options['kernel_dims_per_block'][block_index],
-                                   self.options['n_filters_per_block'][block_index], self.options['dilation_rate'],
-                                   self.options['padding_per_block'][block_index], self.options['dilation_rate'],
-                                   self.options['activation_per_block'][block_index], self.options['use_bias'],
-                                   self.options['batch_normalization_per_block'][block_index], self.options['drop_out'])
-                # self.variables['feature_maps'].append(x) is performed in the encoding block
-                logger.debug(' Result is Tensor with shape %s', x.shape)
-
-        # Bottom
-        block_index = 4
-        with tf.name_scope('%02d_bot_block' % block_index):
-            logger.debug(' Bottom Block %s', block_index)
-            x = block.basic(x, self.options, self.options['n_convolutions'][1],
-                            self.options['kernel_dims_per_block'][block_index],
-                            self.options['n_filters_per_block'][block_index], self.options['dilation_rate'],
-                            self.options['padding_per_block'][block_index], self.options['dilation_rate'],
-                            self.options['activation_per_block'][block_index], self.options['use_bias'],
-                            self.options['batch_normalization_per_block'][block_index], self.options['drop_out'])
-
-            logger.debug(' Result is Tensor with shape %s', x.shape)
-
-        # Decoding
-        for block_index in range(5, 7):
-            with tf.name_scope('%02d_dec_block' % block_index):
-                logger.debug(' Decoding Block %s', block_index)
-                x = block.decoding(x,
-                                 self.options, self.options['n_convolutions'][1],
-                                 self.options['kernel_dims_per_block'][block_index],
-                                 self.options['n_filters_per_block'][block_index], self.options['dilation_rate'],
-                                 self.options['padding_per_block'][block_index], self.options['dilation_rate'],
-                                 self.options['activation_per_block'][block_index], self.options['use_bias'],
-                                 self.options['batch_normalization_per_block'][block_index], self.options['drop_out'])
-
-                logger.debug(' Result is Tensor with shape %s', x.shape)
-
-        # Decoding
-        for block_index in range(7, 9):
-            with tf.name_scope('%02d_dec_block' % block_index):
-                logger.debug(' Decoding Block %s', block_index)
-                x = block.decoding(x,
-                                   self.options, self.options['n_convolutions'][2],
-                                   self.options['kernel_dims_per_block'][block_index],
-                                   self.options['n_filters_per_block'][block_index], self.options['dilation_rate'],
-                                   self.options['padding_per_block'][block_index], self.options['dilation_rate'],
-                                   self.options['activation_per_block'][block_index], self.options['use_bias'],
-                                   self.options['batch_normalization_per_block'][block_index], self.options['drop_out'])
-                    
-                logger.debug(' Result is Tensor with shape %s', x.shape)
-
-        # Add final 1x1 convolutional layer to compute logits
-        with tf.name_scope('9_last_layer'+ str(cfg.num_classes_seg)):
-            self.outputs['probabilities'] = layer.last(
-                x=x,
-                outputs=self.outputs,
-                filter_shape=np.ones(self.options['rank'], dtype=np.int32),
-                n_filter=self.options['out_channels'],
-                stride=self.options['strides'],
-                padding=self.options['padding'],
-                dilation_rate=self.options['dilation_rate'],
-                act_func=self._select_final_activation(),
-                use_bias=False,
-                regularizer=self.options['regularizer'],
-                cross_hair=self.options['use_cross_hair'],
-                do_summary=True
-            )
-  
-            logger.debug(' Probabilities have shape %s', self.outputs['probabilities'].shape)
-
-        return tf.keras.Model(inputs=self.inputs['x'], outputs=self.outputs['probabilities'])
-
-
 class DVN(SegBasisNet):
     '''!
     DeepVesselNet # TODO: add reference
@@ -561,3 +418,146 @@ class CombiNet(SegBasisNet):
 
     def _build_model(self):
         pass
+
+
+class ResNet(SegBasisNet):
+    '''!
+    U-Net # TODO: add reference
+
+    %Network Architecture from paper # TODO: revise for implementation
+
+    - **Encoding Path** (4 Encoding Blocks): 4x{
+        -  3x3 convolution + ReLU
+        -  3x3 convolution + ReLU
+        -  2x2 max pooling operation with stride 2 for downsampling
+        ( double the number of feature channels)}
+    - **Bottom**
+        -  3x3 convolution + ReLU
+        -  3x3 convolution + ReLU
+    - **Decoding Path** (4 Decoding Blocks): 4x{
+        -  an upsampling of the feature map followed by a 2x2 up-convolution  # TODO: revise
+        -  a concatenation with the correspondingly cropped feature map from the encoding path,
+        -  3x3 convolution + ReLU
+        -  3x3 convolution + ReLU}
+    -  **Final Layer**  to compute logits.
+        - 1x1 convolution.
+    '''
+    def __init__(self, loss, is_training=True, do_finetune=False, model_path="",
+                 n_filters=[64, 128, 256, 512, 1024], kernel_dims=3, n_convolutions=[2, 3, 2], drop_out=[False, 0.2],
+                 regularize=[True, 'L2', 0.00001], do_batch_normalization=False, do_bias=True,
+                 activation='relu', upscale='TRANS_CONV', downscale='MAX_POOL', res_connect=True, skip_connect=False,
+                 cross_hair=False, **kwargs):
+            super(ResNet, self).__init__(loss, is_training, do_finetune, model_path,
+                 n_filters, kernel_dims, n_convolutions, drop_out,
+                 regularize, do_batch_normalization, do_bias,
+                 activation, upscale, downscale, res_connect, skip_connect, cross_hair, **kwargs)
+
+    @staticmethod
+    def get_name():
+        return 'ResNet'
+
+    def _build_model(self):
+        '''!
+        Builds U-Net
+
+        '''
+        ## Name of the network
+        self.options['name'] = 'ResNet'
+        self.options['n_filters_per_block'] = [*self.options['n_filters'], *self.options['n_filters'][-2::-1]]
+        self.options['n_blocks'] = len(self.options['n_filters_per_block'])
+        self.options['batch_normalization_per_block'] = [self.options['batch_normalization']] * self.options['n_blocks']
+        self.options['activation_per_block'] = [self.options['activation']] * self.options['n_blocks']
+        self.options['padding_per_block'] = [self.options['padding']] * self.options['n_blocks']
+        self.options['kernel_dims_per_block'] = [self.options['kernel_dims']] * self.options['n_blocks']
+
+        #self._print_init()
+
+        x = self.inputs['x']
+
+        # Encoding
+        for block_index in range(0, 2):
+            with tf.name_scope('%02d_enc_block' % (block_index)):
+                logger.debug(' Encoding Block %s', block_index)
+                x = block.encoding(x, self.options, self.variables, self.options['n_convolutions'][0],
+                                   self.options['kernel_dims_per_block'][block_index],
+                                   self.options['n_filters_per_block'][block_index], self.options['dilation_rate'],
+                                   self.options['padding_per_block'][block_index], self.options['dilation_rate'],
+                                   self.options['activation_per_block'][block_index], self.options['use_bias'],
+                                   self.options['batch_normalization_per_block'][block_index], self.options['drop_out'])
+                # self.variables['feature_maps'].append(x) is performed in the encoding block
+                logger.debug(' Result is Tensor with shape %s', x.shape)
+
+        # Encoding
+        for block_index in range(2, 4):
+            with tf.name_scope('%02d_enc_block' % (block_index)):
+                logger.debug(' Encoding Block %s', block_index)
+                x = block.encoding(x, self.options, self.variables, self.options['n_convolutions'][1],
+                                   self.options['kernel_dims_per_block'][block_index],
+                                   self.options['n_filters_per_block'][block_index], self.options['dilation_rate'],
+                                   self.options['padding_per_block'][block_index], self.options['dilation_rate'],
+                                   self.options['activation_per_block'][block_index], self.options['use_bias'],
+                                   self.options['batch_normalization_per_block'][block_index], self.options['drop_out'])
+                # self.variables['feature_maps'].append(x) is performed in the encoding block
+                logger.debug(' Result is Tensor with shape %s', x.shape)
+
+        # Bottom
+        block_index = 4
+        with tf.name_scope('%02d_bot_block' % block_index):
+            logger.debug(' Bottom Block %s', block_index)
+            x = block.basic(x, self.options, self.options['n_convolutions'][1],
+                            self.options['kernel_dims_per_block'][block_index],
+                            self.options['n_filters_per_block'][block_index], self.options['dilation_rate'],
+                            self.options['padding_per_block'][block_index], self.options['dilation_rate'],
+                            self.options['activation_per_block'][block_index], self.options['use_bias'],
+                            self.options['batch_normalization_per_block'][block_index], self.options['drop_out'])
+
+            logger.debug(' Result is Tensor with shape %s', x.shape)
+
+        # Decoding
+        for block_index in range(5, 7):
+            with tf.name_scope('%02d_dec_block' % block_index):
+                logger.debug(' Decoding Block %s', block_index)
+                x = block.decoding(x,
+                                 self.options, self.options['n_convolutions'][1],
+                                 self.options['kernel_dims_per_block'][block_index],
+                                 self.options['n_filters_per_block'][block_index], self.options['dilation_rate'],
+                                 self.options['padding_per_block'][block_index], self.options['dilation_rate'],
+                                 self.options['activation_per_block'][block_index], self.options['use_bias'],
+                                 self.options['batch_normalization_per_block'][block_index], self.options['drop_out'])
+
+                logger.debug(' Result is Tensor with shape %s', x.shape)
+
+        # Decoding
+        for block_index in range(7, 9):
+            with tf.name_scope('%02d_dec_block' % block_index):
+                logger.debug(' Decoding Block %s', block_index)
+                x = block.decoding(x,
+                                   self.options, self.options['n_convolutions'][2],
+                                   self.options['kernel_dims_per_block'][block_index],
+                                   self.options['n_filters_per_block'][block_index], self.options['dilation_rate'],
+                                   self.options['padding_per_block'][block_index], self.options['dilation_rate'],
+                                   self.options['activation_per_block'][block_index], self.options['use_bias'],
+                                   self.options['batch_normalization_per_block'][block_index], self.options['drop_out'])
+                    
+                logger.debug(' Result is Tensor with shape %s', x.shape)
+
+        # Add final 1x1 convolutional layer to compute logits
+        with tf.name_scope('9_last_layer'+ str(cfg.num_classes_seg)):
+            self.outputs['probabilities'] = layer.last(
+                x=x,
+                outputs=self.outputs,
+                filter_shape=np.ones(self.options['rank'], dtype=np.int32),
+                n_filter=self.options['out_channels'],
+                stride=self.options['strides'],
+                padding=self.options['padding'],
+                dilation_rate=self.options['dilation_rate'],
+                act_func=self._select_final_activation(),
+                use_bias=False,
+                regularizer=self.options['regularizer'],
+                cross_hair=self.options['use_cross_hair'],
+                do_summary=True
+            )
+  
+            logger.debug(' Probabilities have shape %s', self.outputs['probabilities'].shape)
+
+        return tf.keras.Model(inputs=self.inputs['x'], outputs=self.outputs['probabilities'])

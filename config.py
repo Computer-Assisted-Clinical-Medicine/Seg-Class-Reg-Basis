@@ -43,6 +43,7 @@ else:
     batch_capacity_train = 400
     train_reader_instances = 1
 
+batch_size_valid = batch_size_train
 vald_reader_instances = 1
 file_name_capacity = 140
 
