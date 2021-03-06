@@ -234,7 +234,7 @@ class SegBasisNet(Network):
         callbacks = []
         iter_per_epoch = cfg.samples_per_volume * cfg.num_files // cfg.batch_size_train
         assert(iter_per_epoch > 0), 'Steps per epoch is zero, lower the batch size'
-        iter_per_vald = cfg.samples_per_volume * cfg.num_files_vald // cfg.batch_size_valid
+        iter_per_vald = cfg.samples_per_volume * cfg.number_of_vald // cfg.batch_size_valid
         assert(iter_per_vald > 0), 'Steps per epoch is zero for the validation, lower the batch size'
         # for tensorboard
         tb_callback = tf.keras.callbacks.TensorBoard(
