@@ -67,7 +67,7 @@ elif num_dimensions == 3:
 dtype = tf.float32 #the datatype to use inside of tensorflow
 dtype_np = np.float32 # the datatype used in numpy, should be the same as in tf
 data_train_split = 0.75
-number_of_vald = 2
+number_of_vald = 4
 
 
 ##### Preprocessing #####

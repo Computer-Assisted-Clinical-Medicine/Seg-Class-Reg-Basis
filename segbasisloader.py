@@ -459,7 +459,6 @@ class SegBasisLoader(DataLoader):
         return samples, labels_onehot
 
 
-    # TODO: clean up and document
     def _augment_numpy(self, I, L):
         '''!
         samplewise data augmentation
@@ -673,15 +672,35 @@ class ApplyBasisLoader(SegBasisLoader):
         data, _ = self._load_file(filename)
         return self._get_samples_from_volume(data)[0]
 
-    def get_padded_test_sample(self, filename):
+    def get_padded_test_sample(self, filename, min_padding=None)->np.array:
+        """Get an image, preprocess and pad it
+
+        Parameters
+        ----------
+        filename : str
+            The name of the file to load
+        min_padding : int, optional
+            The minimum amount of padding to use, if None, half of the smallest
+            training dimension will be used, by default None
+
+        Returns
+        -------
+        np.array
+            The padded image as array
+        """
         data = self.get_test_sample(filename)
 
         pad_with = np.zeros((1 + self.data_rank, 2), dtype=int)
         # do not pad the batch axis (z for the 2D case) and the last axis (channels)
         min_dim = 1
+
+        if min_padding == None:
+            # make sure to round up
+            min_p = (np.min(self.training_shape[:-1])+1) // 2
+        else:
+            min_p = min_padding
+
         for num, size in zip(range(min_dim, 4), data.shape[min_dim:-1]):
-            # calculate the minimum padding (for rank==3, there is no z-dim)
-            min_p = self.training_shape[num-min_dim] // 2
             if size % 2 == 0:
                 # and make sure have of the final size is divisible by 16
                 pad_with[num] = min_p + 8 - ((size // 2 + min_p) % 8)
@@ -731,6 +750,120 @@ class ApplyBasisLoader(SegBasisLoader):
             )
 
         return data
+
+    def get_windowed_test_sample(self, image, window_shape, overlap=None):
+        """If images are too big, this returns a padded, windowed view of the image
+
+        Parameters
+        ----------
+        image : np.array
+            The padded, preprocessed image to window
+        window_shape : something that can be turned into a numpy array
+            The shape of the window to use with the extent of the window (z,y,x)
+            if only one number is provided, this is used as z-extent
+        overlap : int
+            The overlap between two windows, if None, the minimum training shape
+            except the number of channels will be used, default None
+
+        Returns
+        -------
+        np.array
+            The windowed, padded view of the array with shape (n_patches, 1) +  window_shape + (n_channels,)
+        """
+
+        # get the overlap (this is derived from the training shape and used as padding between slices)
+        if overlap == None:
+            overlap = (np.min(self.training_shape[:-1])-2) // 2
+        self.last_overlap = overlap
+
+        # remove the batch dimension
+        assert np.all(image.shape == self.last_shape), 'Shape does not match the last image'
+        image = image[0]
+
+        if type(window_shape)==int:
+            window_shape = (window_shape, image.shape[1], image.shape[2])
+        window_shape = np.array(window_shape)
+        assert len(window_shape) == 3, 'Size should have three entries'
+
+        # the window should be smaller than the image
+        assert np.all(window_shape <= image.shape[:3]), 'The window should not be bigger than the image.'
+        # and larger than the training shape
+        assert np.all(window_shape >= self.training_shape[:3]), f'The window_shape should be bigger than the training shape {self.training_shape[:3]}'
+
+        # calculate the stride
+        stride = np.zeros(3, dtype=int)
+        for i in range(3):
+            if window_shape[i] < image.shape[i]:
+                # the stride uses two times the overlap, because it is needed for both patches
+                stride[i] = window_shape[i] - overlap*2
+            else:
+                # in this case, window and image shape are the same, the stride should be the image shape
+                stride[i] = 1
+
+        # add channel dimension to the window shape
+        window_shape_with_ch = np.concatenate([window_shape, [image.shape[3]]])
+
+        # remember window shape
+        self.last_window_shape = window_shape
+        # remember stride
+        self.last_stride = stride
+
+        # Sliding window view of the array. The sliding window dimensions are inserted at the end, 
+        # and the original dimensions are trimmed as required by the size of the sliding window. 
+        # That is, view.shape = x_shape_trimmed + window_shape, where x_shape_trimmed is x.shape 
+        # with every entry reduced by one less than the corresponding window size.
+        sliding_view = np.lib.stride_tricks.sliding_window_view(image, window_shape_with_ch, axis=(0,1,2,3), writeable=False)
+        
+        # for the indices, use one more step than there would be in the windowed image
+        max_indices = np.zeros(3, dtype=int)
+        for i in range(3):
+            # if the stride fits into the shape, do nothing
+            if sliding_view.shape[i] % stride[i] == 0:
+                max_indices[i] = sliding_view.shape[i]
+            # if not, add one more step
+            else:
+                max_indices[i] = (sliding_view.shape[i] // stride[i] + 1) * stride[i] + 1
+        indices = np.indices(max_indices)
+        # use the stride on the images
+        indices_stride = indices[:,::stride[0],::stride[1],::stride[2]]
+        # clip to the maximum index, this ensures that also the edge is covered
+        # reshape
+        indices_clipped = indices_stride.reshape((3,-1)).T
+        for i in range(3):
+            indices_clipped[:,i] = np.clip(indices_clipped[:,i], 0, sliding_view.shape[i]-1)
+
+        # remember them
+        self.last_indices = indices_clipped
+
+        # apply the indices to the sliding_view
+        patches = np.zeros((indices_clipped.shape[0], 1) + tuple(window_shape_with_ch))
+        for num, idx in enumerate(indices_clipped):
+            # assign the patches (with 0 for the channel dimension)
+            patches[num] = sliding_view[idx[0], idx[1], idx[2], 0]
+
+        return patches
+
+    def stitch_patches(self, patches):
+        patches = np.array(patches)
+        assert len(patches.shape) == 6, 'dimensions should be 6'
+        assert patches.shape[0] == self.last_indices.shape[0], 'wrong number of patches'
+        assert patches.shape[1] == 1, 'batch number should be 1'
+        assert np.all(patches.shape[2:5] == self.last_window_shape), 'wrong patch shape'
+        # last dimension is unknown, it is the number of channels in the input 
+        # and the number of classes in the output
+
+        # use the shape of the last image, except the number of channels, which is replaced by the number of classes
+        stitched_image = np.zeros(self.last_shape[:-1] + (patches.shape[-1],))
+        ov = self.last_overlap
+        for num, indices in enumerate(self.last_indices):
+            stitched_image[
+                :, # batch stays the same
+                indices[0]+ov:indices[0]-ov+self.last_window_shape[0],
+                indices[1]+ov:indices[1]-ov+self.last_window_shape[1],
+                indices[2]+ov:indices[2]-ov+self.last_window_shape[2],
+                : # channel stay the same
+            ] = patches[num,:,ov:-ov,ov:-ov,ov:-ov,:]
+        return stitched_image
 
     def get_original_image(self, filename):
         """Get the original image, without any preprocessing, this can be saved

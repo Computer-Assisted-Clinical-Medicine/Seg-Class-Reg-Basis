@@ -181,7 +181,7 @@ class SegBasisNet(Network):
                              self.options['out_channels'], 'output channels.')
 
     def _run_train(self, logs_path, folder_name, training_dataset, validation_dataset, epochs,
-                   l_r=0.001, optimizer='Adam', early_stopping=False, reduce_lr_on_plateau=False,
+                   l_r=0.001, optimizer='Adam', early_stopping=False, patience_es=10, reduce_lr_on_plateau=False, patience_lr_plat=5, factor_lr_plat=0.5,
                    visualization_dataset=None, write_graph=True, **kwargs):
         """Run the training using the keras.Model.fit interface with a lot of callbacks.
 
@@ -203,8 +203,14 @@ class SegBasisNet(Network):
             The name of the optimizer, by default 'Adam'
         early_stopping : bool, optional
             If early stopping should be used, by default False
+        patience_es : int, optional
+            The default patience for early stopping, by default 10
         reduce_lr_on_plateau : bool, optional
             If the learning rate should be reduced on a plateau, by default False
+        patience_lr_plat : int, optional
+            The patience before reducing the learning rate, by default 5
+        factor_lr_plat : float, optional
+            The factor by which the learing rate is multiplied at a plateau, by default 0.5
         visualization_dataset: SegBasisLoader, optional
             If provided, this dataset will be used to visualize the training results for debugging.
             Writing the images can take a bit, so only use this for debugging purposes.
@@ -270,11 +276,20 @@ class SegBasisNet(Network):
         )
         callbacks.append(cp_best_callback)
 
+        # backup and restore
+        backup_dir = model_dir / 'backup'
+        if not backup_dir.exists():
+            backup_dir.mkdir()
+        backup_callback = tf.keras.callbacks.experimental.BackupAndRestore(
+            backup_dir=backup_dir,
+        )
+        callbacks.append(backup_callback)
+
         # early stopping
         if early_stopping:
             es_callback = tf.keras.callbacks.EarlyStopping(
                 monitor='val_dice',
-                patience=10,
+                patience=patience_es,
                 mode='max',
                 min_delta=0.005
             )
@@ -284,9 +299,9 @@ class SegBasisNet(Network):
         if reduce_lr_on_plateau:
             lr_reduce_callback = tf.keras.callbacks.ReduceLROnPlateau(
                 monitor='val_dice',
-                patience=5,
+                patience=patience_lr_plat,
                 mode='max',
-                factor=0.5,
+                factor=factor_lr_plat,
                 verbose=1,
                 cooldown=5
             )
@@ -382,17 +397,24 @@ class SegBasisNet(Network):
             'regularize' : self.options['regularize'][0],
             'regularizer' : self.options['regularize'][1],
             'regularizer_param' : self.options['regularize'][2],
-            'kernel_dim' : self.options['kernel_dims'][0]
+            'kernel_dim' : self.options['kernel_dims'][0],
+            'dilation_rate_first' : self.options['dilation_rate'][0]
         }
-        for o in ['use_bias', 'loss', 'name', 'batch_normalization', 'activation', 'use_cross_hair']:
+        if self.options['regularize']:
+            if type(self.options['regularizer']) == tf.python.keras.regularizers.L2:
+                hyperparameters['L2'] = self.options['regularizer'].get_config()['l2']
+        # add filters
+        for i, f in enumerate(self.options['n_filters']):
+            hyperparameters[f'n_filters_{i}'] = f
+        for o in ['use_bias', 'loss', 'name', 'batch_normalization', 'activation', 'use_cross_hair', 'res_connect', 'regularize', 'use_bias', 'skip_connect', 'n_blocks']:
             hyperparameters[o] = self.options[o]
         # check the types
         for key, value in hyperparameters.items():
-            if type(value) in [list]:
+            if type(value) in [list, tuple]:
                 hyperparameters[key] = str(value)
         return hyperparameters
 
-    # TODO: simplify and document
+
     def _run_apply(self, version, model_path, application_dataset, filename, apply_path):
         """Apply the network to test data. If the network is 2D, it is applied 
         slice by slice. If it is 3D, it is applied to the whole images. If that
@@ -418,7 +440,7 @@ class SegBasisNet(Network):
 
         image_data = application_dataset(filename)
 
-        # if 2D, run each layer as a batch
+        # if 2D, run each layer as a batch, this should probably not run out of memory
         if self.options['rank'] == 2:
             predictions = []
             for x in np.expand_dims(image_data, axis=1):
@@ -431,19 +453,40 @@ class SegBasisNet(Network):
             try:
                 probability_map = self.model(image_data, training=False)
             except tf.errors.ResourceExhaustedError:
-                logger.info(f'{filename} cannot be processed as a complete image, dividing into slices.')
-                # if running out of memory, turn into sub-problems
-                assert application_dataset.training_shape[0] % 2 == 0, 'Training Shape z-extent should be divisible by 2'
-                z_half = application_dataset.training_shape[0] // 2
-                # always use the two central slices
-                indices = np.arange(z_half, image_data.shape[1] - z_half, 2, dtype=int)
-                # create a new probability map
-                map_shape = image_data.shape[:-1] + (cfg.num_classes_seg,)
-                probability_map = np.zeros(map_shape)
-                for i in indices:
-                    result = self.model(image_data[:,i-z_half:i+z_half], training=False)
-                    # take the central two slices
-                    probability_map[:,i-1:i+1] = result[:,z_half-1:z_half+1]
+                # try to reduce the patch size
+                # initial size is the image size
+                window_size = np.array(image_data.shape[1:4])
+                # try to find the best patch size (do not use more than 10 steps)
+                for i in range(10):
+                    # reduce the window size
+                    # reduce z if it is larger than the training shape
+                    if window_size[0] > cfg.train_input_shape[0]:
+                        red = 0
+                    # otherwise, lower the larger of the two other dimensions
+                    elif window_size[1] >= window_size[2]:
+                        red = 1
+                    else:
+                        red = 2
+                    # reduce the size
+                    window_size[red] = window_size[red] // 2
+                    # make it divisible by 16
+                    window_size[red] = int(np.ceil(window_size[red] / 16)) * 16
+                    try:
+                        test_data_shape = (1,) + tuple(window_size) + (image_data.shape[-1],)
+                        test_data = np.random.rand(*test_data_shape)
+                        self.model(test_data, training=False)
+                    except tf.errors.ResourceExhaustedError:
+                        logger.debug(f'Applying failed for window size {window_size} in step {i}.')
+                    else:
+                        # if it works, break the cycle and keep the size
+                        break
+                # get windowed samples
+                image_data_patches = application_dataset.get_windowed_test_sample(image_data, window_size)
+                probability_patches = []
+                # apply
+                for x in image_data_patches:
+                    probability_patches.append(self.model(x, training=False))
+                probability_map = application_dataset.stitch_patches(probability_patches)
 
         # remove padding
         probability_map = application_dataset.remove_padding(probability_map)
