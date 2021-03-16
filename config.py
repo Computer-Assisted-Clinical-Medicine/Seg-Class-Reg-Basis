@@ -71,7 +71,7 @@ number_of_vald = 4
 
 
 ##### Preprocessing #####
-normalizing_method = NORMALIZING.PERCENT5
+normalizing_method = NORMALIZING.QUANTILE
 #values between outside of the quantiles norm_min_q and norm_max_q are normalized to interval [-1, 1]
 norm_min_q = 0.01
 norm_max_q = 0.99
@@ -89,7 +89,7 @@ label_background_value = 0 #labels to this
 
 
 ###### Sample Mining #####
-percent_of_object_samples = 50 #how many samples should contain the objects (in percent of samples_per_volume)
+percent_of_object_samples = 33 #how many samples should contain the objects (in percent of samples_per_volume)
 samples_per_volume = 80
 
 add_noise = True
@@ -109,7 +109,7 @@ points = 3  # size of the grid (3x3 grid)
 
 
 ##### Testing #####
-write_probabilities = False
+write_probabilities = True
 
 
 ##### Loss Setting #####

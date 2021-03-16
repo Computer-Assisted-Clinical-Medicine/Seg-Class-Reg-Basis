@@ -1,13 +1,14 @@
-from enum import Enum
 import logging
 import os
+from enum import Enum
 
 import numpy as np
 import SimpleITK as sitk
 
 from . import config as cfg
-from .NetworkBasis.dataloader import DataLoader
+from . import normalization
 from .NetworkBasis import image
+from .NetworkBasis.dataloader import DataLoader
 
 #configure logger
 logger = logging.getLogger(__name__)
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 class NORMALIZING(Enum):
     WINDOW = 0
     MEAN_STD = 1
-    PERCENT5 = 2
+    QUANTILE = 2
 
 
 class NOISETYP(Enum):
@@ -49,7 +50,7 @@ class SegBasisLoader(DataLoader):
     samples_per_volume : int, optional:
         The number of samples that should be taken from one volume per epoch.
     """
-    def __init__(self, mode=None, seed=42, name='reader', frac_obj=None, samples_per_volume=None):
+    def __init__(self, mode=None, seed=42, name='reader', frac_obj=None, samples_per_volume=None, normalizing_method=None, do_resampling=None):
         super().__init__(mode=mode, seed=seed, name=name)
 
         # use caching
@@ -67,8 +68,15 @@ class SegBasisLoader(DataLoader):
         else:
             self.samples_per_volume = samples_per_volume
 
-        self.normalizing_method = cfg.normalizing_method
-        self.do_resampling = cfg.do_resampling
+        if normalizing_method is not None:
+            self.normalizing_method = normalizing_method
+        else:
+            self.normalizing_method = cfg.normalizing_method
+
+        if do_resampling is not None:
+            self.do_resampling = do_resampling
+        else:
+            self.do_resampling = cfg.do_resampling
 
     def _set_up_shapes_and_types(self):
         """!
@@ -138,7 +146,7 @@ class SegBasisLoader(DataLoader):
         folder, file_number = os.path.split(file_id)
 
         # set preprocessing folder name
-        folder_name = f'pre_{self.normalizing_method}'
+        folder_name = f'pre_{self.normalizing_method.name}'
         if self.do_resampling:
             folder_name += '_resampled'
         pre_folder = os.path.join(cfg.preprocessed_dir, folder_name)
@@ -261,27 +269,17 @@ class SegBasisLoader(DataLoader):
         NotImplementedError
             When a method is selected, that is not implemented
         """
+        assert np.mean(np.isnan(img)) < 0.001, 'Too many NaNs.'
         img_no_nan = np.nan_to_num(img, nan=cfg.data_background_value)
-        # clip outliers and rescale to between zero and one
-        a_min = np.quantile(img_no_nan, cfg.norm_min_q)
-        a_max = np.quantile(img_no_nan, cfg.norm_max_q)
-        if self.normalizing_method == NORMALIZING.PERCENT5:
-            img = np.clip(img_no_nan, a_min=a_min, a_max=a_max)
-            img = (img - a_min) / (a_max - a_min)
-            img = (img * 2) - 1
+        if self.normalizing_method == NORMALIZING.QUANTILE:
+            return normalization.quantile(img_no_nan, cfg.norm_min_q, cfg.norm_max_q)
         elif self.normalizing_method == NORMALIZING.MEAN_STD:
-            img = np.clip(img_no_nan, a_min=a_min, a_max=a_max)
-            img = img - np.mean(img)
-            std = np.std(img)
-            img = img / (std if std != 0 else eps)
+            return normalization.mean_std(img_no_nan)
         elif self.normalizing_method == NORMALIZING.WINDOW:
-            img = np.clip(img_no_nan, a_min=cfg.norm_min_v, a_max=cfg.norm_max_v)
-            img = (img - cfg.norm_min_v) / (cfg.norm_max_v - cfg.norm_min_v + eps)
-            img = (img * 2) - 1
+            return normalization.window(img_no_nan, cfg.norm_min_v, cfg.norm_max_v)
         else:
             raise NotImplementedError(f'{self.normalizing_method} is not implemented')
 
-        return img
 
     def _resample(self, data:sitk.Image, label=None):
         """Resample the image and labels to the spacing specified in the config.

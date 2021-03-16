@@ -10,7 +10,7 @@ from .segbasisnet import SegBasisNet
 #configure logger
 logger = logging.getLogger(__name__)
 
-# TODO: add regularizer
+
 class UNet(SegBasisNet):
     '''!
     U-Net # TODO: add reference
