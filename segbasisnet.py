@@ -1,14 +1,14 @@
 import logging
 import os
 from pathlib import Path
-from time import time
 
 import numpy as np
 import SimpleITK as sitk
 import tensorflow as tf
 from tensorboard.plugins.hparams import api as hp
 
-from SegmentationNetworkBasis.NetworkBasis import image, loss
+from SegmentationNetworkBasis import tf_utils
+from SegmentationNetworkBasis.NetworkBasis import loss
 from SegmentationNetworkBasis.NetworkBasis.metric import Dice
 from SegmentationNetworkBasis.NetworkBasis.network import Network
 
@@ -17,7 +17,6 @@ from . import config as cfg
 #configure logger
 logger = logging.getLogger(__name__)
 
-# TODO: add validation summary using test_step
 
 class SegBasisNet(Network):
     def __init__(self, loss, is_training=True, do_finetune=False, model_path="",
@@ -236,36 +235,22 @@ class SegBasisNet(Network):
             ]
         )
 
-        # define callbacks
-        callbacks = []
+        # check the iterator sizes
         iter_per_epoch = cfg.samples_per_volume * cfg.num_files // cfg.batch_size_train
         assert(iter_per_epoch > 0), 'Steps per epoch is zero, lower the batch size'
         iter_per_vald = cfg.samples_per_volume * cfg.number_of_vald // cfg.batch_size_valid
         assert(iter_per_vald > 0), 'Steps per epoch is zero for the validation, lower the batch size'
-        # for tensorboard
-        tb_callback = tf.keras.callbacks.TensorBoard(
-            output_path / 'logs',
-            update_freq='epoch',
-            profile_batch=(2, 12),
-            histogram_freq=1,
-            write_graph=write_graph
-        )
-        callbacks.append(tb_callback)
+
+        # define callbacks
+        callbacks = []
 
         # to save the model
         model_dir = output_path / 'models'
         if not model_dir.exists():
             model_dir.mkdir()
-        cp_callback = tf.keras.callbacks.ModelCheckpoint(
-            filepath=model_dir / 'weights_{epoch:03d}.hdf5',
-            save_weights_only=True,
-            verbose=0,
-            save_freq=int(10*iter_per_epoch)
-        )
-        callbacks.append(cp_callback)
 
         # to save the best model
-        cp_best_callback = tf.keras.callbacks.ModelCheckpoint(
+        cp_best_callback = tf_utils.Keep_Best_Model(
             filepath=model_dir / 'weights_best_{epoch:03d}-best{val_dice:1.3f}.hdf5',
             save_weights_only=True,
             verbose=0,
@@ -307,33 +292,15 @@ class SegBasisNet(Network):
             )
             callbacks.append(lr_reduce_callback)
 
-        # add callback vor visualization
-        class Logger_Callback(tf.keras.callbacks.Callback):
-
-            def __init__(self, visualization_dataset, writer):
-                self.visualization_dataset = visualization_dataset
-                self.writer = writer
-
-            def on_epoch_end(self, epoch, logs):
-                with self.writer.as_default():
-                    # write learning rate
-                    with tf.name_scope('learning_rate'):
-                        tf.summary.scalar(f'learning_rate', self.model.optimizer.learning_rate, step=epoch)
-                    # only write on every 5th epoch
-                    if epoch %5 != 0:
-                        return
-                    if visualization_dataset != None:
-                        # take one sample from the visualization dataset
-                        for sample in self.visualization_dataset.take(1):
-                            x, y = sample
-                            probabilities = self.model(x)
-                            write_images(x, y, probabilities, step=epoch)
-                        return
-
-        # log additional data (using the tensorboard writer)
-        writer = tf.summary.create_file_writer(str(output_path / 'logs' / 'lr_and_images'))
-        image_visualization_and_lr_callback = Logger_Callback(visualization_dataset, writer)
-        callbacks.append(image_visualization_and_lr_callback)   
+        # for tensorboard
+        tb_callback = tf_utils.Custom_TB_Callback(
+            output_path / 'logs',
+            update_freq='epoch',
+            profile_batch=(2, 12),
+            histogram_freq=1,
+            write_graph=write_graph
+        )
+        callbacks.append(tb_callback)
 
         # callback for hyperparameters
         hparams = self.get_hyperparameter_dict()
@@ -527,83 +494,3 @@ class SegBasisNet(Network):
                 np.save(f, probability_map)
 
         return
-
-
-def write_images(x, y, probabilities, step):
-    """Write images for the summary. If 3D data is provided, the central slice
-    is used. All channels are written, the labels are written and the
-    probabilites.
-
-    Parameters
-    ----------
-    x : tf.Tensor
-        The input images as Tensor
-    y : tf.Tensor
-        The input labels
-    probabilities : tf.Tensor
-        The output of the network as probabilites (one per class)
-    step : int
-        Step number used for slider in tensorboard
-    """
-
-    in_channels = x.shape[-1]
-    dimension = len(x.shape) - 2 # substract one dimension for batches and channels
-    max_image_output=1
-
-    # take central slice of 3D data
-    if dimension == 3:
-        dim_z = x.shape[1]
-        x = x[:, dim_z // 2, :, :]
-        y = y[:, dim_z // 2, :, :]
-        probabilities = probabilities[:, dim_z // 2, :, :]
-
-    predictions = tf.argmax(probabilities, -1)
-
-
-    with tf.name_scope('01_Input_and_Predictions'):
-        if in_channels == 1:
-            image_fc = tf.expand_dims(tf.cast((tf.clip_by_value(x, -1, 1) + 1) * 255 / 2, tf.uint8), axis=-1)
-            tf.summary.image('train_img', image_fc, step, max_image_output)
-        else:
-            for c in range(in_channels):
-                image = tf.expand_dims(tf.cast((tf.clip_by_value(x[:, :, :, c], -1, 1) + 1) * 255 / 2, tf.uint8), axis=-1)
-                if c == 0:
-                    image_fc = image
-                tf.summary.image('train_img_c'+str(c), image, step, max_image_output)
-
-        label = tf.expand_dims(tf.cast(tf.argmax(y, -1)
-                * (255 // (cfg.num_classes_seg - 1)), tf.uint8), axis=-1)
-        tf.summary.image('train_seg_lbl', label, step, max_image_output)
-        pred = tf.expand_dims(tf.cast(predictions
-                * (255 // (cfg.num_classes_seg - 1)), tf.uint8), axis=-1)
-        tf.summary.image('train_seg_pred', pred, step, max_image_output)
-
-
-    with tf.name_scope('02_Combined_predictions (prediction in red, label in green, both in yellow)'):
-        # set to first channel where both labels are zero
-        mask = tf.cast(tf.math.logical_and(pred == 0, label == 0), tf.uint8)
-        # set those values to the mask
-        label += image_fc*mask
-        pred += image_fc*mask
-        # set the opposite values of the image to zero
-        image_fc -= image_fc*(1-mask)
-        combined = tf.concat([pred, label, image_fc], -1)
-        tf.summary.image('train_seg_combined', combined, step, max_image_output)
-
-
-    with tf.name_scope('03_Probabilities'):
-        if dimension == 2:
-            for c in range(cfg.num_classes_seg):
-                tf.summary.image('train_seg_prob_' + str(c), tf.expand_dims(tf.cast(probabilities[:, :, :, c]
-                    * 255, tf.uint8), axis=-1), step, max_image_output)
-
-
-    with tf.name_scope('04_Class_Labels'):
-        if cfg.num_classes_seg == 2:
-            pass
-        else:
-            for c in range(cfg.num_classes_seg):
-                tf.summary.image('train_seg_lbl' + str(c), tf.expand_dims(tf.cast(y[:, :, :, c]
-                    * 255, tf.uint8), axis=-1), step, max_image_output)
-
-    return

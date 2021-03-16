@@ -82,11 +82,11 @@ norm_max_v = 275
 do_resampling = True
 if do_resampling:
     target_spacing = [1, 1, 3]
-    target_size = [256, 256] # TODO: remove
 target_type_image = sitk.sitkFloat32
 target_type_label = sitk.sitkUInt8
 data_background_value = 0 #data outside the image is set to this value
 label_background_value = 0 #labels to this
+
 
 ###### Sample Mining #####
 percent_of_object_samples = 50 #how many samples should contain the objects (in percent of samples_per_volume)
@@ -109,7 +109,7 @@ points = 3  # size of the grid (3x3 grid)
 
 
 ##### Testing #####
-write_probabilities = False #TODO: implement
+write_probabilities = False
 
 
 ##### Loss Setting #####
