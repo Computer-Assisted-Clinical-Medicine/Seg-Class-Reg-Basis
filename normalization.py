@@ -138,8 +138,44 @@ def mean_std(image:np.array)->np.array:
 
     return image_normed
 
-def landmark_and_mean_extraction(landmark_file, images:List[np.array],
-mask_percentile=10, percs=np.concatenate(([.01], np.arange(.10, .91, .10), [.99]))):
+def get_landmarks(img, percs):
+    """
+    get the landmarks for the Nyul and Udupa norm method for a specific image
+
+    Parameters
+    ----------
+    img : np.ndarray
+        image on which to find landmarks
+    percs : np.ndarray
+        corresponding landmark quantiles to extract
+
+    Returns
+    -------
+    np.ndarray
+        intensity values corresponding to percs in img
+    """
+    landmarks = np.quantile(img, percs)
+    return landmarks
+
+def landmark_and_mean_extraction(landmark_file, images:List[sitk.Image],
+    mask_percentile=10, percs=np.concatenate(([.05], np.arange(.10, .91, .10), [.95])),
+    background_value=0):
+    """Extract the mean and landmarks (quantiles) and the standard deviation 
+    from a set of images and export it to a files.
+
+    Parameters
+    ----------
+    landmark_file : str
+        The file where the features are saved
+    images : List[sitk.Image]
+        The list of images where the landmarks get extracted from
+    mask_percentile : int, optional
+        The percentile to use as mask value, by default 10
+    percs : the quantiles to use for the landmarks, optional
+        [description], by default np.concatenate(([.05], np.arange(.10, .91, .10), [.95]))
+    background_value : str
+        The background value to use at the lower end of the scale
+    """
     # initialize the scale
     standard_scale = []
     means = []
@@ -177,17 +213,38 @@ mask_percentile=10, percs=np.concatenate(([.01], np.arange(.10, .91, .10), [.99]
         stds=stds,
         means_mean=means.mean(axis=0),
         stds_mean=stds.mean(axis=0),
-        mask_percentile=mask_percentile
+        mask_percentile=mask_percentile,
+        background_value=background_value
     )
     return
 
-def histogram_matching_apply(landmark_file, image:np.array):
+def histogram_matching_apply(landmark_file, image:np.array)->np.array:
+    """Apply the histogram matching to an image
+
+    Parameters
+    ----------
+    landmark_file : str
+        The file where the landmarks are saved
+    image : np.array
+        The image
+
+    Returns
+    -------
+    np.array
+        The normalized image
+
+    Raises
+    ------
+    FileNotFoundError
+        If the landmark file was not found
+    """
     if not os.path.exists(landmark_file):
         raise FileNotFoundError(f'The landmark file {landmark_file} was not found.')
     # load landmark file
     data_file  = np.load(landmark_file)
     percs = data_file['percs']
     mask_percentile = data_file['mask_percentile']
+    background_value = data_file['background_value']
 
     image_normed = np.copy(image)
 
@@ -213,7 +270,7 @@ def histogram_matching_apply(landmark_file, image:np.array):
         f = interp1d(
             landmarks,
             standard_scale,
-            fill_value=(standard_scale[0],standard_scale[-1]),
+            fill_value=((background_value-mean)/std,standard_scale[-1]),
             bounds_error=False
         )
 
@@ -223,22 +280,44 @@ def histogram_matching_apply(landmark_file, image:np.array):
     assert (np.abs(image_normed).max() < 1e3), 'Voxel values over 1000 detected'
     return image_normed
 
-
-def get_landmarks(img, percs):
-    """
-    get the landmarks for the Nyul and Udupa norm method for a specific image
+def z_score(landmark_file, image:np.array)->np.array:
+    """Apply the z_score normalization to an image. This means the mean of all
+    images will be subtracted and then the values will be divided by the 
+    standard deviation.
 
     Parameters
     ----------
-    img : np.ndarray
-        image on which to find landmarks
-    percs : np.ndarray
-        corresponding landmark quantiles to extract
+    landmark_file : str
+        The file where the landmarks are saved
+    image : np.array
+        The image
 
     Returns
     -------
-    np.ndarray
-        intensity values corresponding to percs in img
+    np.array
+        The normalized image
+
+    Raises
+    ------
+    FileNotFoundError
+        If the landmark file was not found
     """
-    landmarks = np.quantile(img, percs)
-    return landmarks
+    if not os.path.exists(landmark_file):
+        raise FileNotFoundError(f'The landmark file {landmark_file} was not found.')
+    # load landmark file
+    data_file  = np.load(landmark_file)
+    percs = data_file['percs']
+
+    image_normed = np.copy(image)
+
+    for i in range(image.shape[3]):
+        mean = data_file['means_mean'][i]
+        std = data_file['stds_mean'][i]
+
+        # get the clipped image
+        image_clipped = clip_outliers(image[:,:,:,i], percs[0], percs[-1])
+
+        # apply it
+        image_normed[:,:,:,i] = (image_clipped - mean) / std
+    
+    return image_normed

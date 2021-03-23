@@ -21,6 +21,7 @@ class NORMALIZING(Enum):
     MEAN_STD = 1
     QUANTILE = 2
     HISTOGRAM_MATCHING = 3
+    Z_SCORE = 4
 
 
 class NOISETYP(Enum):
@@ -107,7 +108,16 @@ class SegBasisLoader(DataLoader):
             # set file to export the landmarks to
             self.landmark_file = os.path.join(self._get_preprocessing_folder(), 'landmarks.npz')
             self.normalization_func = lambda img: normalization.histogram_matching_apply(self.landmark_file, img)
-            self.normalization_callbacks.append(lambda x: normalization.landmark_and_mean_extraction(self.landmark_file, x))
+            self.normalization_callbacks.append(lambda x: normalization.landmark_and_mean_extraction(
+                self.landmark_file, x, background_value=cfg.data_background_value
+            ))
+        elif self.normalizing_method == NORMALIZING.Z_SCORE:
+            # set file to export the landmarks to (the same as for landmarks, because it extracts both)
+            self.landmark_file = os.path.join(self._get_preprocessing_folder(), 'landmarks.npz')
+            self.normalization_func = lambda img: normalization.z_score(self.landmark_file, img)
+            self.normalization_callbacks.append(lambda x: normalization.landmark_and_mean_extraction(
+                self.landmark_file, x, background_value=cfg.data_background_value
+            ))
         else:
             raise NotImplementedError(f'{self.normalizing_method} is not implemented')
 
