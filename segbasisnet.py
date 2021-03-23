@@ -494,4 +494,12 @@ class SegBasisNet(Network):
             with open(Path(apply_path) / f'prediction-{name}-{version}.npy', 'wb') as f:
                 np.save(f, probability_map)
 
+        # write the preprocessed image
+        proc_path = Path(apply_path) / f'sample-{name}-preprocessed{cfg.file_suffix}'
+        sitk.WriteImage(orig_processed, str(proc_path.absolute()))
+
+        # write the labels for the preprocessed image
+        pred_res_path = Path(apply_path) / f'prediction-{name}-{version}-preprocessed{cfg.file_suffix}'
+        sitk.WriteImage(sitk.Cast(predicted_label_img, sitk.sitkUInt8), str(pred_res_path.absolute()))
+
         return

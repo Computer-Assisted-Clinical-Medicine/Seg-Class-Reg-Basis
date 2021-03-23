@@ -595,11 +595,11 @@ class ApplyBasisLoader(SegBasisLoader):
     name : str, optional
         The name, by default 'apply_loader'
     """
-    def __init__(self, mode=None, seed=42, name='apply_loader'):
+    def __init__(self, mode=None, seed=42, name='apply_loader', **kwargs):
         if mode is None:
             mode = self.MODES.APPLY
         assert(mode == self.MODES.APPLY), 'Use this loader only to apply data to an image'
-        super().__init__(mode=mode, seed=seed, name=name)
+        super().__init__(mode=mode, seed=seed, name=name, **kwargs)
         self.training_shape = np.array(cfg.train_input_shape)
         # do not use caching when applying
         self.use_caching = False
