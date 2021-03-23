@@ -1,4 +1,66 @@
+import os
+from typing import Callable, List
+
 import numpy as np
+import SimpleITK as sitk
+import tensorflow as tf
+from scipy.interpolate import interp1d
+
+
+def normalie_channelwise(image:np.array, func:Callable, *args, **kwargs):
+    """Normalize an image channelwise. All arguments besides image and func are
+    passed onto the normalization function.
+
+    Parameters
+    ----------
+    image : np.array
+        The image to normalize
+    func : Callable
+        The function used for normalization.
+
+    Returns
+    -------
+    np.array
+        The normalized image
+    """
+    image_normed = image.copy()
+    # see if there are multiple channels
+    if image.ndim == 4:
+        if image.shape[3] > 1:
+            for i in range(image.shape[3]):
+                # normalize each channel separately
+                image_normed[:,:,:,i] = func(image[:,:,:,i], *args, **kwargs)
+            return image_normed
+        else:
+            # otherwise, normalie the whole image
+            return func(image, *args, **kwargs)
+    else:
+        # otherwise, normalie the whole image
+        return func(image, *args, **kwargs)
+
+def clip_outliers(image:np.array, lower_q:float, upper_q:float)->np.array:
+    """Clip the outliers above and below a certain quantile.
+
+    Parameters
+    ----------
+    image : np.array
+        The image to clip.
+    lower_q : float
+        The lower quantile
+    upper_q : float
+        The upper quantile
+
+    Returns
+    -------
+    np.array
+        The image with the outliers removed.
+    """
+
+    # get the quantiles
+    a_min = np.quantile(image, lower_q)
+    a_max = np.quantile(image, upper_q)
+    # clip
+    return np.clip(image, a_min=a_min, a_max=a_max)
 
 def window(image:np.array, lower:float, upper:float)->np.array:
     """Normalize the image by a window. The image is clipped to the lower and
@@ -19,13 +81,13 @@ def window(image:np.array, lower:float, upper:float)->np.array:
         The normalized image
     """
     # clip
-    image = np.clip(image, a_min=lower, a_max=upper)
+    image_normed = np.clip(image, a_min=lower, a_max=upper)
     # rescale to between 0 and 1
-    image = (image - lower) / (upper - lower)
+    image_normed = (image_normed - lower) / (upper - lower)
     # rescale to between -1 and 1
-    image = (image * 2) - 1
+    image_normed = (image_normed * 2) - 1
 
-    return image
+    return image_normed
 
 def quantile(image:np.array, lower_q:float, upper_q:float)->np.array:
     """Normalize the image by quantiles. The image is clipped to the lower and
@@ -69,9 +131,114 @@ def mean_std(image:np.array)->np.array:
     np.array
         The normalized image
     """
-    image = image - np.mean(image)
-    std = np.std(image)
+    image_normed = image - np.mean(image)
+    std = np.std(image_normed)
     assert std > 0, 'The standard deviation of the image is 0.'
-    image = image / std
+    image_normed = image_normed / std
 
-    return image
+    return image_normed
+
+def landmark_and_mean_extraction(landmark_file, images:List[np.array],
+mask_percentile=10, percs=np.concatenate(([.01], np.arange(.10, .91, .10), [.99]))):
+    # initialize the scale
+    standard_scale = []
+    means = []
+    stds = []
+    for image in images:
+        # get data
+        img_data = sitk.GetArrayFromImage(image)
+        # iterate over channels
+        landmarks = []
+        for i in range(img_data.shape[3]):
+            # extract the channel and clip the outliers
+            image_mod = clip_outliers(img_data[:,:,:,i], percs[0], percs[-1])
+            # set mask if not present
+            mask_data = image_mod > np.percentile(image_mod, mask_percentile)
+            # apply mask
+            masked = image_mod[mask_data]
+            # get landmarks
+            landmarks.append(get_landmarks(masked, percs))
+        # get mean
+        means.append(img_data.mean(axis=(0,1,2)))
+        # get std
+        stds.append(img_data.std(axis=(0,1,2)))
+
+        # gather landmarks for standard scale
+        standard_scale.append(landmarks)
+    standard_scale = np.array(standard_scale)
+    means = np.array(means)
+    stds = np.array(stds)
+    np.savez(
+        landmark_file,
+        percs=percs,
+        standard_scale=standard_scale.mean(axis=0),
+        all_landmarks=standard_scale,
+        means=means,
+        stds=stds,
+        means_mean=means.mean(axis=0),
+        stds_mean=stds.mean(axis=0),
+        mask_percentile=mask_percentile
+    )
+    return
+
+def histogram_matching_apply(landmark_file, image:np.array):
+    if not os.path.exists(landmark_file):
+        raise FileNotFoundError(f'The landmark file {landmark_file} was not found.')
+    # load landmark file
+    data_file  = np.load(landmark_file)
+    percs = data_file['percs']
+    mask_percentile = data_file['mask_percentile']
+
+    image_normed = np.copy(image)
+
+    for i in range(image.shape[3]):
+        standard_scale = data_file['standard_scale'][i]
+        mean = data_file['means_mean'][i]
+        std = data_file['stds_mean'][i]
+
+        # redefine standard scale
+        standard_scale = (standard_scale - mean) / std
+
+        # get the clipped image
+        image_clipped = clip_outliers(image[:,:,:,i], percs[0], percs[-1])
+        # get mask
+        mask_image = image_clipped > np.percentile(image_clipped, mask_percentile)
+        # apply mask
+        masked = image[mask_image]
+
+        # get landmarks
+        landmarks = get_landmarks(masked, percs)
+        
+        # create interpolation function (with extremes of standard scale as fill values)
+        f = interp1d(
+            landmarks,
+            standard_scale,
+            fill_value=(standard_scale[0],standard_scale[-1]),
+            bounds_error=False
+        )
+
+        # apply it
+        image_normed[:,:,:,i] = f(image_clipped)
+    
+    assert (np.abs(image_normed).max() < 1e3), 'Voxel values over 1000 detected'
+    return image_normed
+
+
+def get_landmarks(img, percs):
+    """
+    get the landmarks for the Nyul and Udupa norm method for a specific image
+
+    Parameters
+    ----------
+    img : np.ndarray
+        image on which to find landmarks
+    percs : np.ndarray
+        corresponding landmark quantiles to extract
+
+    Returns
+    -------
+    np.ndarray
+        intensity values corresponding to percs in img
+    """
+    landmarks = np.quantile(img, percs)
+    return landmarks

@@ -298,7 +298,8 @@ class SegBasisNet(Network):
             update_freq='epoch',
             profile_batch=(2, 12),
             histogram_freq=1,
-            write_graph=write_graph
+            write_graph=write_graph,
+            visualization_dataset=visualization_dataset
         )
         callbacks.append(tb_callback)
 

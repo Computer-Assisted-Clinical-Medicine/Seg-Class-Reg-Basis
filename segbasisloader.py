@@ -4,6 +4,7 @@ from enum import Enum
 
 import numpy as np
 import SimpleITK as sitk
+import tensorflow as tf
 
 from . import config as cfg
 from . import normalization
@@ -19,6 +20,7 @@ class NORMALIZING(Enum):
     WINDOW = 0
     MEAN_STD = 1
     QUANTILE = 2
+    HISTOGRAM_MATCHING = 3
 
 
 class NOISETYP(Enum):
@@ -78,6 +80,45 @@ class SegBasisLoader(DataLoader):
         else:
             self.do_resampling = cfg.do_resampling
 
+        # set callbacks for normalization (in case it should be applied to the complete dataset)
+        self.normalization_callbacks = []
+
+        # set the normalization_method
+        if self.normalizing_method == NORMALIZING.QUANTILE:
+            self.normalization_func = lambda img: normalization.normalie_channelwise(
+                image=img,
+                func=normalization.quantile,
+                lower_q=cfg.norm_min_q,
+                upper_q=cfg.norm_max_q
+            )
+        elif self.normalizing_method == NORMALIZING.MEAN_STD:
+            self.normalization_func = lambda img: normalization.normalie_channelwise(
+                image=img,
+                func=normalization.mean_std
+            )
+        elif self.normalizing_method == NORMALIZING.WINDOW:
+            self.normalization_func = lambda img: normalization.normalie_channelwise(
+                image=img,
+                func=normalization.window,
+                lower=cfg.norm_min_v,
+                upper=cfg.norm_max_v
+            )
+        elif self.normalizing_method == NORMALIZING.HISTOGRAM_MATCHING:
+            # set file to export the landmarks to
+            self.landmark_file = os.path.join(self._get_preprocessing_folder(), 'landmarks.npz')
+            self.normalization_func = lambda img: normalization.histogram_matching_apply(self.landmark_file, img)
+            self.normalization_callbacks.append(lambda x: normalization.landmark_and_mean_extraction(self.landmark_file, x))
+        else:
+            raise NotImplementedError(f'{self.normalizing_method} is not implemented')
+
+        return
+
+    def __call__(self, file_list, batch_size, n_epochs, read_threads):
+        # call the normalization callbacks
+        for n in self.normalization_callbacks:
+            n([sitk.ReadImage(self._get_filenames(f)[0]) for f in file_list])
+        return super().__call__(file_list, batch_size, n_epochs=n_epochs, read_threads=read_threads)
+
     def _set_up_shapes_and_types(self):
         """!
         sets all important configurations from the config file:
@@ -129,6 +170,16 @@ class SegBasisLoader(DataLoader):
         s, _, l, _ = self._get_filenames_cached(file_id)
         return s, l
 
+    def _get_preprocessing_folder(self):
+        # set preprocessing folder name
+        folder_name = f'pre_{self.normalizing_method.name}'
+        if self.do_resampling:
+            folder_name += '_resampled'
+        pre_folder = os.path.join(cfg.preprocessed_dir, folder_name)
+        if not os.path.exists(pre_folder):
+            os.makedirs(pre_folder)
+        return pre_folder
+
     def _get_filenames_cached(self, file_id):
         """Gets the filenames and the preprocessed filenames
 
@@ -145,13 +196,7 @@ class SegBasisLoader(DataLoader):
         # get the folder and id
         folder, file_number = os.path.split(file_id)
 
-        # set preprocessing folder name
-        folder_name = f'pre_{self.normalizing_method.name}'
-        if self.do_resampling:
-            folder_name += '_resampled'
-        pre_folder = os.path.join(cfg.preprocessed_dir, folder_name)
-        if not os.path.exists(pre_folder):
-            os.makedirs(pre_folder)
+        pre_folder = self._get_preprocessing_folder()
 
         # generate the file name for the sample
         sample_name = cfg.sample_file_name_prefix + file_number
@@ -213,7 +258,12 @@ class SegBasisLoader(DataLoader):
             if self.do_resampling:
                 data_img, label_img = self._resample(data_img, label_img)
             data = sitk.GetArrayFromImage(data_img)
-            data = self.normalize(data)
+            assert np.all(data < 1e6), 'Input values over were 1 000 000 found.'
+            try:
+                data = self.normalize(data)
+            except AssertionError as e:
+                tf.print(f'There was the error {e} when processing {data_file}.')
+                raise e
             lbl = sitk.GetArrayFromImage(label_img)
             # then check them
             self._check_images(data, lbl)
@@ -246,39 +296,29 @@ class SegBasisLoader(DataLoader):
         logger.debug('          Shapes (Data, Label): %s %s', data.shape, lbl.shape)
 
 
-    def normalize(self, img:np.array, eps=np.finfo(float).min)->np.array:
-        """Normaize an image. Right now the normalisation can be choses to use
-        percentiles as minimum and maximum (set in config) or fixed values.
-        If MEAN_STD is chosen, the mean is substraced and the image is divided
-        by the standard
+    def normalize(self, img:np.array)->np.array:
+        """Normaize an image. The specified normalization method is used.
 
         Parameters
         ----------
         img : np.array, optional
             the image to normalize
-        eps : float, optional
-            Small factor for numerical stability, by default np.finfo(float).min
 
         Returns
         -------
         np.array
             Normalized image
-
-        Raises
-        ------
-        NotImplementedError
-            When a method is selected, that is not implemented
         """
-        assert np.mean(np.isnan(img)) < 0.001, 'Too many NaNs.'
+        assert not np.any(np.isnan(img)), 'NaNs in the input image.'
         img_no_nan = np.nan_to_num(img, nan=cfg.data_background_value)
-        if self.normalizing_method == NORMALIZING.QUANTILE:
-            return normalization.quantile(img_no_nan, cfg.norm_min_q, cfg.norm_max_q)
-        elif self.normalizing_method == NORMALIZING.MEAN_STD:
-            return normalization.mean_std(img_no_nan)
-        elif self.normalizing_method == NORMALIZING.WINDOW:
-            return normalization.window(img_no_nan, cfg.norm_min_v, cfg.norm_max_v)
-        else:
-            raise NotImplementedError(f'{self.normalizing_method} is not implemented')
+        
+        # normalie the image
+        image_normalized = self.normalization_func(img_no_nan)
+
+        # do checks
+        assert not np.any(np.isnan(image_normalized)), 'NaNs in normalized image.'
+        assert np.abs(image_normalized).max() < 1e3, 'Voxel values over 1000.'
+        return image_normalized
 
 
     def _resample(self, data:sitk.Image, label=None):
@@ -388,7 +428,7 @@ class SegBasisLoader(DataLoader):
         
         # determine the number of background and foreground samples
         n_foreground = int(self.samples_per_volume * self.frac_obj)
-        n_background = int(self.samples_per_volume * (1 - self.frac_obj))
+        n_background = int(self.samples_per_volume - n_foreground)
 
         # calculate the maximum padding, so that at least three quarters in 
         # each dimension is inside the image

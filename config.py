@@ -89,7 +89,7 @@ label_background_value = 0 #labels to this
 
 
 ###### Sample Mining #####
-percent_of_object_samples = 33 #how many samples should contain the objects (in percent of samples_per_volume)
+percent_of_object_samples = 30 #how many samples should contain the objects (in percent of samples_per_volume)
 samples_per_volume = 80
 
 add_noise = True
