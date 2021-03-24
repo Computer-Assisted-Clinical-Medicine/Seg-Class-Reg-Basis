@@ -158,8 +158,8 @@ def get_landmarks(img, percs):
     return landmarks
 
 def landmark_and_mean_extraction(landmark_file, images:List[sitk.Image],
-    mask_percentile=10, percs=np.concatenate(([.05], np.arange(.10, .91, .10), [.95])),
-    background_value=0):
+    mask_percentile=0, percs=np.concatenate(([.01], np.arange(.10, .91, .10), [.99])),
+    norm_func=None):
     """Extract the mean and landmarks (quantiles) and the standard deviation 
     from a set of images and export it to a files.
 
@@ -171,10 +171,12 @@ def landmark_and_mean_extraction(landmark_file, images:List[sitk.Image],
         The list of images where the landmarks get extracted from
     mask_percentile : int, optional
         The percentile to use as mask value, by default 10
-    percs : the quantiles to use for the landmarks, optional
-        [description], by default np.concatenate(([.05], np.arange(.10, .91, .10), [.95]))
-    background_value : str
-        The background value to use at the lower end of the scale
+    percs : np.array, optional
+        the quantiles to use for the landmarks, by default
+        np.concatenate(([.05], np.arange(.10, .91, .10), [.95]))
+    norm_func : function, optional
+        An optional function which will be applied to each image before feature
+        extraction, by default None
     """
     # initialize the scale
     standard_scale = []
@@ -185,22 +187,29 @@ def landmark_and_mean_extraction(landmark_file, images:List[sitk.Image],
         img_data = sitk.GetArrayFromImage(image)
         # iterate over channels
         landmarks = []
+        m = []
+        s = []
         for i in range(img_data.shape[3]):
             # extract the channel and clip the outliers
             image_mod = clip_outliers(img_data[:,:,:,i], percs[0], percs[-1])
+            # normalize if specified
+            if norm_func is not None:
+                image_mod = norm_func(image_mod)
             # set mask if not present
             mask_data = image_mod > np.percentile(image_mod, mask_percentile)
             # apply mask
             masked = image_mod[mask_data]
             # get landmarks
             landmarks.append(get_landmarks(masked, percs))
-        # get mean
-        means.append(img_data.mean(axis=(0,1,2)))
-        # get std
-        stds.append(img_data.std(axis=(0,1,2)))
+            # get mean
+            m.append(image_mod.mean())
+            # get std
+            s.append(image_mod.std())
 
         # gather landmarks for standard scale
         standard_scale.append(landmarks)
+        means.append(m)
+        stds.append(s)
     standard_scale = np.array(standard_scale)
     means = np.array(means)
     stds = np.array(stds)
@@ -214,11 +223,10 @@ def landmark_and_mean_extraction(landmark_file, images:List[sitk.Image],
         means_mean=means.mean(axis=0),
         stds_mean=stds.mean(axis=0),
         mask_percentile=mask_percentile,
-        background_value=background_value
     )
     return
 
-def histogram_matching_apply(landmark_file, image:np.array)->np.array:
+def histogram_matching_apply(landmark_file, image:np.array, norm_func=None, subtract_mean=False)->np.array:
     """Apply the histogram matching to an image
 
     Parameters
@@ -227,6 +235,12 @@ def histogram_matching_apply(landmark_file, image:np.array)->np.array:
         The file where the landmarks are saved
     image : np.array
         The image
+    norm_func : function, optional
+        An optional function which will be applied to each image before histogram
+        matching, by default None
+    subtract_mean : bool, optional
+        If this is true, the mean will be subtracted and all images will be 
+        divided by the standard deviation, by default false
 
     Returns
     -------
@@ -244,24 +258,25 @@ def histogram_matching_apply(landmark_file, image:np.array)->np.array:
     data_file  = np.load(landmark_file)
     percs = data_file['percs']
     mask_percentile = data_file['mask_percentile']
-    background_value = data_file['background_value']
 
     image_normed = np.copy(image)
 
     for i in range(image.shape[3]):
         standard_scale = data_file['standard_scale'][i]
-        mean = data_file['means_mean'][i]
-        std = data_file['stds_mean'][i]
 
         # redefine standard scale
-        standard_scale = (standard_scale - mean) / std
+        if subtract_mean:
+            standard_scale = 2*(standard_scale - standard_scale[standard_scale.size//2]) / (standard_scale[-1] - standard_scale[0])
 
         # get the clipped image
         image_clipped = clip_outliers(image[:,:,:,i], percs[0], percs[-1])
+        # normalize if specified
+        if norm_func is not None:
+            image_clipped = norm_func(image_clipped)
         # get mask
         mask_image = image_clipped > np.percentile(image_clipped, mask_percentile)
         # apply mask
-        masked = image[mask_image]
+        masked = image_clipped[mask_image]
 
         # get landmarks
         landmarks = get_landmarks(masked, percs)
@@ -270,7 +285,7 @@ def histogram_matching_apply(landmark_file, image:np.array)->np.array:
         f = interp1d(
             landmarks,
             standard_scale,
-            fill_value=((background_value-mean)/std,standard_scale[-1]),
+            fill_value=(standard_scale[0],standard_scale[-1]),
             bounds_error=False
         )
 

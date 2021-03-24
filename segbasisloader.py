@@ -22,6 +22,8 @@ class NORMALIZING(Enum):
     QUANTILE = 2
     HISTOGRAM_MATCHING = 3
     Z_SCORE = 4
+    HM_QUANTILE = 5
+    HM_QUANT_MEAN = 6
 
 
 class NOISETYP(Enum):
@@ -84,6 +86,7 @@ class SegBasisLoader(DataLoader):
         # set callbacks for normalization (in case it should be applied to the complete dataset)
         self.normalization_callbacks = []
 
+        # TODO: turn normalization into an object
         # set the normalization_method
         if self.normalizing_method == NORMALIZING.QUANTILE:
             self.normalization_func = lambda img: normalization.normalie_channelwise(
@@ -107,26 +110,57 @@ class SegBasisLoader(DataLoader):
         elif self.normalizing_method == NORMALIZING.HISTOGRAM_MATCHING:
             # set file to export the landmarks to
             self.landmark_file = os.path.join(self._get_preprocessing_folder(), 'landmarks.npz')
-            self.normalization_func = lambda img: normalization.histogram_matching_apply(self.landmark_file, img)
-            self.normalization_callbacks.append(lambda x: normalization.landmark_and_mean_extraction(
-                self.landmark_file, x, background_value=cfg.data_background_value
-            ))
+            self.normalization_func = lambda img: normalization.histogram_matching_apply(self.landmark_file, img, None, True)
+            if not os.path.exists(self.landmark_file):
+                self.normalization_callbacks.append(lambda x: normalization.landmark_and_mean_extraction(
+                    self.landmark_file, x
+                ))
         elif self.normalizing_method == NORMALIZING.Z_SCORE:
             # set file to export the landmarks to (the same as for landmarks, because it extracts both)
             self.landmark_file = os.path.join(self._get_preprocessing_folder(), 'landmarks.npz')
             self.normalization_func = lambda img: normalization.z_score(self.landmark_file, img)
-            self.normalization_callbacks.append(lambda x: normalization.landmark_and_mean_extraction(
-                self.landmark_file, x, background_value=cfg.data_background_value
-            ))
+            if not os.path.exists(self.landmark_file):
+                self.normalization_callbacks.append(lambda x: normalization.landmark_and_mean_extraction(
+                    self.landmark_file, x
+                ))
+        elif self.normalizing_method == NORMALIZING.HM_QUANTILE:
+            # normalize with quantile method before histogram matching
+            n_func = lambda img: normalization.quantile(
+                image=img,
+                lower_q=cfg.norm_min_q,
+                upper_q=cfg.norm_max_q
+            )
+            # set file to export the landmarks to
+            self.landmark_file = os.path.join(self._get_preprocessing_folder(), 'landmarks.npz')
+            self.normalization_func = lambda img: normalization.histogram_matching_apply(self.landmark_file, img, n_func, False)
+            if not os.path.exists(self.landmark_file):
+                self.normalization_callbacks.append(lambda x: normalization.landmark_and_mean_extraction(
+                    self.landmark_file, x, norm_func=n_func
+                ))    
+        elif self.normalizing_method == NORMALIZING.HM_QUANT_MEAN:
+            # normalize with quantile method before histogram matching
+            n_func = lambda img: normalization.quantile(
+                image=img,
+                lower_q=cfg.norm_min_q,
+                upper_q=cfg.norm_max_q
+            )
+            # set file to export the landmarks to
+            self.landmark_file = os.path.join(self._get_preprocessing_folder(), 'landmarks.npz')
+            self.normalization_func = lambda img: normalization.histogram_matching_apply(self.landmark_file, img, n_func, True)
+            if not os.path.exists(self.landmark_file):
+                self.normalization_callbacks.append(lambda x: normalization.landmark_and_mean_extraction(
+                    self.landmark_file, x, norm_func=n_func
+                ))            
         else:
             raise NotImplementedError(f'{self.normalizing_method} is not implemented')
 
         return
 
     def __call__(self, file_list, batch_size, n_epochs, read_threads):
-        # call the normalization callbacks
-        for n in self.normalization_callbacks:
-            n([sitk.ReadImage(self._get_filenames(f)[0]) for f in file_list])
+        # call the normalization callbacks, but only in training
+        if self.mode == self.MODES.TRAIN:
+            for n in self.normalization_callbacks:
+                n([sitk.ReadImage(self._get_filenames(f)[0]) for f in file_list])
         return super().__call__(file_list, batch_size, n_epochs=n_epochs, read_threads=read_threads)
 
     def _set_up_shapes_and_types(self):

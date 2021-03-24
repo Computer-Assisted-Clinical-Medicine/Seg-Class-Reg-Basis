@@ -126,11 +126,11 @@ def write_images(x, y, probabilities, step):
 
     with tf.name_scope('01_Input_and_Predictions'):
         if in_channels == 1:
-            image_fc = tf.expand_dims(tf.cast((tf.clip_by_value(x, -1, 1) + 1) * 255 / 2, tf.uint8), axis=-1)
+            image_fc = convert_float_to_image(x)
             tf.summary.image('train_img', image_fc, step, max_image_output)
         else:
             for c in range(in_channels):
-                image = tf.expand_dims(tf.cast((tf.clip_by_value(x[:, :, :, c], -1, 1) + 1) * 255 / 2, tf.uint8), axis=-1)
+                image = convert_float_to_image(x[:, :, :, c])
                 if c == 0:
                     image_fc = image
                 tf.summary.image('train_img_c'+str(c), image, step, max_image_output)
@@ -171,3 +171,26 @@ def write_images(x, y, probabilities, step):
                     * 255, tf.uint8), axis=-1), step, max_image_output)
 
     return
+
+def convert_float_to_image(image:tf.Tensor)->tf.Tensor:
+    """Convert a float tensor to a greyscale image with values between 0 and 255.
+    This is done by setting the minimum to 0 and the maximum to 255. It is assumed
+    that outliers were already removed.
+
+    Parameters
+    ----------
+    image : tf.Tensor
+        The tensor to convert
+
+    Returns
+    -------
+    tf.Tensor
+        The image
+    """
+    # get the extreme values
+    minimum = tf.math.reduce_min(image)
+    maximum = tf.math.reduce_max(image)
+    # rescale to a range between 0 and 255
+    image_rescaled = (image - minimum) / (maximum - minimum) * 255
+    # cast to int and add channel dimension
+    return tf.expand_dims(tf.cast(image_rescaled, tf.uint8), axis=-1)
