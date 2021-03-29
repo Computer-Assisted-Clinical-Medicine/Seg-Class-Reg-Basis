@@ -317,11 +317,16 @@ class SegBasisNet(Network):
         )
         callbacks.append(csv_callback)
 
+        if 'CLUSTER' in os.environ:
+            verbosity=2
+        else:
+            verbosity=1
+
         # do the training
         self.model.fit(
             x=training_dataset,
             epochs=epochs,
-            verbose=1,
+            verbose=verbosity,
             validation_data=validation_dataset,
             validation_freq=1,
             steps_per_epoch=iter_per_epoch,

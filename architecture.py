@@ -17,56 +17,6 @@ class CustomKerasModel(tf.keras.models.Model):
     def __init__(self, **kwargs):
         super(CustomKerasModel, self).__init__(**kwargs)
 
-        # boolean flag that will signal to main function that 
-        # an error was encountered
-        self.crash = False
-
-    @tf.function
-    def train_step(self, data):
-        data = data_adapter.expand_1d(data)
-        x, y, sample_weight = data_adapter.unpack_x_y_sample_weight(data)
-
-        with backprop.GradientTape() as tape:
-            y_pred = self(x, training=True)
-            loss = self.compiled_loss(
-                y, y_pred, sample_weight, regularization_losses=self.losses)
-
-        self.compiled_metrics.update_state(y, y_pred, sample_weight)
-
-        gradients = tape.gradient(loss, self.trainable_variables)
-
-        # concatenate the gradients into a single tensor for testing
-        concat_grads = tf.concat([tf.reshape(g,[-1]) for g in gradients],0)
-        # In this example, we test for NaNs, 
-        # but we can include other tests
-        if tf.reduce_any(tf.math.is_nan(concat_grads)):
-            # if any of the gradients are NaN, send a signal to the  
-            # outer loop and halt the training. We choose to signal
-            # to the outer loop by setting the loss to 0.
-            return {m.name: m.result() for m in self.metrics}
-        else:
-            # Update weights
-            self.optimizer.apply_gradients(
-                       zip(gradients, self.trainable_variables))
-            return {m.name: m.result() for m in self.metrics}
-
-    def make_train_function(self):
-        if self.train_function is not None:
-            return self.train_function
-
-        def train_function(iterator):
-            data = next(iterator)
-            # records the current sample
-            self.x, self.y = data
-            res = self.train_step(data)
-            if res['loss'] == 0.:
-                self.crash = True
-                raise Exception()
-            return res
-
-        self.train_function = train_function
-        return self.train_function
-
 
 class UNet(SegBasisNet):
     '''!

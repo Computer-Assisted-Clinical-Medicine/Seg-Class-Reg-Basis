@@ -89,10 +89,10 @@ label_background_value = 0 #labels to this
 
 
 ###### Sample Mining #####
-percent_of_object_samples = 30 #how many samples should contain the objects (in percent of samples_per_volume)
+percent_of_object_samples = 50 #how many samples should contain the objects (in percent of samples_per_volume)
 samples_per_volume = 80
 
-add_noise = False
+add_noise = True
 noise_typ = NOISETYP.GAUSSIAN
 standard_deviation = 0.025
 mean_poisson = 30 # relative to full scale
