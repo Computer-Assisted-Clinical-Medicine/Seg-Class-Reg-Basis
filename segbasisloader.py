@@ -260,7 +260,7 @@ class SegBasisLoader(DataLoader):
         label_file_pre = os.path.join(pre_folder, (label_name + '.mhd'))
         return data_file, data_file_pre, label_file, label_file_pre
 
-    def _load_file(self, file_name):
+    def _load_file(self, file_name, load_labels=True):
         """Load a file, if the file is found in the chache, this is used, otherwise
         the file is preprocessed and added to the chache
 
@@ -273,6 +273,8 @@ class SegBasisLoader(DataLoader):
         ----------
         file_name : str or bytes
             Filename must be either a string or utf-8 bytes as returned by tf.
+        load_labels : bool, optional
+            If true, the labels will also be loaded, by default True
 
         Returns
         -------
@@ -289,18 +291,30 @@ class SegBasisLoader(DataLoader):
         # Use a SimpleITK reader to load the nii images and labels for training
         data_file, data_file_pre, label_file, label_file_pre = self._get_filenames_cached(file_id) 
         # see if the preprocessed files exist
-        if os.path.exists(data_file_pre) and os.path.exists(label_file_pre) and self.use_caching:
+        data_exist = os.path.exists(data_file_pre)
+        lbl_exist = os.path.exists(label_file_pre)
+        if data_exist and lbl_exist and self.use_caching and load_labels:
             # load images
             data = sitk.ReadImage(str(data_file_pre))
             lbl = sitk.ReadImage(str(label_file_pre))
+        elif not load_labels and data_exist and self.use_caching:
+            # load images
+            data = sitk.ReadImage(str(data_file_pre))
+            lbl = None
         else:
             # load images
             data_img = sitk.ReadImage(data_file)
-            label_img = sitk.ReadImage(label_file)
+            if load_labels:
+                label_img = sitk.ReadImage(label_file)
+            else:
+                label_img = None
             # adapt, resample and normalize them
             data_img, label_img = self.adapt_to_task(data_img, label_img)
             if self.do_resampling:
-                data_img, label_img = self._resample(data_img, label_img)
+                if load_labels:
+                    data_img, label_img = self._resample(data_img, label_img)
+                else:
+                    data_img = self._resample(data_img, label_img)
             data = sitk.GetArrayFromImage(data_img)
             assert np.all(data < 1e6), 'Input values over were 1 000 000 found.'
             try:
@@ -308,18 +322,22 @@ class SegBasisLoader(DataLoader):
             except AssertionError as e:
                 tf.print(f'There was the error {e} when processing {data_file}.')
                 raise e
-            lbl = sitk.GetArrayFromImage(label_img)
+            if load_labels:
+                lbl = sitk.GetArrayFromImage(label_img)
+            else:
+                lbl = None
             # then check them
             self._check_images(data, lbl)
             # if everything is ok, save the preprocessed images
             data_img_proc = sitk.GetImageFromArray(data)
             data_img_proc.CopyInformation(data_img)
-            label_img_proc = sitk.GetImageFromArray(lbl)
-            label_img_proc.CopyInformation(label_img)
             sitk.WriteImage(data_img_proc, str(data_file_pre))
-            sitk.WriteImage(label_img_proc, str(label_file_pre))
             data = data_img_proc
-            lbl = label_img_proc
+            if load_labels:
+                label_img_proc = sitk.GetImageFromArray(lbl)
+                label_img_proc.CopyInformation(label_img)
+                sitk.WriteImage(label_img_proc, str(label_file_pre))
+                lbl = label_img_proc
 
         return data, lbl
 
@@ -735,7 +753,7 @@ class ApplyBasisLoader(SegBasisLoader):
             if not os.path.exists(file_name_converted):
                 raise FileNotFoundError(f'The test file {file_name} could not be found.')
             # otherwise, load it
-            data, _ = super()._load_file(file_name)
+            data, _ = super()._load_file(file_name, load_labels=False)
             return data, None
 
     def get_test_sample(self, filename):
@@ -868,7 +886,8 @@ class ApplyBasisLoader(SegBasisLoader):
         assert len(window_shape) == 3, 'Size should have three entries'
 
         # the window should be smaller than the image
-        assert np.all(window_shape <= image.shape[:3]), 'The window should not be bigger than the image.'
+        window_shape = np.min([window_shape, image.shape[:3]], axis=0)
+        
         # and larger than the training shape
         assert np.all(window_shape >= self.training_shape[:3]), f'The window_shape should be bigger than the training shape {self.training_shape[:3]}'
 

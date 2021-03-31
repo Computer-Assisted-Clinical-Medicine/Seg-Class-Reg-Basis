@@ -424,37 +424,54 @@ class SegBasisNet(Network):
         # otherwise, just run it
         else:
             try:
+                # if the window size exists, trigger the exception
+                if hasattr(self, 'window_size'):
+                    raise tf.errors.ResourceExhaustedError(None, None, 'trigger exception')
                 probability_map = self.model(image_data, training=False)
             except tf.errors.ResourceExhaustedError:
-                # try to reduce the patch size
-                # initial size is the image size
-                window_size = np.array(image_data.shape[1:4])
-                # try to find the best patch size (do not use more than 10 steps)
-                for i in range(10):
-                    # reduce the window size
-                    # reduce z if it is larger than the training shape
-                    if window_size[0] > cfg.train_input_shape[0]:
-                        red = 0
-                    # otherwise, lower the larger of the two other dimensions
-                    elif window_size[1] >= window_size[2]:
-                        red = 1
-                    else:
-                        red = 2
-                    # reduce the size
-                    window_size[red] = window_size[red] // 2
-                    # make it divisible by 16
-                    window_size[red] = int(np.ceil(window_size[red] / 16)) * 16
-                    try:
-                        test_data_shape = (1,) + tuple(window_size) + (image_data.shape[-1],)
-                        test_data = np.random.rand(*test_data_shape)
-                        self.model(test_data, training=False)
-                    except tf.errors.ResourceExhaustedError:
-                        logger.debug(f'Applying failed for window size {window_size} in step {i}.')
-                    else:
-                        # if it works, break the cycle and keep the size
-                        break
+                # try to reduce the patch size to a size that works
+                if not hasattr(self, 'window_size'):
+                    # initial size is the image size
+                    self.window_size = np.array(image_data.shape[1:4])
+                    # try to find the best patch size (do not use more than 10 steps)
+                    for i in range(10):
+                        # reduce the window size
+                        # reduce z if it is larger than the training shape
+                        if self.window_size[0] > cfg.train_input_shape[0]:
+                            red = 0
+                        # otherwise, lower the larger of the two other dimensions
+                        elif self.window_size[1] >= self.window_size[2]:
+                            red = 1
+                        else:
+                            red = 2
+                        # reduce the size
+                        self.window_size[red] = self.window_size[red] // 2
+                        # make it divisible by 16
+                        self.window_size[red] = int(np.ceil(self.window_size[red] / 16)) * 16
+                        try:
+                            test_data_shape = (1,) + tuple(self.window_size) + (image_data.shape[-1],)
+                            test_data = np.random.rand(*test_data_shape)
+                            self.model(test_data, training=False)
+                        except tf.errors.ResourceExhaustedError:
+                            logger.debug(f'Applying failed for window size {self.window_size} in step {i}.')
+                        else:
+                            # if it works, break the cycle and reduce once more to be sure
+                            # reduce the window size
+                            # reduce z if it is larger than the training shape
+                            if self.window_size[0] > cfg.train_input_shape[0]:
+                                red = 0
+                            # otherwise, lower the larger of the two other dimensions
+                            elif self.window_size[1] >= self.window_size[2]:
+                                red = 1
+                            else:
+                                red = 2
+                            # reduce the size
+                            self.window_size[red] = self.window_size[red] // 2
+                            # make it divisible by 16
+                            self.window_size[red] = int(np.ceil(self.window_size[red] / 16)) * 16
+                            break
                 # get windowed samples
-                image_data_patches = application_dataset.get_windowed_test_sample(image_data, window_size)
+                image_data_patches = application_dataset.get_windowed_test_sample(image_data, self.window_size)
                 probability_patches = []
                 # apply
                 for x in image_data_patches:
