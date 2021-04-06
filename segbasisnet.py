@@ -510,7 +510,7 @@ class SegBasisNet(Network):
         # write resampled file
         name = Path(filename).name
         pred_path = Path(apply_path) / f'prediction-{name}-{version}{cfg.file_suffix}'
-        sitk.WriteImage(predicted_label_orig, str(pred_path.absolute()))
+        sitk.WriteImage(predicted_label_orig, str(pred_path.resolve()))
 
         if cfg.write_probabilities:
             with open(Path(apply_path) / f'prediction-{name}-{version}.npy', 'wb') as f:
@@ -518,10 +518,10 @@ class SegBasisNet(Network):
 
         # write the preprocessed image
         proc_path = Path(apply_path) / f'sample-{name}-preprocessed{cfg.file_suffix}'
-        sitk.WriteImage(orig_processed, str(proc_path.absolute()))
+        sitk.WriteImage(orig_processed, str(proc_path.resolve()))
 
         # write the labels for the preprocessed image
         pred_res_path = Path(apply_path) / f'prediction-{name}-{version}-preprocessed{cfg.file_suffix}'
-        sitk.WriteImage(sitk.Cast(predicted_label_img, sitk.sitkUInt8), str(pred_res_path.absolute()))
+        sitk.WriteImage(sitk.Cast(predicted_label_img, sitk.sitkUInt8), str(pred_res_path.resolve()))
 
         return
