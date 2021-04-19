@@ -503,7 +503,7 @@ class SegBasisNet(Network):
             image1=predicted_label_img,
             referenceImage=original_image,
             interpolator=sitk.sitkNearestNeighbor,
-            outputPixelType =sitk.sitkUInt8,
+            outputPixelType=sitk.sitkUInt8,
             useNearestNeighborExtrapolator=True
         )
 
@@ -516,12 +516,13 @@ class SegBasisNet(Network):
             with open(Path(apply_path) / f'prediction-{name}-{version}.npy', 'wb') as f:
                 np.save(f, probability_map)
 
-        # write the preprocessed image
-        proc_path = Path(apply_path) / f'sample-{name}-preprocessed{cfg.file_suffix}'
-        sitk.WriteImage(orig_processed, str(proc_path.resolve()))
+        if cfg.write_intermediaries:
+            # write the preprocessed image
+            proc_path = Path(apply_path) / f'sample-{name}-preprocessed{cfg.file_suffix}'
+            sitk.WriteImage(orig_processed, str(proc_path.resolve()))
 
-        # write the labels for the preprocessed image
-        pred_res_path = Path(apply_path) / f'prediction-{name}-{version}-preprocessed{cfg.file_suffix}'
-        sitk.WriteImage(sitk.Cast(predicted_label_img, sitk.sitkUInt8), str(pred_res_path.resolve()))
+            # write the labels for the preprocessed image
+            pred_res_path = Path(apply_path) / f'prediction-{name}-{version}-preprocessed{cfg.file_suffix}'
+            sitk.WriteImage(sitk.Cast(predicted_label_img, sitk.sitkUInt8), str(pred_res_path.resolve()))
 
         return

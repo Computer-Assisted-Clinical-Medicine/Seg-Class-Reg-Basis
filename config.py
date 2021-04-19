@@ -110,7 +110,7 @@ points = 3  # size of the grid (3x3 grid)
 
 ##### Testing #####
 write_probabilities = True
-
+write_intermediaries = False
 
 ##### Loss Setting #####
 
