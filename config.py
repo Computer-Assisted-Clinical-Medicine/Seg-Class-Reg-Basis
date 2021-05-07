@@ -92,21 +92,18 @@ label_background_value = 0 #labels to this
 percent_of_object_samples = 50 #how many samples should contain the objects (in percent of samples_per_volume)
 samples_per_volume = 80
 
-add_noise = True
-noise_typ = NOISETYP.GAUSSIAN
+add_noise = False
+noise_typ = NOISETYP.GAUSSIAN # TODO: add rician noise
 standard_deviation = 0.025
 mean_poisson = 30 # relative to full scale
 
-max_rotation = 0.07  # the maximum amount of rotation that is allowed rotation will be between -pi*max_rotation and pi*max_rotation
+max_rotation = 0.0  # the maximum amount of rotation that is allowed rotation will be between -pi*max_rotation and pi*max_rotation
 # resolution is augmented by a factor between min_resolution_augment and max_resolution_augment
 # the values can be scalars or lists, if a list is used, then all axes are scaled individually 
-min_resolution_augment = 0.98
-max_resolution_augment = 1.02
+min_resolution_augment = 1
+max_resolution_augment = 1
 
-do_deform = False # TODO: implement with random spline field
-deform_sigma = 10  # standard deviation of the normal distribution
-points = 3  # size of the grid (3x3 grid)
-
+# TODO: implement with random spline field
 
 ##### Testing #####
 write_probabilities = True
