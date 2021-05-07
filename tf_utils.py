@@ -71,9 +71,10 @@ class Custom_TB_Callback(tf.keras.callbacks.TensorBoard):
         All other arguments will be passed on to tf.keras.callbacks.TensorBoard.
     """
 
-    def __init__(self, log_dir, visualization_dataset=None, **kwargs):
+    def __init__(self, log_dir, visualization_dataset=None, write_grads=True, **kwargs):
         super().__init__(log_dir=log_dir, **kwargs)
         self.visualization_dataset = visualization_dataset
+        self.write_grads = write_grads
 
     def on_epoch_end(self, epoch, logs):
         super().on_epoch_end(epoch, logs=logs)
@@ -81,6 +82,25 @@ class Custom_TB_Callback(tf.keras.callbacks.TensorBoard):
             # write learning rate
             with tf.name_scope('learning_rate'):
                 tf.summary.scalar(f'learning_rate', self.model.optimizer.learning_rate, step=epoch)
+            # write gradients
+            if self.write_grads:
+                if self.visualization_dataset is None:
+                    raise ValueError('Visualization Dataset should be provided for gradients.')
+                # record gradients
+                with tf.GradientTape() as g:
+                    # get sample
+                    for sample in self.visualization_dataset.take(2):
+                        x, y = sample
+                        # predict it
+                        probabilities = self.model(x)
+                    # get the loss
+                    loss = self.model.compiled_loss(y_true=y, y_pred=probabilities)
+                    # do backpropagation
+                    gradients = g.gradient(loss, self.model.trainable_weights)
+                    # write gradients
+                    for weights, grads in zip(self.model.trainable_weights, gradients):
+                        tf.summary.histogram(
+                            weights.name.replace(':', '_') + '_grads', data=grads, step=epoch)
             # only write on every 5th epoch
             if epoch %5 != 0:
                 return
