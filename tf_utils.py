@@ -89,10 +89,10 @@ class Custom_TB_Callback(tf.keras.callbacks.TensorBoard):
                 # record gradients
                 with tf.GradientTape() as g:
                     # get sample
-                    for sample in self.visualization_dataset.take(2):
-                        x, y = sample
-                        # predict it
-                        probabilities = self.model(x)
+                    sample = list(self.visualization_dataset.take(1))[0]
+                    x, y = sample
+                    # predict it
+                    probabilities = self.model(x)
                     # get the loss
                     loss = self.model.compiled_loss(y_true=y, y_pred=probabilities)
                     # do backpropagation
