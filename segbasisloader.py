@@ -523,7 +523,7 @@ class SegBasisLoader(DataLoader):
 
         # get the background origins (get twice as many, in case they contain labels)
         # This is faster than drawing again each time
-        background_shape = back(3*n_background, 3)
+        background_shape = (3*n_background, 3)
         origins_background = np.random.randint(low=min_index, high=max_index, size=background_shape)
 
         # get the foreground center
