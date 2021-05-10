@@ -89,8 +89,10 @@ label_background_value = 0 #labels to this
 
 
 ###### Sample Mining #####
-percent_of_object_samples = 50 #how many samples should contain the objects (in percent of samples_per_volume)
-samples_per_volume = 80
+percent_of_object_samples = 0.5 # how many samples should contain the objects (in percent of samples_per_volume)
+samples_per_volume = 80 # the number of sample per image
+background_label_percentage = 0.15 # the maximum fraction of labelled voxels allowed to still consider it a background patch
+# This can be used to avoid oversampling large tumors.
 
 add_noise = False
 noise_typ = NOISETYP.GAUSSIAN # TODO: add rician noise

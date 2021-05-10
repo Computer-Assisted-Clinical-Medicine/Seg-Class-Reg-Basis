@@ -63,7 +63,7 @@ class SegBasisLoader(DataLoader):
 
         # get the fraction of the samples that should contain the object
         if frac_obj == None:
-            self.frac_obj = cfg.percent_of_object_samples / 100
+            self.frac_obj = cfg.percent_of_object_samples
         else:
             self.frac_obj = frac_obj
 
@@ -156,7 +156,7 @@ class SegBasisLoader(DataLoader):
 
         return
 
-    def __call__(self, file_list, batch_size, n_epochs, read_threads):
+    def __call__(self, file_list, batch_size, n_epochs=50, read_threads=1):
         # call the normalization callbacks, but only in training
         if self.mode == self.MODES.TRAIN:
             for n in self.normalization_callbacks:
@@ -169,7 +169,6 @@ class SegBasisLoader(DataLoader):
         - n_channels
         - dtypes
         - dshapes
-        - slice_shift
 
         also derives:
         - data_rank
@@ -177,11 +176,12 @@ class SegBasisLoader(DataLoader):
 
         """
         self.n_channels = cfg.num_channels
+        self.n_seg = cfg.num_classes_seg
         if self.mode is self.MODES.TRAIN or self.mode is self.MODES.VALIDATE:
             self.dtypes = [cfg.dtype, cfg.dtype]
             self.dshapes = [np.array(cfg.train_input_shape), np.array(cfg.train_label_shape)]
             # use the same shape for image and labels
-            assert np.all(self.dshapes[0] == self.dshapes[1])
+            assert np.all(self.dshapes[0][:2] == self.dshapes[1][:2]), 'Sample and label shapes do not match.'
         else:
             raise ValueError(f'Not allowed mode {self.mode}')
 
@@ -516,8 +516,14 @@ class SegBasisLoader(DataLoader):
         max_index = data_padded.shape[:-1] - sample_shape 
         assert np.all(min_index <= max_index), 'image to small to get patches'
 
-        # get the background origins
-        background_shape = (n_background, 3)
+        # create the arrays to store the samples
+        batch_shape = (n_foreground+n_background,) + tuple(sample_shape)
+        samples = np.zeros(batch_shape + (self.n_channels,), dtype=cfg.dtype_np)
+        labels = np.zeros(batch_shape, dtype=np.uint8)
+
+        # get the background origins (get twice as many, in case they contain labels)
+        # This is faster than drawing again each time
+        background_shape = back(3*n_background, 3)
         origins_background = np.random.randint(low=min_index, high=max_index, size=background_shape)
 
         # get the foreground center
@@ -530,16 +536,29 @@ class SegBasisLoader(DataLoader):
 
         # extract patches (pad if necessary), in separate function, do augmentation beforehand or with patches
         origins = np.concatenate([origins_foreground, origins_background])
-        batch_shape = (n_foreground+n_background,) + tuple(sample_shape)
-        samples = np.zeros(batch_shape + (self.n_channels,), dtype=cfg.dtype_np)
-        labels = np.zeros(batch_shape, dtype=np.uint8)
-        for num, (i,j,k) in enumerate(origins):
+        # count the samples
+        num = 0
+        for i,j,k in origins:
             sample_patch = data_padded[i:i+sample_shape[0],j:j+sample_shape[1],k:k+sample_shape[2]]
             label_patch = label_padded[i:i+sample_shape[0],j:j+sample_shape[1],k:k+sample_shape[2]]
-            samples[num] = sample_patch
-            labels[num] = label_patch
-            # if num < n_foreground: # only for debugging
-            #     assert np.sum(label_patch) > 0
+            if num < n_foreground:
+                samples[num] = sample_patch
+                labels[num] = label_patch
+                num += 1
+            # only use patches with not too many labels
+            elif label_patch.mean() < cfg.background_label_percentage:
+                samples[num] = sample_patch
+                labels[num] = label_patch
+                num += 1
+            # stop if there are enough samples
+            if num >= self.samples_per_volume:
+                break
+
+        if num < self.samples_per_volume:
+            raise ValueError(
+                f'Could only find {num} samples, probably not enough background, consider not using ratio sampling ' +
+                'or increasing the background_label_percentage (especially for 3D).'
+            )
 
         if self.mode == self.MODES.APPLY:
             raise NotImplementedError('Use the original data loader')
@@ -554,7 +573,9 @@ class SegBasisLoader(DataLoader):
         # augment and convert to one_hot_label
         if self.mode is not self.MODES.APPLY:
             # augment
-            labels_onehot = np.squeeze(np.eye(cfg.num_classes_seg)[labels.flat]).reshape(labels.shape + (-1,))
+            labels_onehot = np.squeeze(np.eye(self.n_seg)[labels.flat]).reshape(labels.shape + (-1,))
+
+        logger.debug(f'Sample shape: {samples.shape}, Label_shape: {labels_onehot.shape}')
 
         return samples, labels_onehot
 

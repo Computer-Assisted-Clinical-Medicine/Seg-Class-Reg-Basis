@@ -2,8 +2,6 @@ import logging
 
 import numpy as np
 import tensorflow as tf
-from tensorflow.python.eager import backprop
-from tensorflow.python.keras.engine import data_adapter
 
 from . import config as cfg
 from .NetworkBasis import block, layer
