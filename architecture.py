@@ -12,6 +12,9 @@ logger = logging.getLogger(__name__)
 
 
 class CustomKerasModel(tf.keras.models.Model):
+    '''
+    This can be used to customize the training loop or the other training steps.
+    '''
     def __init__(self, **kwargs):
         super(CustomKerasModel, self).__init__(**kwargs)
 

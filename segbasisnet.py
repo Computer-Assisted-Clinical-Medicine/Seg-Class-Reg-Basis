@@ -415,6 +415,9 @@ class SegBasisNet(Network):
 
         image_data = application_dataset(filename)
 
+        # clear session
+        tf.keras.backend.clear_session()
+
         # if 2D, run each layer as a batch, this should probably not run out of memory
         if self.options['rank'] == 2:
             predictions = []

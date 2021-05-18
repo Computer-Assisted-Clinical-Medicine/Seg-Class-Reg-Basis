@@ -855,7 +855,7 @@ class ApplyBasisLoader(SegBasisLoader):
             The output without padding
         """
         padding = self.last_padding
-        assert data.shape==self.last_shape, 'data shape does not match the padding'
+        assert data.shape[:3]==self.last_shape[:3], 'data shape does not match the padding'
 
         if self.data_rank == 3:
             assert padding.shape == (4, 2)
