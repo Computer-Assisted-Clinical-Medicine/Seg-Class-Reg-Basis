@@ -413,7 +413,11 @@ class SegBasisNet(Network):
         if not os.path.exists(apply_path):
             os.makedirs(apply_path)
 
+        logger.debug(f'Load the image.')
+
         image_data = application_dataset(filename)
+
+        logger.debug(f'Starting to apply the image.')
 
         # if 2D, run each layer as a batch, this should probably not run out of memory
         if self.options['rank'] == 2:
@@ -423,6 +427,7 @@ class SegBasisNet(Network):
                 predictions.append(p)
             # concatenate
             probability_map = np.concatenate(predictions)
+            logger.debug(f'Applied in 2D using the original size of each slice.')
         # otherwise, just run it
         else:
             try:
@@ -479,6 +484,8 @@ class SegBasisNet(Network):
                 for x in image_data_patches:
                     probability_patches.append(self.model(x, training=False))
                 probability_map = application_dataset.stitch_patches(probability_patches)
+            else:
+                logger.debug(f'Applied using the original size of the image.')
 
         # remove padding
         probability_map = application_dataset.remove_padding(probability_map)
@@ -496,6 +503,8 @@ class SegBasisNet(Network):
         predicted_label_img = sitk.GetImageFromArray(predicted_labels)
         # copy info
         predicted_label_img.CopyInformation(orig_processed)
+
+        logger.debug(f'Predicted labels were calculated.')
 
         # get the original image
         original_image = application_dataset.get_original_image(filename)
@@ -526,5 +535,7 @@ class SegBasisNet(Network):
             # write the labels for the preprocessed image
             pred_res_path = Path(apply_path) / f'prediction-{name}-{version}-preprocessed{cfg.file_suffix}'
             sitk.WriteImage(sitk.Cast(predicted_label_img, sitk.sitkUInt8), str(pred_res_path.resolve()))
+
+        logger.debug(f'Images were exported.')
 
         return
