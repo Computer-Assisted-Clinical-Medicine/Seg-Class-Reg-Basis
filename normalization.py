@@ -1,13 +1,27 @@
+'''
+Different methods to normalize the input images
+'''
+from enum import Enum
 import os
 from typing import Callable, List
 
 import numpy as np
 import SimpleITK as sitk
-import tensorflow as tf
 from scipy.interpolate import interp1d
 
+class NORMALIZING(Enum):
+    '''The different normalization types
+    '''
+    WINDOW = 0
+    MEAN_STD = 1
+    QUANTILE = 2
+    HISTOGRAM_MATCHING = 3
+    Z_SCORE = 4
+    HM_QUANTILE = 5
+    HM_QUANT_MEAN = 6
 
-def normalie_channelwise(image:np.array, func:Callable, *args, **kwargs):
+
+def normalie_channelwise(image:np.ndarray, func:Callable, *args, **kwargs):
     """Normalize an image channelwise. All arguments besides image and func are
     passed onto the normalization function.
 
@@ -38,7 +52,7 @@ def normalie_channelwise(image:np.array, func:Callable, *args, **kwargs):
         # otherwise, normalie the whole image
         return func(image, *args, **kwargs)
 
-def clip_outliers(image:np.array, lower_q:float, upper_q:float)->np.array:
+def clip_outliers(image:np.ndarray, lower_q:float, upper_q:float):
     """Clip the outliers above and below a certain quantile.
 
     Parameters
@@ -62,7 +76,7 @@ def clip_outliers(image:np.array, lower_q:float, upper_q:float)->np.array:
     # clip
     return np.clip(image, a_min=a_min, a_max=a_max)
 
-def window(image:np.array, lower:float, upper:float)->np.array:
+def window(image:np.ndarray, lower:float, upper:float):
     """Normalize the image by a window. The image is clipped to the lower and
     upper value and then scaled to a range between -1 and 1.
 
@@ -89,7 +103,7 @@ def window(image:np.array, lower:float, upper:float)->np.array:
 
     return image_normed
 
-def quantile(image:np.array, lower_q:float, upper_q:float)->np.array:
+def quantile(image:np.ndarray, lower_q:float, upper_q:float)->np.ndarray:
     """Normalize the image by quantiles. The image is clipped to the lower and
     upper quantiles of the image and then scaled to a range between -1 and 1.
 
@@ -117,7 +131,7 @@ def quantile(image:np.array, lower_q:float, upper_q:float)->np.array:
 
     return window(image, a_min, a_max)
 
-def mean_std(image:np.array)->np.array:
+def mean_std(image:np.ndarray)->np.ndarray:
     """Subtract the mean from image and the divide it by the standard deviation
     generating a value similar to the Z-Score.
 
@@ -138,7 +152,7 @@ def mean_std(image:np.array)->np.array:
 
     return image_normed
 
-def get_landmarks(img, percs):
+def get_landmarks(img:np.ndarray, percs:np.ndarray)->np.ndarray:
     """
     get the landmarks for the Nyul and Udupa norm method for a specific image
 
@@ -179,16 +193,16 @@ def landmark_and_mean_extraction(landmark_file, images:List[sitk.Image],
         extraction, by default None
     """
     # initialize the scale
-    standard_scale = []
-    means = []
-    stds = []
+    standard_scale_list = []
+    means_list = []
+    stds_list = []
     for image in images:
         # get data
         img_data = sitk.GetArrayFromImage(image)
         # iterate over channels
         landmarks = []
-        m = []
-        s = []
+        current_mean = []
+        current_std = []
         for i in range(img_data.shape[3]):
             # extract the channel and clip the outliers
             image_mod = clip_outliers(img_data[:,:,:,i], percs[0], percs[-1])
@@ -202,17 +216,17 @@ def landmark_and_mean_extraction(landmark_file, images:List[sitk.Image],
             # get landmarks
             landmarks.append(get_landmarks(masked, percs))
             # get mean
-            m.append(image_mod.mean())
+            current_mean.append(image_mod.mean())
             # get std
-            s.append(image_mod.std())
+            current_std.append(image_mod.std())
 
         # gather landmarks for standard scale
-        standard_scale.append(landmarks)
-        means.append(m)
-        stds.append(s)
-    standard_scale = np.array(standard_scale)
-    means = np.array(means)
-    stds = np.array(stds)
+        standard_scale_list.append(landmarks)
+        means_list.append(current_mean)
+        stds_list.append(current_std)
+    standard_scale = np.array(standard_scale_list)
+    means = np.array(means_list)
+    stds = np.array(stds_list)
     np.savez(
         landmark_file,
         percs=percs,
@@ -226,7 +240,7 @@ def landmark_and_mean_extraction(landmark_file, images:List[sitk.Image],
     )
     return
 
-def histogram_matching_apply(landmark_file, image:np.array, norm_func=None, subtract_mean=False)->np.array:
+def histogram_matching_apply(landmark_file, image:np.ndarray, norm_func=None, subtract_mean=False)->np.ndarray:
     """Apply the histogram matching to an image
 
     Parameters
@@ -266,7 +280,8 @@ def histogram_matching_apply(landmark_file, image:np.array, norm_func=None, subt
 
         # redefine standard scale
         if subtract_mean:
-            standard_scale = 2*(standard_scale - standard_scale[standard_scale.size//2]) / (standard_scale[-1] - standard_scale[0])
+            standard_range = (standard_scale[-1] - standard_scale[0])
+            standard_scale = 2 * (standard_scale - standard_scale[standard_scale.size//2]) / standard_range
 
         # get the clipped image
         image_clipped = clip_outliers(image[:,:,:,i], percs[0], percs[-1])
@@ -295,7 +310,7 @@ def histogram_matching_apply(landmark_file, image:np.array, norm_func=None, subt
     assert (np.abs(image_normed).max() < 1e3), 'Voxel values over 1000 detected'
     return image_normed
 
-def z_score(landmark_file, image:np.array)->np.array:
+def z_score(landmark_file, image:np.ndarray)->np.ndarray:
     """Apply the z_score normalization to an image. This means the mean of all
     images will be subtracted and then the values will be divided by the 
     standard deviation.

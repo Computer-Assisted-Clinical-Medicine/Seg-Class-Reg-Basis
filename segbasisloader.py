@@ -1,3 +1,6 @@
+'''This model can be used to load images into tensorflow. The segbasisloader
+will augment the images while the apply loader can be used to pass whole images.
+'''
 import logging
 import os
 from enum import Enum
@@ -10,24 +13,16 @@ from . import config as cfg
 from . import normalization
 from .NetworkBasis import image
 from .NetworkBasis.dataloader import DataLoader
+from .normalization import NORMALIZING
 
 #configure logger
 logger = logging.getLogger(__name__)
 
 # define enums
-
-class NORMALIZING(Enum):
-    WINDOW = 0
-    MEAN_STD = 1
-    QUANTILE = 2
-    HISTOGRAM_MATCHING = 3
-    Z_SCORE = 4
-    HM_QUANTILE = 5
-    HM_QUANT_MEAN = 6
-
-
 class NOISETYP(Enum):
-    GAUSSIAN =0
+    '''The different noise types
+    '''
+    GAUSSIAN = 0
     POISSON = 1
 
 class SegBasisLoader(DataLoader):
@@ -55,20 +50,21 @@ class SegBasisLoader(DataLoader):
     samples_per_volume : int, optional:
         The number of samples that should be taken from one volume per epoch.
     """
-    def __init__(self, mode=None, seed=42, name='reader', frac_obj=None, samples_per_volume=None, normalizing_method=None, do_resampling=None):
+    def __init__(self, mode=None, seed=42, name='reader', frac_obj=None,
+        samples_per_volume=None, normalizing_method=None, do_resampling=None):
         super().__init__(mode=mode, seed=seed, name=name)
 
         # use caching
         self.use_caching = True
 
         # get the fraction of the samples that should contain the object
-        if frac_obj == None:
+        if frac_obj is None:
             self.frac_obj = cfg.percent_of_object_samples
         else:
             self.frac_obj = frac_obj
 
         # set the samples per volume
-        if samples_per_volume == None:
+        if samples_per_volume is None:
             self.samples_per_volume = cfg.samples_per_volume
         else:
             self.samples_per_volume = samples_per_volume
@@ -110,7 +106,9 @@ class SegBasisLoader(DataLoader):
         elif self.normalizing_method == NORMALIZING.HISTOGRAM_MATCHING:
             # set file to export the landmarks to
             self.landmark_file = os.path.join(self._get_preprocessing_folder(), 'landmarks.npz')
-            self.normalization_func = lambda img: normalization.histogram_matching_apply(self.landmark_file, img, None, True)
+            self.normalization_func = lambda img: normalization.histogram_matching_apply(
+                self.landmark_file, img, None, True
+            )
             if not os.path.exists(self.landmark_file):
                 self.normalization_callbacks.append(lambda x: normalization.landmark_and_mean_extraction(
                     self.landmark_file, x
@@ -132,7 +130,9 @@ class SegBasisLoader(DataLoader):
             )
             # set file to export the landmarks to
             self.landmark_file = os.path.join(self._get_preprocessing_folder(), 'landmarks.npz')
-            self.normalization_func = lambda img: normalization.histogram_matching_apply(self.landmark_file, img, n_func, False)
+            self.normalization_func = lambda img: normalization.histogram_matching_apply(
+                self.landmark_file, img, n_func, False
+            )
             if not os.path.exists(self.landmark_file):
                 self.normalization_callbacks.append(lambda x: normalization.landmark_and_mean_extraction(
                     self.landmark_file, x, norm_func=n_func
@@ -146,7 +146,9 @@ class SegBasisLoader(DataLoader):
             )
             # set file to export the landmarks to
             self.landmark_file = os.path.join(self._get_preprocessing_folder(), 'landmarks.npz')
-            self.normalization_func = lambda img: normalization.histogram_matching_apply(self.landmark_file, img, n_func, True)
+            self.normalization_func = lambda img: normalization.histogram_matching_apply(
+                self.landmark_file, img, n_func, True
+            )
             if not os.path.exists(self.landmark_file):
                 self.normalization_callbacks.append(lambda x: normalization.landmark_and_mean_extraction(
                     self.landmark_file, x, norm_func=n_func
@@ -159,8 +161,8 @@ class SegBasisLoader(DataLoader):
     def __call__(self, file_list, batch_size, n_epochs=50, read_threads=1):
         # call the normalization callbacks, but only in training
         if self.mode == self.MODES.TRAIN:
-            for n in self.normalization_callbacks:
-                n([sitk.ReadImage(self._get_filenames(f)[0]) for f in file_list])
+            for n_call in self.normalization_callbacks:
+                n_call([sitk.ReadImage(self._get_filenames(f)[0]) for f in file_list])
         return super().__call__(file_list, batch_size, n_epochs=n_epochs, read_threads=read_threads)
 
     def _set_up_shapes_and_types(self):
@@ -211,8 +213,8 @@ class SegBasisLoader(DataLoader):
         [type]
             [description]
         """
-        s, _, l, _ = self._get_filenames_cached(file_id)
-        return s, l
+        sample, _, label, _ = self._get_filenames_cached(file_id)
+        return sample, label
 
     def _get_preprocessing_folder(self):
         # set preprocessing folder name
@@ -283,7 +285,7 @@ class SegBasisLoader(DataLoader):
         """
 
         # convert to string if necessary
-        if type(file_name) == bytes:
+        if isinstance(file_name, bytes):
             file_id = str(file_name, 'utf-8')
         else:
             file_id = str(file_name)
@@ -319,9 +321,9 @@ class SegBasisLoader(DataLoader):
             assert np.all(data < 1e6), 'Input values over were 1 000 000 found.'
             try:
                 data = self.normalize(data)
-            except AssertionError as e:
-                tf.print(f'There was the error {e} when processing {data_file}.')
-                raise e
+            except AssertionError as exc:
+                tf.print(f'There was the error {exc} when processing {data_file}.')
+                raise exc
             if load_labels:
                 lbl = sitk.GetArrayFromImage(label_img)
             else:
@@ -341,7 +343,24 @@ class SegBasisLoader(DataLoader):
 
         return data, lbl
 
-    def _check_images(self, data:np.array, lbl:np.array):
+    def adapt_to_task(self, data_img:sitk.Image, label_img:sitk.Image):
+        """This function can be used to adapt the images to the task at hand.
+
+        Parameters
+        ----------
+        data_img : sitk.Image
+            The image
+        label_img : sitk.Image
+            The labels
+
+        Returns
+        -------
+        sitk.Image, sitk.Image
+            The adapted image and labels
+        """
+        return data_img, label_img
+
+    def _check_images(self, data:np.ndarray, lbl:np.ndarray):
         """Check the images for problems
 
         Parameters
@@ -351,14 +370,14 @@ class SegBasisLoader(DataLoader):
         lbl : np.array
             Numpy array containing the labels
         """
-        assert np.any(np.isnan(data)) == False, 'Nans in the image'
-        assert np.any(np.isnan(lbl)) == False, 'Nans in the labels'
+        assert np.any(np.isnan(data)) is False, 'Nans in the image'
+        assert np.any(np.isnan(lbl)) is False, 'Nans in the labels'
         assert np.sum(lbl) > 100, 'Not enough labels in the image'
         logger.debug('          Checking Labels (min, max) %s %s:', np.min(lbl), np.max(lbl))
         logger.debug('          Shapes (Data, Label): %s %s', data.shape, lbl.shape)
 
 
-    def normalize(self, img:np.array)->np.array:
+    def normalize(self, img:np.ndarray)->np.ndarray:
         """Normaize an image. The specified normalization method is used.
 
         Parameters
@@ -403,9 +422,12 @@ class SegBasisLoader(DataLoader):
         data_info = image.get_data_info(data)
         # assure that the images are similar
         if label is not None:
-            assert np.allclose(data_info['orig_direction'], label.GetDirection(), atol=0.01), 'label and image do not have the same direction'
-            assert np.allclose(data_info['orig_origin'], label.GetOrigin(), atol=0.01), 'label and image do not have the same origin'
-            assert np.allclose(data_info['orig_spacing'], label.GetSpacing(), atol=0.01), 'label and image do not have the same spacing'
+            assert np.allclose(data_info['orig_direction'], label.GetDirection(), atol=0.01), (
+                'label and image do not have the same direction')
+            assert np.allclose(data_info['orig_origin'], label.GetOrigin(), atol=0.01), (
+                'label and image do not have the same origin')
+            assert np.allclose(data_info['orig_spacing'], label.GetSpacing(), atol=0.01), (
+                'label and image do not have the same spacing')
 
         target_info = {}
         target_info['target_spacing'] = cfg.target_spacing
@@ -531,8 +553,8 @@ class SegBasisLoader(DataLoader):
         indices = np.random.randint(low=0, high=valid_centers.shape[0], size=n_foreground)
         origins_foreground = valid_centers[indices] + max_padding - sample_shape // 2
         # check that they are below the maximum amount of padding
-        for i, m in enumerate(max_index):
-            origins_foreground[:,i] = np.clip(origins_foreground[:,i], 0, m)
+        for i, m_index in enumerate(max_index):
+            origins_foreground[:,i] = np.clip(origins_foreground[:,i], 0, m_index)
 
         # extract patches (pad if necessary), in separate function, do augmentation beforehand or with patches
         origins = np.concatenate([origins_foreground, origins_background])
@@ -575,12 +597,12 @@ class SegBasisLoader(DataLoader):
             # augment
             labels_onehot = np.squeeze(np.eye(self.n_seg)[labels.flat]).reshape(labels.shape + (-1,))
 
-        logger.debug(f'Sample shape: {samples.shape}, Label_shape: {labels_onehot.shape}')
+        logger.debug('Sample shape: %s, Label_shape: %s', str(samples.shape), str(labels_onehot.shape))
 
         return samples, labels_onehot
 
 
-    def _augment_numpy(self, I, L):
+    def _augment_numpy(self, img:np.ndarray, lbl:np.ndarray):
         '''!
         samplewise data augmentation
 
@@ -593,20 +615,20 @@ class SegBasisLoader(DataLoader):
 
         if cfg.add_noise and self.mode is self.MODES.TRAIN:
             if cfg.noise_typ == NOISETYP.GAUSSIAN:
-                gaussian = np.random.normal(0, cfg.standard_deviation, I.shape)
-                logger.debug(f'Minimum Gauss{gaussian.min():.3f}:')
-                logger.debug(f'Maximum Gauss {gaussian.max():.3f}:')
-                I = I + gaussian
+                gaussian = np.random.normal(0, cfg.standard_deviation, img.shape)
+                logger.debug('Minimum Gauss %.3f:', gaussian.min())
+                logger.debug('Maximum Gauss %.3f:', gaussian.max())
+                img = img + gaussian
 
             elif cfg.noise_typ == NOISETYP.POISSON:
-                poisson = np.random.poisson(cfg.mean_poisson, I.shape)
+                poisson = np.random.poisson(cfg.mean_poisson, img.shape)
                 # scale according to the values
                 poisson = poisson * -cfg.mean_poisson/(cfg.norm_max_v - cfg.norm_min_v)
-                logger.debug(f'Minimum Poisson {poisson.min():.3f}:')
-                logger.debug(f'Maximum Poisson {poisson.max():.3f}:')
-                I = I + poisson
+                logger.debug('Minimum Poisson %.3f:', poisson.min())
+                logger.debug('Maximum Poisson %.3f:', poisson.max())
+                img = img + poisson
 
-        return I, L
+        return img, lbl
 
     def _augment_images(self, data:sitk.Image, label:sitk.Image):
         """Augment images using sitk. Right now, rotations and scale changes are
@@ -678,6 +700,20 @@ class ApplyBasisLoader(SegBasisLoader):
         self.use_caching = False
         self.label = False
 
+        # remember shapes
+        self.dshapes = None
+        self.rank = None
+
+        # remember the last file
+        self.last_file = None
+        self.last_file_name = None
+        self.last_indices = None
+        self.last_stride = None
+        self.last_window_shape = None
+        self.last_overlap = None
+        self.last_shape = None
+        self.last_padding = None
+
     # if called with filename, just return the padded test sample
     def __call__(self, filename, *args, **kwargs):
         """Returns the padded  and preprocessed test sample
@@ -732,15 +768,15 @@ class ApplyBasisLoader(SegBasisLoader):
 
         return [data, None]
 
-    def _load_file(self, file_name):
+    def _load_file(self, file_name, load_labels=True):
         # convert to string if necessary
-        if type(file_name) == bytes:
+        if isinstance(file_name, bytes):
             file_name = str(file_name, 'utf-8')
         else:
             file_name = str(file_name)
 
         # see if there is a saved file
-        if hasattr(self, 'last_file'):
+        if self.last_file is not None:
             # if the file name is the same
             if self.last_file_name == file_name:
                 return self.last_file, None
@@ -793,7 +829,7 @@ class ApplyBasisLoader(SegBasisLoader):
         data, _ = self._load_file(filename)
         return self._get_samples_from_volume(data)[0]
 
-    def get_padded_test_sample(self, filename, min_padding=None)->np.array:
+    def get_padded_test_sample(self, filename, min_padding=None)->np.ndarray:
         """Get an image, preprocess and pad it
 
         Parameters
@@ -815,7 +851,7 @@ class ApplyBasisLoader(SegBasisLoader):
         # do not pad the batch axis (z for the 2D case) and the last axis (channels)
         min_dim = 1
 
-        if min_padding == None:
+        if min_padding is None:
             # make sure to round up
             min_p = (np.min(self.training_shape[:-1])+1) // 2
         else:
@@ -827,10 +863,10 @@ class ApplyBasisLoader(SegBasisLoader):
                 pad_with[num] = min_p + 8 - ((size // 2 + min_p) % 8)
             else:
                 # and make sure have of the final size is divisible by 16
-                p = min_p + 8 - (((size + 1) // 2 + min_p) % 8)
+                pad = min_p + 8 - (((size + 1) // 2 + min_p) % 8)
                 # pad asymmetrical
-                pad_with[num, 0] = p + 1
-                pad_with[num, 1] = p            
+                pad_with[num, 0] = pad + 1
+                pad_with[num, 1] = pad            
         
         # pad the data (using 0s)
         data_padded = np.pad(data, pad_with)
@@ -841,7 +877,7 @@ class ApplyBasisLoader(SegBasisLoader):
 
         return data_padded
 
-    def remove_padding(self, data:np.array):
+    def remove_padding(self, data:np.ndarray):
         """Remove the padding, shape has to be the same as the test image.
 
         Parameters
@@ -872,12 +908,12 @@ class ApplyBasisLoader(SegBasisLoader):
 
         return data
 
-    def get_windowed_test_sample(self, image, window_shape, overlap=None):
+    def get_windowed_test_sample(self, img, window_shape, overlap=None):
         """If images are too big, this returns a padded, windowed view of the image
 
         Parameters
         ----------
-        image : np.array
+        img : np.array
             The padded, preprocessed image to window
         window_shape : something that can be turned into a numpy array
             The shape of the window to use with the extent of the window (z,y,x)
@@ -893,29 +929,30 @@ class ApplyBasisLoader(SegBasisLoader):
         """
 
         # get the overlap (this is derived from the training shape and used as padding between slices)
-        if overlap == None:
+        if overlap is None:
             overlap = (np.min(self.training_shape[:-1])-2) // 2
         self.last_overlap = overlap
 
         # remove the batch dimension
-        assert np.all(image.shape == self.last_shape), 'Shape does not match the last image'
-        image = image[0]
+        assert np.all(img.shape == self.last_shape), 'Shape does not match the last image'
+        img = img[0]
 
-        if type(window_shape)==int:
-            window_shape = (window_shape, image.shape[1], image.shape[2])
+        if isinstance(window_shape, int):
+            window_shape = (window_shape, img.shape[1], img.shape[2])
         window_shape = np.array(window_shape)
         assert len(window_shape) == 3, 'Size should have three entries'
 
         # the window should be smaller than the image
-        window_shape = np.min([window_shape, image.shape[:3]], axis=0)
+        window_shape = np.min([window_shape, img.shape[:3]], axis=0)
         
         # and larger than the training shape
-        assert np.all(window_shape >= self.training_shape[:3]), f'The window_shape should be bigger than the training shape {self.training_shape[:3]}'
+        assert np.all(window_shape >= self.training_shape[:3]), ('The window_shape should be bigger ' 
+            + f'than the training shape {self.training_shape[:3]}')
 
         # calculate the stride
         stride = np.zeros(3, dtype=int)
         for i in range(3):
-            if window_shape[i] < image.shape[i]:
+            if window_shape[i] < img.shape[i]:
                 # the stride uses two times the overlap, because it is needed for both patches
                 stride[i] = window_shape[i] - overlap*2
             else:
@@ -923,7 +960,7 @@ class ApplyBasisLoader(SegBasisLoader):
                 stride[i] = 1
 
         # add channel dimension to the window shape
-        window_shape_with_ch = np.concatenate([window_shape, [image.shape[3]]])
+        window_shape_with_ch = np.concatenate([window_shape, [img.shape[3]]])
 
         # remember window shape
         self.last_window_shape = window_shape
@@ -934,7 +971,9 @@ class ApplyBasisLoader(SegBasisLoader):
         # and the original dimensions are trimmed as required by the size of the sliding window. 
         # That is, view.shape = x_shape_trimmed + window_shape, where x_shape_trimmed is x.shape 
         # with every entry reduced by one less than the corresponding window size.
-        sliding_view = np.lib.stride_tricks.sliding_window_view(image, window_shape_with_ch, axis=(0,1,2,3), writeable=False)
+        sliding_view = np.lib.stride_tricks.sliding_window_view(
+            img, window_shape_with_ch, axis=(0,1,2,3), writeable=False
+        )
         
         # for the indices, use one more step than there would be in the windowed image
         max_indices = np.zeros(3, dtype=int)
@@ -965,7 +1004,20 @@ class ApplyBasisLoader(SegBasisLoader):
 
         return patches
 
-    def stitch_patches(self, patches):
+    def stitch_patches(self, patches)->np.ndarray:
+        """Stitch the patches together to get one image.
+
+        Parameters
+        ----------
+        patches : list
+            List of patches to stitch in the same order as from the
+            get_windowed_test_sample function.
+
+        Returns
+        -------
+        np.ndarray
+            The stitched image
+        """
         patches = np.array(patches)
         assert len(patches.shape) == 6, 'dimensions should be 6'
         assert patches.shape[0] == self.last_indices.shape[0], 'wrong number of patches'
@@ -976,15 +1028,15 @@ class ApplyBasisLoader(SegBasisLoader):
 
         # use the shape of the last image, except the number of channels, which is replaced by the number of classes
         stitched_image = np.zeros(self.last_shape[:-1] + (patches.shape[-1],))
-        ov = self.last_overlap
+        ovl = self.last_overlap
         for num, indices in enumerate(self.last_indices):
             stitched_image[
                 :, # batch stays the same
-                indices[0]+ov:indices[0]-ov+self.last_window_shape[0],
-                indices[1]+ov:indices[1]-ov+self.last_window_shape[1],
-                indices[2]+ov:indices[2]-ov+self.last_window_shape[2],
+                indices[0]+ovl:indices[0]-ovl+self.last_window_shape[0],
+                indices[1]+ovl:indices[1]-ovl+self.last_window_shape[1],
+                indices[2]+ovl:indices[2]-ovl+self.last_window_shape[2],
                 : # channel stay the same
-            ] = patches[num,:,ov:-ov,ov:-ov,ov:-ov,:]
+            ] = patches[num,:,ovl:-ovl,ovl:-ovl,ovl:-ovl,:] # pylint: disable=invalid-unary-operand-type
         return stitched_image
 
     def get_original_image(self, filename):

@@ -1,3 +1,5 @@
+'''This module just contains the SegBasisNet.
+'''
 import logging
 import os
 from pathlib import Path
@@ -7,10 +9,10 @@ import SimpleITK as sitk
 import tensorflow as tf
 from tensorboard.plugins.hparams import api as hp
 
-from SegmentationNetworkBasis import tf_utils
-from SegmentationNetworkBasis.NetworkBasis import loss
-from SegmentationNetworkBasis.NetworkBasis.metric import Dice
-from SegmentationNetworkBasis.NetworkBasis.network import Network
+from . import tf_utils
+from .NetworkBasis import loss
+from .NetworkBasis.metric import Dice
+from .NetworkBasis.network import Network
 
 from . import config as cfg
 
@@ -19,6 +21,8 @@ logger = logging.getLogger(__name__)
 
 
 class SegBasisNet(Network):
+    """Basic network to perform segmentation.
+    """
     def __init__(self, loss, is_training=True, do_finetune=False, model_path="",
                  n_filters=[8, 16, 32, 64, 128], kernel_dims=3, n_convolutions=[2, 3, 2], drop_out=[False, 0.2],
                  regularize=[True, 'L2', 0.00001], do_batch_normalization=False, do_bias=True,
@@ -28,7 +32,6 @@ class SegBasisNet(Network):
         # set tensorflow mixed precision policy #TODO: update for tf version 2.4
         policy = tf.keras.mixed_precision.experimental.Policy('mixed_float16')
         tf.keras.mixed_precision.experimental.set_policy(policy)
-
 
         self.inputs = {}
         self.outputs = {}
@@ -64,7 +67,7 @@ class SegBasisNet(Network):
             if self.options['upscale'] == 'UNPOOL_MAX_IND':
                 self.variables['unpool_params'] = []
                 self.options['downscale'] = 'MAX_POOL_ARGMAX'
-                if not downscale == 'MAX_POOL_ARGMAX':
+                if downscale != 'MAX_POOL_ARGMAX':
                     logger.warning("Caution: changed downscale to MAX_POOL_ARGMAX!")
             else:
                 self.options['downscale'] = downscale
@@ -73,8 +76,8 @@ class SegBasisNet(Network):
             self.options['padding'] = 'SAME'
             # if training build everything according to parameters
             self.options['in_channels'] = self.inputs['x'].shape.as_list()[-1]
-            # self.options['out_channels'] is set elsewhere, but required
-            self.options['rank'] = len(self.inputs['x'].shape) - 2  # input number of dimensions (without channels and batch size)
+            # rank is the input number of dimensions (without channels and batch size)
+            self.options['rank'] = len(self.inputs['x'].shape) - 2
             self.options['use_cross_hair'] = cross_hair
             if self.options['rank'] == 2 and self.options['use_cross_hair']:
                 logger.warning("Caution: cross_hair is ignored for 2D input!")
@@ -96,9 +99,14 @@ class SegBasisNet(Network):
             self.options['loss'] = loss
             self.outputs['loss'] = self._get_loss()
 
-        #write other kwags to options
+        #write other kwargs to options
         for key, value in kwargs.items():
             self.options[key] = value
+
+        # window size when applying the network
+        self.window_size = None
+
+        return
 
     def _set_up_inputs(self):
         """setup the inputs. Inputs are taken from the config file.
@@ -156,10 +164,10 @@ class SegBasisNet(Network):
             return loss.equalized_categorical_cross_entropy_with_fnr
 
         elif self.options['loss'] == 'WCEL-FPR':
-                return loss.weighted_categorical_crossentropy_with_fpr_loss
+            return loss.weighted_categorical_crossentropy_with_fpr_loss
 
         elif self.options['loss'] == 'GCEL':
-                return loss.generalized_categorical_cross_entropy
+            return loss.generalized_categorical_cross_entropy
 
         elif self.options['loss'] == 'CEL+DICE':
             return loss.categorical_cross_entropy_and_dice_loss
@@ -180,8 +188,8 @@ class SegBasisNet(Network):
                              self.options['out_channels'], 'output channels.')
 
     def _run_train(self, logs_path, folder_name, training_dataset, validation_dataset, epochs,
-                   l_r=0.001, optimizer='Adam', early_stopping=False, patience_es=10, reduce_lr_on_plateau=False, patience_lr_plat=5, factor_lr_plat=0.5,
-                   visualization_dataset=None, write_graph=True, **kwargs):
+                   l_r=0.001, optimizer='Adam', early_stopping=False, patience_es=10, reduce_lr_on_plateau=False,
+                   patience_lr_plat=5, factor_lr_plat=0.5, visualization_dataset=None, write_graph=True, **kwargs):
         """Run the training using the keras.Model.fit interface with a lot of callbacks.
 
         Parameters
@@ -250,7 +258,7 @@ class SegBasisNet(Network):
             model_dir.mkdir()
 
         # to save the best model
-        cp_best_callback = tf_utils.Keep_Best_Model(
+        cp_best_callback = tf_utils.KeepBestModel(
             filepath=model_dir / 'weights_best_{epoch:03d}-best{val_dice:1.3f}.hdf5',
             save_weights_only=True,
             verbose=0,
@@ -293,7 +301,7 @@ class SegBasisNet(Network):
             callbacks.append(lr_reduce_callback)
 
         # for tensorboard
-        tb_callback = tf_utils.Custom_TB_Callback(
+        tb_callback = tf_utils.CustomTBCallback(
             output_path / 'logs',
             update_freq='epoch',
             profile_batch=(2, 12),
@@ -350,7 +358,7 @@ class SegBasisNet(Network):
 
         self.variables['epoch'] = 'final'
 
-        if self.options['is_training'] == False:
+        if self.options['is_training'] is False:
             self.model.trainable = False
         self.options['rank'] = len(self.model.inputs[0].shape) - 2
         self.options['in_channels'] = self.model.inputs[0].shape.as_list()[-1]
@@ -376,13 +384,17 @@ class SegBasisNet(Network):
             'dilation_rate_first' : self.options['dilation_rate'][0]
         }
         if self.options['regularize']:
-            if type(self.options['regularizer']) == tf.python.keras.regularizers.L2:
+            if isinstance(self.options['regularizer'], tf.python.keras.regularizers.L2):
                 hyperparameters['L2'] = self.options['regularizer'].get_config()['l2']
         # add filters
         for i, f in enumerate(self.options['n_filters']):
             hyperparameters[f'n_filters_{i}'] = f
-        for o in ['use_bias', 'loss', 'name', 'batch_normalization', 'activation', 'use_cross_hair', 'res_connect', 'regularize', 'use_bias', 'skip_connect', 'n_blocks']:
-            hyperparameters[o] = self.options[o]
+        for opt in [
+            'use_bias', 'loss', 'name', 'batch_normalization', 'activation',
+            'use_cross_hair', 'res_connect', 'regularize', 'use_bias',
+            'skip_connect', 'n_blocks'
+        ]:
+            hyperparameters[opt] = self.options[opt]
         # check the types
         for key, value in hyperparameters.items():
             if type(value) in [list, tuple]:
@@ -413,34 +425,34 @@ class SegBasisNet(Network):
         if not os.path.exists(apply_path):
             os.makedirs(apply_path)
 
-        logger.debug(f'Load the image.')
+        logger.debug('Load the image.')
 
         image_data = application_dataset(filename)
 
         # clear session
         tf.keras.backend.clear_session()
 
-        logger.debug(f'Starting to apply the image.')
+        logger.debug('Starting to apply the image.')
 
         # if 2D, run each layer as a batch, this should probably not run out of memory
         if self.options['rank'] == 2:
             predictions = []
             for x in np.expand_dims(image_data, axis=1):
-                p = self.model(x, training=False)
-                predictions.append(p)
+                pred = self.model(x, training=False)
+                predictions.append(pred)
             # concatenate
             probability_map = np.concatenate(predictions)
-            logger.debug(f'Applied in 2D using the original size of each slice.')
+            logger.debug('Applied in 2D using the original size of each slice.')
         # otherwise, just run it
         else:
             try:
                 # if the window size exists, trigger the exception
-                if hasattr(self, 'window_size'):
+                if self.window_size is not None:
                     raise tf.errors.ResourceExhaustedError(None, None, 'trigger exception')
                 probability_map = self.model(image_data, training=False)
             except tf.errors.ResourceExhaustedError:
                 # try to reduce the patch size to a size that works
-                if not hasattr(self, 'window_size'):
+                if self.window_size is None:
                     # initial size is the image size
                     self.window_size = np.array(image_data.shape[1:4])
                     # try to find the best patch size (do not use more than 10 steps)
@@ -463,7 +475,7 @@ class SegBasisNet(Network):
                             test_data = np.random.rand(*test_data_shape)
                             self.model(test_data, training=False)
                         except tf.errors.ResourceExhaustedError:
-                            logger.debug(f'Applying failed for window size {self.window_size} in step {i}.')
+                            logger.debug('Applying failed for window size %s in step %i.', self.window_size, i)
                         else:
                             # if it works, break the cycle and reduce once more to be sure
                             # reduce the window size
@@ -488,7 +500,7 @@ class SegBasisNet(Network):
                     probability_patches.append(self.model(x, training=False))
                 probability_map = application_dataset.stitch_patches(probability_patches)
             else:
-                logger.debug(f'Applied using the original size of the image.')
+                logger.debug('Applied using the original size of the image.')
 
         # remove padding
         probability_map = application_dataset.remove_padding(probability_map)
@@ -507,7 +519,7 @@ class SegBasisNet(Network):
         # copy info
         predicted_label_img.CopyInformation(orig_processed)
 
-        logger.debug(f'Predicted labels were calculated.')
+        logger.debug('Predicted labels were calculated.')
 
         # get the original image
         original_image = application_dataset.get_original_image(filename)
@@ -539,6 +551,6 @@ class SegBasisNet(Network):
             pred_res_path = Path(apply_path) / f'prediction-{name}-{version}-preprocessed{cfg.file_suffix}'
             sitk.WriteImage(sitk.Cast(predicted_label_img, sitk.sitkUInt8), str(pred_res_path.resolve()))
 
-        logger.debug(f'Images were exported.')
+        logger.debug('Images were exported.')
 
         return

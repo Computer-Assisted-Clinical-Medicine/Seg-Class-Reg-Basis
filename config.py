@@ -8,8 +8,9 @@ import numpy as np
 import SimpleITK as sitk
 import tensorflow as tf
 
-from .segbasisloader import NOISETYP, NORMALIZING
+from .normalization import NORMALIZING
 
+# pylint: disable=invalid-name
 
 ##### Names and Paths #####
 
@@ -91,15 +92,15 @@ label_background_value = 0 #labels to this
 ###### Sample Mining #####
 percent_of_object_samples = 0.5 # how many samples should contain the objects (in percent of samples_per_volume)
 samples_per_volume = 80 # the number of sample per image
-background_label_percentage = 0.15 # the maximum fraction of labelled voxels allowed to still consider it a background patch
+background_label_percentage = 0.15 # the maximum fraction of labelled voxels allowed in a background patch
 # This can be used to avoid oversampling large tumors.
 
 add_noise = False
-noise_typ = NOISETYP.GAUSSIAN # TODO: add rician noise
+noise_typ = None # TODO: add rician noise
 standard_deviation = 0.025
 mean_poisson = 30 # relative to full scale
 
-max_rotation = 0.0  # the maximum amount of rotation that is allowed rotation will be between -pi*max_rotation and pi*max_rotation
+max_rotation = 0.0  # the maximum amount of rotation that is allowed (between 0 and 1)
 # resolution is augmented by a factor between min_resolution_augment and max_resolution_augment
 # the values can be scalars or lists, if a list is used, then all axes are scaled individually 
 min_resolution_augment = 1
@@ -119,3 +120,6 @@ tissue_factor = 5
 contour_factor = 2
 max_weight = 1.2
 tissue_threshold = -0.9
+
+##### Other variables #####
+num_files = None # TODO: remove from config

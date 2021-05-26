@@ -1,3 +1,5 @@
+'''Collection of architecures that can be used for segmentation
+'''
 import logging
 
 import numpy as np
@@ -11,12 +13,13 @@ from .segbasisnet import SegBasisNet
 logger = logging.getLogger(__name__)
 
 
-class CustomKerasModel(tf.keras.models.Model):
-    '''
-    This can be used to customize the training loop or the other training steps.
-    '''
-    def __init__(self, **kwargs):
-        super(CustomKerasModel, self).__init__(**kwargs)
+CustomKerasModel = tf.keras.models.Model
+# class CustomKerasModel(tf.keras.models.Model):
+#     '''
+#     This can be used to customize the training loop or the other training steps.
+#     '''
+#     def __init__(self, **kwargs):
+#         super(CustomKerasModel, self).__init__(**kwargs)
 
 
 class UNet(SegBasisNet):
@@ -47,7 +50,7 @@ class UNet(SegBasisNet):
                  regularize=[True, 'L2', 0.00001], do_batch_normalization=False, do_bias=True,
                  activation='relu', upscale='TRANS_CONV', downscale='MAX_POOL', res_connect=False, skip_connect=True,
                  cross_hair=False, **kwargs):
-            super(UNet, self).__init__(loss, is_training, do_finetune, model_path,
+        super(UNet, self).__init__(loss, is_training, do_finetune, model_path,
                  n_filters, kernel_dims, n_convolutions, drop_out,
                  regularize, do_batch_normalization, do_bias,
                  activation, upscale, downscale, res_connect, skip_connect, cross_hair, **kwargs)
@@ -70,7 +73,7 @@ class UNet(SegBasisNet):
 
         x = self.inputs['x']
 
-        assert x.shape[1] % 16 == 0, 'N_Slices has to be divisible by 16, otherwise the downsampling fails (4*downsampling by half)'
+        assert x.shape[1] % 16 == 0, 'N_Slices has to be divisible by 16, otherwise the downsampling fails'
 
         # Encoding
         for block_index in range(0, 2):
@@ -141,9 +144,14 @@ class UNet(SegBasisNet):
 
         # Add final 1x1 convolutional layer to compute logits
         with tf.name_scope('9_last_layer' + str(cfg.num_classes_seg)):
-            self.outputs['probabilities'] = layer.last(x, self.outputs, np.ones(self.options['rank'], dtype=np.int32), self.options['out_channels'], self.options['strides'],
-                                                self.options['padding'], self.options['dilation_rate'],
-                                                self._select_final_activation(), False, self.options['regularizer'], self.options['use_cross_hair'], do_summary=True)
+            self.outputs['probabilities'] = layer.last(
+                x, self.outputs, np.ones(self.options['rank'], dtype=np.int32),
+                self.options['out_channels'], self.options['strides'],
+                self.options['padding'], self.options['dilation_rate'],
+                self._select_final_activation(), False,
+                self.options['regularizer'], self.options['use_cross_hair'],
+                do_summary=True
+            )
             logger.debug(' Probabilities have shape %s', self.outputs['probabilities'].shape)
 
         return CustomKerasModel(inputs=self.inputs['x'], outputs=self.outputs['probabilities'])
@@ -177,7 +185,7 @@ class DVN(SegBasisNet):
                  regularize=[True, 'L2', 0.00001], do_batch_normalization=False, do_bias=True,
                  activation='tanh', upscale=None, downscale=None, res_connect=False, skip_connect=False,
                  cross_hair=True, **kwargs):
-            super(DVN, self).__init__(loss, is_training, do_finetune, model_path,
+        super(DVN, self).__init__(loss, is_training, do_finetune, model_path,
                                       n_filters, kernel_dims, n_convolutions, drop_out,
                                       regularize, do_batch_normalization, do_bias,
                                       activation, upscale, downscale, res_connect, skip_connect, cross_hair, **kwargs)
@@ -256,7 +264,7 @@ class VNet(SegBasisNet):
                  regularize=[True, 'L2', 0.00001], do_batch_normalization=True, do_bias=False,
                  activation='leaky_relu', upscale='TRANS_CONV', downscale='STRIDE', res_connect=True, skip_connect=True,
                  cross_hair=False, **kwargs):
-            super(VNet, self).__init__(loss, is_training, do_finetune, model_path,
+        super(VNet, self).__init__(loss, is_training, do_finetune, model_path,
                  n_filters, kernel_dims, n_convolutions, drop_out,
                  regularize, do_batch_normalization, do_bias,
                  activation, upscale, downscale, res_connect, skip_connect, cross_hair, **kwargs)
@@ -279,7 +287,7 @@ class VNet(SegBasisNet):
 
         x = self.inputs['x']
 
-        assert x.shape[1] % 16 == 0, 'N_Slices has to be divisible by 16, otherwise the downsampling fails (4*downsampling by half)'
+        assert x.shape[1] % 16 == 0, 'N_Slices has to be divisible by 16, otherwise the downsampling fails'
 
         if self.options['in_channels'] == 1:
             x = tf.tile(x, [1, 1, 1, 1, self.options['n_filters_per_block'][0]])
@@ -396,36 +404,18 @@ class VNet(SegBasisNet):
 
         # Add final 1x1 convolutional layer to compute logits
         with tf.name_scope('9_last_layer'+ str(cfg.num_classes_seg)):
-            self.outputs['probabilities'] = layer.last(x, self.outputs, np.ones(self.options['rank'], dtype=np.int32), self.options['out_channels'], self.options['strides'],
-                                                self.options['padding'], self.options['dilation_rate'],
-                                                self._select_final_activation(), False, self.options['regularizer'], self.options['use_cross_hair'], do_summary=True)
+            self.outputs['probabilities'] = layer.last(
+                x, self.outputs, np.ones(self.options['rank'], dtype=np.int32),
+                self.options['out_channels'], self.options['strides'],
+                self.options['padding'], self.options['dilation_rate'],
+                self._select_final_activation(), False,
+                self.options['regularizer'], self.options['use_cross_hair'],
+                do_summary=True
+            )
 
             logger.debug(' Probabilities have shape %s', self.outputs['probabilities'].shape)
 
         return CustomKerasModel(inputs=self.inputs['x'], outputs=self.outputs['probabilities'])
-
-
-class CombiNet(SegBasisNet):
-    '''!
-    Dummy Class
-    '''
-
-    def __init__(self, loss, is_training=True, do_finetune=False, model_path="",
-                 n_filters=[1], kernel_dims=5, n_convolutions=[1], drop_out=[True, 0.2],
-                 regularize=[True, 'L2', 0.00001], do_batch_normalization=True, do_bias=False,
-                 activation='relu', upscale='TRANS_CONV', downscale='STRIDE', res_connect=False, skip_connect=False,
-                 cross_hair=False):
-            super(CombiNet, self).__init__(loss, is_training, do_finetune, model_path,
-                 n_filters, kernel_dims, n_convolutions, drop_out,
-                 regularize, do_batch_normalization, do_bias,
-                 activation, upscale, downscale, res_connect, skip_connect, cross_hair)
-
-    @staticmethod
-    def get_name():
-        return 'Combined'
-
-    def _build_model(self):
-        pass
 
 
 class ResNet(SegBasisNet):
@@ -455,7 +445,7 @@ class ResNet(SegBasisNet):
                  regularize=[True, 'L2', 0.00001], do_batch_normalization=False, do_bias=True,
                  activation='relu', upscale='TRANS_CONV', downscale='MAX_POOL', res_connect=True, skip_connect=False,
                  cross_hair=False, **kwargs):
-            super(ResNet, self).__init__(loss, is_training, do_finetune, model_path,
+        super(ResNet, self).__init__(loss, is_training, do_finetune, model_path,
                  n_filters, kernel_dims, n_convolutions, drop_out,
                  regularize, do_batch_normalization, do_bias,
                  activation, upscale, downscale, res_connect, skip_connect, cross_hair, **kwargs)

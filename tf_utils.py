@@ -7,7 +7,7 @@ from pathlib import Path
 import tensorflow as tf
 from . import config as cfg
 
-class Keep_Best_Model(tf.keras.callbacks.ModelCheckpoint):
+class KeepBestModel(tf.keras.callbacks.ModelCheckpoint):
     """This extends the tf.keras.callbacks.ModelCheckpoint class to delete the
     worst model once more than max_keep models are saved. This can help to 
     reduce the amount of storage needed for the training.
@@ -29,7 +29,7 @@ class Keep_Best_Model(tf.keras.callbacks.ModelCheckpoint):
         self.max_keep=max_keep
         self._best_checkpoints = {}
 
-    def on_epoch_end(self, epoch, logs):
+    def on_epoch_end(self, epoch, logs=None):
         super().on_epoch_end(epoch, logs=logs)
         filename = self._get_file_path(epoch, logs)
         # if the file was not saved, return
@@ -55,7 +55,7 @@ class Keep_Best_Model(tf.keras.callbacks.ModelCheckpoint):
                 Path(worst_checkpoint).unlink()
 
 
-class Custom_TB_Callback(tf.keras.callbacks.TensorBoard):
+class CustomTBCallback(tf.keras.callbacks.TensorBoard):
     """Extended TensorBoard callback, it will also always log the learning rate
     and write images of the segmentation if a visualization dataset is provided.
 
@@ -76,18 +76,18 @@ class Custom_TB_Callback(tf.keras.callbacks.TensorBoard):
         self.visualization_dataset = visualization_dataset
         self.write_grads = write_grads
 
-    def on_epoch_end(self, epoch, logs):
+    def on_epoch_end(self, epoch, logs=None):
         super().on_epoch_end(epoch, logs=logs)
         with self._train_writer.as_default():
             # write learning rate
             with tf.name_scope('learning_rate'):
-                tf.summary.scalar(f'learning_rate', self.model.optimizer.learning_rate, step=epoch)
+                tf.summary.scalar('learning_rate', self.model.optimizer.learning_rate, step=epoch)
             # write gradients
             if self.write_grads:
                 if self.visualization_dataset is None:
                     raise ValueError('Visualization Dataset should be provided for gradients.')
                 # record gradients
-                with tf.GradientTape() as g:
+                with tf.GradientTape() as grad:
                     # get sample
                     sample = list(self.visualization_dataset.take(1))[0]
                     x, y = sample
@@ -96,7 +96,7 @@ class Custom_TB_Callback(tf.keras.callbacks.TensorBoard):
                     # get the loss
                     loss = self.model.compiled_loss(y_true=y, y_pred=probabilities)
                     # do backpropagation
-                    gradients = g.gradient(loss, self.model.trainable_weights)
+                    gradients = grad.gradient(loss, self.model.trainable_weights)
                     # write gradients
                     for weights, grads in zip(self.model.trainable_weights, gradients):
                         tf.summary.histogram(
@@ -104,7 +104,7 @@ class Custom_TB_Callback(tf.keras.callbacks.TensorBoard):
             # only write on every 5th epoch
             if epoch %5 != 0:
                 return
-            if self.visualization_dataset != None:
+            if self.visualization_dataset is not None:
                 # take one sample from the visualization dataset
                 for sample in self.visualization_dataset.take(1):
                     x, y = sample
@@ -149,11 +149,11 @@ def write_images(x, y, probabilities, step):
             image_fc = convert_float_to_image(x)
             tf.summary.image('train_img', image_fc, step, max_image_output)
         else:
-            for c in range(in_channels):
-                image = convert_float_to_image(x[:, :, :, c])
-                if c == 0:
+            for cls in range(in_channels):
+                image = convert_float_to_image(x[:, :, :, cls])
+                if cls == 0:
                     image_fc = image
-                tf.summary.image('train_img_c'+str(c), image, step, max_image_output)
+                tf.summary.image('train_img_c'+str(cls), image, step, max_image_output)
 
         label = tf.expand_dims(tf.cast(tf.argmax(y, -1)
                 * (255 // (cfg.num_classes_seg - 1)), tf.uint8), axis=-1)
@@ -177,8 +177,8 @@ def write_images(x, y, probabilities, step):
 
     with tf.name_scope('03_Probabilities'):
         if dimension == 2:
-            for c in range(cfg.num_classes_seg):
-                tf.summary.image('train_seg_prob_' + str(c), tf.expand_dims(tf.cast(probabilities[:, :, :, c]
+            for cls in range(cfg.num_classes_seg):
+                tf.summary.image('train_seg_prob_' + str(cls), tf.expand_dims(tf.cast(probabilities[:, :, :, cls]
                     * 255, tf.uint8), axis=-1), step, max_image_output)
 
 
@@ -186,8 +186,8 @@ def write_images(x, y, probabilities, step):
         if cfg.num_classes_seg == 2:
             pass
         else:
-            for c in range(cfg.num_classes_seg):
-                tf.summary.image('train_seg_lbl' + str(c), tf.expand_dims(tf.cast(y[:, :, :, c]
+            for cls in range(cfg.num_classes_seg):
+                tf.summary.image('train_seg_lbl' + str(cls), tf.expand_dims(tf.cast(y[:, :, :, cls]
                     * 255, tf.uint8), axis=-1), step, max_image_output)
 
     return
