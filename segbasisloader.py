@@ -690,7 +690,7 @@ class ApplyBasisLoader(SegBasisLoader):
     name : str, optional
         The name, by default 'apply_loader'
     """
-    def __init__(self, mode=None, seed=42, name='apply_loader', **kwargs):
+    def __init__(self, mode=None, seed=42, name='apply_loader', divisible_by=16, **kwargs):
         if mode is None:
             mode = self.MODES.APPLY
         assert(mode == self.MODES.APPLY), 'Use this loader only to apply data to an image'
@@ -699,6 +699,10 @@ class ApplyBasisLoader(SegBasisLoader):
         # do not use caching when applying
         self.use_caching = False
         self.label = False
+
+        # have all sizes except the channel divisible by a certain number (needed for downsampling)
+        self.divisible_by = divisible_by
+        assert self.divisible_by % 2 == 0
 
         # remember shapes
         self.dshapes = None
@@ -857,13 +861,15 @@ class ApplyBasisLoader(SegBasisLoader):
         else:
             min_p = min_padding
 
+        # make sure the patches are divisible by a certain number
+        div_h = self.divisible_by // 2
         for num, size in zip(range(min_dim, 4), data.shape[min_dim:-1]):
             if size % 2 == 0:
-                # and make sure have of the final size is divisible by 16
-                pad_with[num] = min_p + 8 - ((size // 2 + min_p) % 8)
+                # and make sure have of the final size is divisible by divisible_by
+                pad_with[num] = min_p + div_h - ((size // 2 + min_p) % div_h)
             else:
-                # and make sure have of the final size is divisible by 16
-                pad = min_p + 8 - (((size + 1) // 2 + min_p) % 8)
+                # and make sure have of the final size is divisible by divisible_by
+                pad = min_p + div_h - (((size + 1) // 2 + min_p) % div_h)
                 # pad asymmetrical
                 pad_with[num, 0] = pad + 1
                 pad_with[num, 1] = pad            

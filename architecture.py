@@ -559,3 +559,341 @@ class ResNet(SegBasisNet):
             logger.debug(' Probabilities have shape %s', self.outputs['probabilities'].shape)
 
         return CustomKerasModel(inputs=self.inputs['x'], outputs=self.outputs['probabilities'])
+
+class DenseTiramisu(SegBasisNet):
+    '''
+    Implements the One Hundred Layers Tiramisu: Fully Convolutional DenseNets for Semantic Segmentation.
+    inspired by https://github.com/SimJeg/FC-DenseNet
+    '''
+
+    def __init__(self, loss, is_training=True, kernel_dims=3, growth_rate=16, layers_per_block=(4, 5, 7, 10, 12),
+        bottleneck_layers=15, drop_out=(True, 0.2), regularize=(True, 'L2', 0.001), do_batch_normalization=True,
+        do_bias=False, activation='relu', **kwargs):
+        """Initialize the 100 layers Tiramisu
+
+        Parameters
+        ----------
+        loss : str
+            the type of loss to use
+        is_training : bool, optional
+            if in training, by default True
+        kernel_dims : int, optional
+            the dimensions of the kernel (dimension is automatic), by default 3
+        growth_rate : int, optional
+            the growth rate in the dense blocks, by default 16
+        layers_per_block : tuple, optional
+            number of layers per block, by default (4, 5, 7, 10, 12) (from paper)
+        bottleneck_layers : int, optional
+            number of layers in the bottleneck, by default 15 (from paper)
+        drop_out : tuple, optional
+            if dropout should be used, by default (True, 0.2) (from paper)
+        regularize : tuple, optional
+            if there should be regularization, by default (True, 'L2', 0.001)
+        do_batch_normalization : bool, optional
+            has to be true for dense nets, by default True
+        do_bias : bool, optional
+            has to be false because batch norm, by default False
+        activation : str, optional
+            which activation should be used, by default 'relu'
+        """
+
+        if do_bias:
+            print('use no bias with this network, bias set to False')
+            do_bias = False
+        if not do_batch_normalization:
+            print('always uses batch norm, set to True')
+            do_batch_normalization = True
+
+        super().__init__(loss, is_training, kernel_dims=kernel_dims, growth_rate=growth_rate,
+            layers_per_block=layers_per_block, bottleneck_layers=bottleneck_layers, drop_out=drop_out,
+            regularize=regularize, do_bias=False, do_batch_normalization=True,
+            activation=activation, **kwargs)
+
+        # each block is followed by one pooling operation
+        self.divisible_by = 2**len(layers_per_block)
+
+    @staticmethod
+    def get_name():
+        return 'DenseTiramisu'
+
+    def conv_layer(self, x, filters:int, name:str):
+        """
+        Forms the atomic layer of the tiramisu, does three operation in sequence:
+        batch normalization -> Relu -> 2D/3D Convolution.
+
+        Parameters
+        ----------
+        x: Tensor
+            input feature map.
+        filters: int
+            indicating the number of filters in the output feat. map.
+        name: str
+            name of the layer
+
+        Returns
+        -------
+        Tensor
+            Result of applying batch norm -> Relu -> Convolution.
+        """
+
+        if self.options['rank'] == 2:
+            conv_layer_type = tf.keras.layers.Conv2D
+        elif self.options['rank'] == 3:
+            conv_layer_type = tf.keras.layers.Conv3D
+        else:
+            raise NotImplementedError('Rank should be 2 or 3')
+
+        bn_layer = tf.keras.layers.BatchNormalization(name=name + '/bn')
+        x = bn_layer(x)
+
+        activation_layer = tf.keras.layers.Activation(self.options['activation'], name=name + '/act')
+        x = activation_layer(x)
+
+        convolutional_layer = conv_layer_type(
+            filters=filters,
+            kernel_size=self.options['kernel_dims'],
+            strides=(1,)*self.options['rank'],
+            padding='same',
+            dilation_rate=(1,)*self.options['rank'],
+            activation=None,
+            use_bias=False,
+            kernel_regularizer=self.options['regularizer'],
+            name=name + f'/conv{self.options["rank"]}d'
+        )
+        x = convolutional_layer(x)
+
+        if self.options['drop_out'][0]:
+            dropout_layer = tf.keras.layers.Dropout(rate=self.options['drop_out'][1], name=name + '/dropout')
+            x = dropout_layer(x)
+
+        return x
+
+    def dense_block(self, x, n_layers:int, name:str):
+        """
+        Forms the dense block of the Tiramisu to calculate features at a specified growth rate.
+        Each conv layer in the dense block calculate self.options['growth_rate'] feature maps,
+        which are sequentially concatenated to build a larger final output.
+
+        Parameters
+        ----------
+        x: Tensor
+            input to the Dense Block.
+        n_layers: int
+            the number of layers in the block
+        name: str
+            name of the layer
+
+        Returns
+        -------
+        Tensor
+            the output of the dense block.
+        """
+
+        layer_outputs = []
+        for i in range(n_layers):
+            conv = self.conv_layer(x, self.options['growth_rate'], name=name + f'/conv{i}')
+            layer_outputs.append(conv)
+            if i != n_layers - 1:
+                concat_layer = tf.keras.layers.Concatenate(axis=self.options['concat_axis'], name=name + f'/concat{i}')
+                x = concat_layer([conv, x])
+
+        final_concat_layer = tf.keras.layers.Concatenate(axis=self.options['concat_axis'], name=name + '/concat_conv')
+        x = final_concat_layer(layer_outputs)
+        return x
+
+    def transition_down(self, x, filters:int, name:str):
+        """
+        Down-samples the input feature map by half using maxpooling.
+
+        Parameters
+        ----------
+        x: Tensor
+            input to downsample.
+        filters: int
+            number of output filters.
+        name: str
+            name of the layer
+
+        Returns
+        -------
+        Tensor
+            result of downsampling.
+        """
+
+        if self.options['rank'] == 2:
+            conv_layer_type = tf.keras.layers.Conv2D
+            maxpool_layer_type = tf.keras.layers.MaxPool2D
+        elif self.options['rank'] == 3:
+            conv_layer_type = tf.keras.layers.Conv3D
+            maxpool_layer_type = tf.keras.layers.MaxPool3D
+        else:
+            raise NotImplementedError('Rank should be 2 or 3')
+
+        bn_layer = tf.keras.layers.BatchNormalization(name=name + '/bn')
+        x = bn_layer(x)
+
+        activation_layer = tf.keras.layers.Activation(self.options['activation'], name=name + '/act')
+        x = activation_layer(x)
+
+        convolutional_layer = conv_layer_type(
+            filters=filters,
+            kernel_size=(1,)*self.options['rank'],
+            strides=(1,)*self.options['rank'],
+            padding='same',
+            dilation_rate=(1,)*self.options['rank'],
+            activation=None,
+            use_bias=False,
+            kernel_regularizer=self.options['regularizer'],
+            name=name + f'/conv{self.options["rank"]}d'
+        )
+        x = convolutional_layer(x)
+
+        if self.options['drop_out'][0]:
+            dropout_layer = tf.keras.layers.Dropout(rate=self.options['drop_out'][1], name=name + '/dropout')
+            x = dropout_layer(x)
+
+        pooling_layer = maxpool_layer_type(
+            pool_size=(2,)*self.options['rank'],
+            strides=(2,)*self.options['rank'],
+            name=name + f'/maxpool{self.options["rank"]}d'
+        )
+        x = pooling_layer(x)
+
+        return x
+
+    def transition_up(self, x, filters:int, name:str):
+        """
+        Up-samples the input feature maps using transpose convolutions.
+
+        Parameters
+        ----------
+        x: Tensor
+            input feature map to upsample.
+        filters: int
+            number of filters in the output.
+        name: str
+            name of the layer
+
+        Returns
+        -------
+        Tensor
+            result of up-sampling.
+        """
+
+        if self.options['rank'] == 2:
+            conv_transpose_layer_type = tf.keras.layers.Conv2DTranspose
+        elif self.options['rank'] == 3:
+            conv_transpose_layer_type = tf.keras.layers.Conv3DTranspose
+        else:
+            raise NotImplementedError('Rank should be 2 or 3')
+
+        conv_transpose_layer = conv_transpose_layer_type(
+            filters=filters,
+            kernel_size=self.options['kernel_dims'],
+            strides=(2,)*self.options['rank'],
+            padding='same',
+            use_bias=False,
+            kernel_regularizer=self.options['regularizer'],
+            name=name + '_trans_up'
+        )
+        x = conv_transpose_layer(x)
+
+        return x
+
+    def _build_model(self):
+        '''!
+        Builds DenseTiramisu
+
+        '''
+        # TODO: make 3D version
+        # TODO: parameters for pooling and dilations
+        self.options['name'] = 'DenseTiramisu'
+        self.options['n_blocks'] = len(self.options['layers_per_block'])
+        self.options['concat_axis'] = self.options['rank'] + 1
+        con_ax = self.options['concat_axis']
+        rank = self.options['rank']
+
+        if rank == 2:
+            conv_layer_type = tf.keras.layers.Conv2D
+        elif rank == 3:
+            conv_layer_type = tf.keras.layers.Conv3D
+        else:
+            raise NotImplementedError('Rank should be 2 or 3')
+
+        x = self.inputs['x']
+        logger.debug('Start model definition')
+        logger.debug('Input Shape: %s', x.get_shape())
+
+        concats = []
+
+        # encoder
+        first_layer = conv_layer_type(
+            filters=48,
+            kernel_size=self.options['kernel_dims'],
+            strides=(1,)*rank,
+            padding='same',
+            dilation_rate=(1,)*rank,
+            kernel_regularizer=self.options['regularizer'],
+            name=f'DT{rank}D-encoder/conv2d'
+        )
+        x = first_layer(x)
+        logger.debug('First Convolution Out: %s', x.get_shape())
+
+        for block_nb in range(0, self.options['n_blocks']):
+            dense = self.dense_block(
+                x,
+                self.options['layers_per_block'][block_nb], name=f'DT{rank}D-down_block{block_nb}'
+            )
+            concat_layer = tf.keras.layers.Concatenate(axis=con_ax, name=f'DT{rank}D-concat_output_down{block_nb-1}')
+            x = concat_layer([x, dense])
+            concats.append(x)
+            x = self.transition_down(x, x.get_shape()[-1], name=f'DT{rank}D-transition_down{block_nb}')
+            logger.debug('Downsample Out: %s', x.get_shape())
+            logger.debug('m=%i', x.get_shape()[-1])
+
+        x = self.dense_block(x, self.options['bottleneck_layers'], name=f'DT{rank}D-bottleneck')
+        logger.debug('Bottleneck Block: %s', x.get_shape())
+
+        # decoder
+        for i, block_nb in enumerate(range(self.options['n_blocks']-1, -1, -1)):
+            logger.debug('Block %i', i)
+            logger.debug('Block to upsample: %s', x.get_shape())
+            x = self.transition_up(x, x.get_shape()[-1], name=f'DT{rank}D-transition_up{i}')
+            logger.debug('Upsample out: %s', x.get_shape())
+            concat_layer = tf.keras.layers.Concatenate(axis=con_ax, name=f'DT{rank}D-concat_input{i}')
+            x_con = concat_layer([x, concats[len(concats) - i - 1]])
+            logger.debug('Skip connect: %s', concats[len(concats) - i - 1].get_shape())
+            logger.debug('Concat out: %s', x_con.get_shape())
+            x = self.dense_block(x_con, self.options['layers_per_block'][block_nb], name=f'DT{rank}D-up_block{i}')
+            logger.debug('Dense out: %s', x.get_shape())
+            logger.debug('m=%i', x.get_shape()[3] + x_con.get_shape()[3])
+
+        # concatenate the last dense block
+        concat_layer = tf.keras.layers.Concatenate(axis=con_ax, name=f'DT{rank}D-last_concat')
+        x = concat_layer([x, x_con])
+
+        logger.debug('Last layer in: %s', x.get_shape())
+
+        # prediction
+        last_layer = conv_layer_type(
+            filters=self.options['out_channels'],
+            kernel_size=(1,)*rank,
+            padding='same',
+            dilation_rate=(1,)*rank,
+            kernel_regularizer=self.options['regularizer'],
+            activation=None,
+            use_bias=False,
+            name=f'DT{rank}D-prediction/conv2d'
+        )
+        x = last_layer(x)
+
+        last_activation_layer = tf.keras.layers.Activation(
+            self._select_final_activation(),
+            name=f'DT{rank}D-prediction/act'
+        )
+        self.outputs['probabilities'] = last_activation_layer(x)
+        
+        logger.debug('Mask Prediction: %s', x.get_shape())
+        logger.debug('Finished model definition.')
+
+        return CustomKerasModel(inputs=self.inputs['x'], outputs=self.outputs['probabilities'])
