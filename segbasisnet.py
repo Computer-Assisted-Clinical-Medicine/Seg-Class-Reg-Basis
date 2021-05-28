@@ -104,6 +104,8 @@ class SegBasisNet(Network):
 
         # window size when applying the network
         self.window_size = None
+        # number each input dimension (besides rank) should be divisible by (to avoid problems in maxpool layer)
+        self.divisible_by = 16
 
         return
 
@@ -423,6 +425,9 @@ class SegBasisNet(Network):
 
         if not os.path.exists(apply_path):
             os.makedirs(apply_path)
+
+        # set the divisible by parameter
+        application_dataset.divisible_by = self.divisible_by
 
         logger.debug('Load the image.')
 

@@ -62,7 +62,7 @@ if num_dimensions == 2:
     train_input_shape = [train_dim, train_dim, num_channels]
     train_label_shape = [train_dim, train_dim, num_classes_seg]
 elif num_dimensions == 3:
-    num_slices_train = 16 # should be divisible by 16
+    num_slices_train = 16 # should be divisible by 16 for UNet
     train_input_shape = [num_slices_train, train_dim, train_dim, num_channels]
     train_label_shape = [num_slices_train, train_dim, train_dim, num_classes_seg]
 

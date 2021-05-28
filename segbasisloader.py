@@ -690,7 +690,7 @@ class ApplyBasisLoader(SegBasisLoader):
     name : str, optional
         The name, by default 'apply_loader'
     """
-    def __init__(self, mode=None, seed=42, name='apply_loader', **kwargs):
+    def __init__(self, mode=None, seed=42, name='apply_loader', divisible_by=16, **kwargs):
         if mode is None:
             mode = self.MODES.APPLY
         assert(mode == self.MODES.APPLY), 'Use this loader only to apply data to an image'
@@ -701,7 +701,7 @@ class ApplyBasisLoader(SegBasisLoader):
         self.label = False
 
         # have all sizes except the channel divisible by a certain number (needed for downsampling)
-        self.divisible_by = 32
+        self.divisible_by = divisible_by
         assert self.divisible_by % 2 == 0
 
         # remember shapes
