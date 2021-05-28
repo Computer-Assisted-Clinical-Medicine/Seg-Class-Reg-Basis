@@ -3,6 +3,7 @@
 Sets the parameters for configuration
 """
 import socket
+from typing import Any, Optional
 
 import numpy as np
 import SimpleITK as sitk
@@ -26,7 +27,7 @@ label_file_name_prefix = 'label-'
 #the suffix determines the format
 file_suffix = '.nrrd'
 # preprocessed_dir
-preprocessed_dir = 'preprocessed'
+preprocessed_dir : Any = None
 
 
 ##### Shapes and Capacities #####
@@ -122,4 +123,4 @@ max_weight = 1.2
 tissue_threshold = -0.9
 
 ##### Other variables #####
-num_files = None # TODO: remove from config
+num_files : Optional[int] = None # TODO: remove from config

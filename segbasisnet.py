@@ -50,6 +50,10 @@ class SegBasisNet(Network):
 
         self.options['model_path'] = model_path
 
+        #write other kwargs to options
+        for key, value in kwargs.items():
+            self.options[key] = value
+
         if self.options['is_training'] and not self.options['do_finetune']:
             self._set_up_inputs()
             self.options['n_filters'] = n_filters
@@ -88,7 +92,6 @@ class SegBasisNet(Network):
             if self.options['skip_connect']:
                 self.variables['feature_maps'] = []
 
-
             self.options['loss'] = loss
             self.outputs['loss'] = self._get_loss()
             self.model = self._build_model()
@@ -98,10 +101,6 @@ class SegBasisNet(Network):
             self._load_net()
             self.options['loss'] = loss
             self.outputs['loss'] = self._get_loss()
-
-        #write other kwargs to options
-        for key, value in kwargs.items():
-            self.options[key] = value
 
         # window size when applying the network
         self.window_size = None
@@ -384,7 +383,7 @@ class SegBasisNet(Network):
             'dilation_rate_first' : self.options['dilation_rate'][0]
         }
         if self.options['regularize']:
-            if isinstance(self.options['regularizer'], tf.python.keras.regularizers.L2):
+            if isinstance(self.options['regularizer'], tf.keras.regularizers.L2):
                 hyperparameters['L2'] = self.options['regularizer'].get_config()['l2']
         # add filters
         for i, f in enumerate(self.options['n_filters']):
