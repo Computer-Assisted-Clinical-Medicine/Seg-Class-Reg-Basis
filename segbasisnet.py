@@ -23,15 +23,15 @@ logger = logging.getLogger(__name__)
 class SegBasisNet(Network):
     """Basic network to perform segmentation.
     """
-    def __init__(self, loss, is_training=True, do_finetune=False, model_path="",
-                 n_filters=[8, 16, 32, 64, 128], kernel_dims=3, n_convolutions=[2, 3, 2], drop_out=[False, 0.2],
-                 regularize=[True, 'L2', 0.00001], do_batch_normalization=False, do_bias=True,
+    def __init__(self, loss_name, is_training=True, do_finetune=False, model_path="",
+                 n_filters=(8, 16, 32, 64, 128), kernel_dims=3, n_convolutions=(2, 3, 2), drop_out=(False, 0.2),
+                 regularize=(True, 'L2', 0.00001), do_batch_normalization=False, do_bias=True,
                  activation='relu', upscale='TRANS_CONV', downscale='MAX_POOL', res_connect=False, skip_connect=True,
                  cross_hair=False, **kwargs):
 
-        # set tensorflow mixed precision policy #TODO: update for tf version 2.4
-        policy = tf.keras.mixed_precision.experimental.Policy('mixed_float16')
-        tf.keras.mixed_precision.experimental.set_policy(policy)
+        # set tensorflow mixed precision policy (does not work together with gradient clipping)
+        # policy = tf.keras.mixed_precision.experimental.Policy('mixed_float16')
+        # tf.keras.mixed_precision.experimental.set_policy(policy)
 
         self.inputs = {}
         self.outputs = {}
@@ -92,14 +92,14 @@ class SegBasisNet(Network):
             if self.options['skip_connect']:
                 self.variables['feature_maps'] = []
 
-            self.options['loss'] = loss
+            self.options['loss'] = loss_name
             self.outputs['loss'] = self._get_loss()
             self.model = self._build_model()
             self.model._name = self.get_name()
         else:
             # for finetuning load net from file
             self._load_net()
-            self.options['loss'] = loss
+            self.options['loss'] = loss_name
             self.outputs['loss'] = self._get_loss()
 
         # window size when applying the network
@@ -188,6 +188,7 @@ class SegBasisNet(Network):
                              'is not a supported loss function or cannot combined with ',
                              self.options['out_channels'], 'output channels.')
 
+    # pylint: disable=arguments-differ
     def _run_train(self, logs_path, folder_name, training_dataset, validation_dataset, epochs,
                    l_r=0.001, optimizer='Adam', early_stopping=False, patience_es=10, reduce_lr_on_plateau=False,
                    patience_lr_plat=5, factor_lr_plat=0.5, visualization_dataset=None, write_graph=True, **kwargs):
@@ -235,7 +236,7 @@ class SegBasisNet(Network):
 
         # compile model
         self.model.compile(
-            optimizer=self._get_optimizer(optimizer, l_r, 0),
+            optimizer=self._get_optimizer(optimizer, l_r, 0, clipvalue=self.options['clipping_value']),
             loss=self.outputs['loss'],
             metrics=[
                 Dice(name='dice', num_classes=cfg.num_classes_seg),
@@ -345,8 +346,20 @@ class SegBasisNet(Network):
             callbacks=callbacks
         )
         print('Saving the final model.')
-        # save the model once (only weights are saved afterwards)
         self.model.save(model_dir / 'model-final', save_format='tf')
+        # save the best model
+        best_val = None
+        best_weights = None
+        for val, weights in cp_best_callback.best_checkpoints.items():
+            if best_val is None:
+                best_val = val
+                best_weights = weights
+            elif val > best_val:
+                best_val = val
+                best_weights = weights
+        self.model.load_weights(best_weights)
+        print('Saving the best model.')
+        self.model.save(model_dir / 'model-best', save_format='tf')
         print('Saving finished.')
 
     def _load_net(self):
@@ -357,7 +370,8 @@ class SegBasisNet(Network):
             custom_objects={'Dice' : Dice}
         )
 
-        self.variables['epoch'] = 'final'
+        epoch = Path(self.options['model_path']).name.split('-')[-1]
+        self.variables['epoch'] = epoch
 
         if self.options['is_training'] is False:
             self.model.trainable = False

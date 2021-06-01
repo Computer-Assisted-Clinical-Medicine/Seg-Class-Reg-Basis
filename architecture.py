@@ -46,8 +46,8 @@ class UNet(SegBasisNet):
     '''
 
     def __init__(self, loss, is_training=True, do_finetune=False, model_path="",
-                 n_filters=[8, 16, 32, 64, 128], kernel_dims=3, n_convolutions=[2, 3, 2], drop_out=[False, 0.2],
-                 regularize=[True, 'L2', 0.00001], do_batch_normalization=False, do_bias=True,
+                 n_filters=(8, 16, 32, 64, 128), kernel_dims=3, n_convolutions=(2, 3, 2), drop_out=(False, 0.2),
+                 regularize=(True, 'L2', 0.00001), do_batch_normalization=False, do_bias=True,
                  activation='relu', upscale='TRANS_CONV', downscale='MAX_POOL', res_connect=False, skip_connect=True,
                  cross_hair=False, **kwargs):
         super(UNet, self).__init__(loss, is_training, do_finetune, model_path,
@@ -84,7 +84,8 @@ class UNet(SegBasisNet):
                                    self.options['n_filters_per_block'][block_index], self.options['strides'],
                                    self.options['padding'], self.options['dilation_rate'],
                                    self.options['activation'], self.options['use_bias'],
-                                   self.options['batch_normalization'], self.options['drop_out'])
+                                   self.options['batch_normalization'], self.options['drop_out'],
+                                   name=f'UNet{self.options["rank"]}D-encode{block_index}')
                 # self.variables['feature_maps'].append(x) is performed in the encoding block
                 logger.debug(' Result is Tensor with shape %s', x.shape)
 
@@ -97,7 +98,8 @@ class UNet(SegBasisNet):
                                    self.options['n_filters_per_block'][block_index], self.options['strides'],
                                    self.options['padding'], self.options['dilation_rate'],
                                    self.options['activation'], self.options['use_bias'],
-                                   self.options['batch_normalization'], self.options['drop_out'])
+                                   self.options['batch_normalization'], self.options['drop_out'],
+                                   name=f'UNet{self.options["rank"]}D-encode{block_index}')
                 # self.variables['feature_maps'].append(x) is performed in the encoding block
                 logger.debug(' Result is Tensor with shape %s', x.shape)
 
@@ -111,7 +113,8 @@ class UNet(SegBasisNet):
                             self.options['n_filters_per_block'][block_index], self.options['strides'],
                             self.options['padding'], self.options['dilation_rate'],
                             self.options['activation'], self.options['use_bias'],
-                            self.options['batch_normalization'], self.options['drop_out'])
+                            self.options['batch_normalization'], self.options['drop_out'],
+                            name=f'UNet{self.options["rank"]}D-bottleneck')
             logger.debug(' Result is Tensor with shape %s', x.shape)
 
         # Decoding
@@ -125,7 +128,8 @@ class UNet(SegBasisNet):
                                    self.options['padding'], self.options['dilation_rate'],
                                    self.options['activation'], self.options['use_bias'],
                                    self.options['batch_normalization'], self.options['drop_out'],
-                                   self.variables['feature_maps'][self.options['n_blocks'] - block_index - 1])
+                                   self.variables['feature_maps'][self.options['n_blocks'] - block_index - 1],
+                                   name=f'UNet{self.options["rank"]}D-decode{block_index}')
                 logger.debug(' Result is Tensor with shape %s', x.shape)
 
         # Decoding
@@ -139,7 +143,8 @@ class UNet(SegBasisNet):
                                    self.options['padding'], self.options['dilation_rate'],
                                    self.options['activation'], self.options['use_bias'],
                                    self.options['batch_normalization'], self.options['drop_out'],
-                                   self.variables['feature_maps'][self.options['n_blocks'] - block_index - 1])
+                                   self.variables['feature_maps'][self.options['n_blocks'] - block_index - 1],
+                                   name=f'UNet{self.options["rank"]}D-decode{block_index}')
                 logger.debug(' Result is Tensor with shape %s', x.shape)
 
         # Add final 1x1 convolutional layer to compute logits
@@ -150,7 +155,7 @@ class UNet(SegBasisNet):
                 self.options['padding'], self.options['dilation_rate'],
                 self._select_final_activation(), False,
                 self.options['regularizer'], self.options['use_cross_hair'],
-                do_summary=True
+                do_summary=True, name=f'UNet{self.options["rank"]}D-last'
             )
             logger.debug(' Probabilities have shape %s', self.outputs['probabilities'].shape)
 
@@ -181,8 +186,8 @@ class DVN(SegBasisNet):
     '''
 
     def __init__(self, loss, is_training=True, do_finetune=False, model_path="",
-                 n_filters=[4, 8, 16, 32, 1], kernel_dims=[3, 5, 5, 3], n_convolutions=1, drop_out=[False, 0.2],
-                 regularize=[True, 'L2', 0.00001], do_batch_normalization=False, do_bias=True,
+                 n_filters=(4, 8, 16, 32, 1), kernel_dims=(3, 5, 5, 3), n_convolutions=1, drop_out=(False, 0.2),
+                 regularize=(True, 'L2', 0.00001), do_batch_normalization=False, do_bias=True,
                  activation='tanh', upscale=None, downscale=None, res_connect=False, skip_connect=False,
                  cross_hair=True, **kwargs):
         super(DVN, self).__init__(loss, is_training, do_finetune, model_path,
@@ -260,8 +265,8 @@ class VNet(SegBasisNet):
     '''
 
     def __init__(self, loss, is_training=True, do_finetune=False, model_path="",
-                 n_filters=[8, 16, 32, 64, 128], kernel_dims=5, n_convolutions=[1, 2, 3, 2, 1], drop_out=[True, 0.2],
-                 regularize=[True, 'L2', 0.00001], do_batch_normalization=True, do_bias=False,
+                 n_filters=(8, 16, 32, 64, 128), kernel_dims=5, n_convolutions=(1, 2, 3, 2, 1), drop_out=(True, 0.2),
+                 regularize=(True, 'L2', 0.00001), do_batch_normalization=True, do_bias=False,
                  activation='leaky_relu', upscale='TRANS_CONV', downscale='STRIDE', res_connect=True, skip_connect=True,
                  cross_hair=False, **kwargs):
         super(VNet, self).__init__(loss, is_training, do_finetune, model_path,
@@ -441,8 +446,8 @@ class ResNet(SegBasisNet):
         - 1x1 convolution.
     '''
     def __init__(self, loss, is_training=True, do_finetune=False, model_path="",
-                 n_filters=[64, 128, 256, 512, 1024], kernel_dims=3, n_convolutions=[2, 3, 2], drop_out=[False, 0.2],
-                 regularize=[True, 'L2', 0.00001], do_batch_normalization=False, do_bias=True,
+                 n_filters=(64, 128, 256, 512, 1024), kernel_dims=3, n_convolutions=(2, 3, 2), drop_out=(False, 0.2),
+                 regularize=(True, 'L2', 0.00001), do_batch_normalization=False, do_bias=True,
                  activation='relu', upscale='TRANS_CONV', downscale='MAX_POOL', res_connect=True, skip_connect=False,
                  cross_hair=False, **kwargs):
         super(ResNet, self).__init__(loss, is_training, do_finetune, model_path,
@@ -638,8 +643,10 @@ class DenseTiramisu(SegBasisNet):
 
         if self.options['rank'] == 2:
             conv_layer_type = tf.keras.layers.Conv2D
+            dropout_layer_type = tf.keras.layers.SpatialDropout2D
         elif self.options['rank'] == 3:
             conv_layer_type = tf.keras.layers.Conv3D
+            dropout_layer_type = tf.keras.layers.SpatialDropout3D
         else:
             raise NotImplementedError('Rank should be 2 or 3')
 
@@ -663,7 +670,7 @@ class DenseTiramisu(SegBasisNet):
         x = convolutional_layer(x)
 
         if self.options['drop_out'][0]:
-            dropout_layer = tf.keras.layers.Dropout(rate=self.options['drop_out'][1], name=name + '/dropout')
+            dropout_layer = dropout_layer_type(rate=self.options['drop_out'][1], name=name + '/dropout')
             x = dropout_layer(x)
 
         return x
@@ -723,9 +730,11 @@ class DenseTiramisu(SegBasisNet):
         if self.options['rank'] == 2:
             conv_layer_type = tf.keras.layers.Conv2D
             maxpool_layer_type = tf.keras.layers.MaxPool2D
+            dropout_layer_type = tf.keras.layers.SpatialDropout2D
         elif self.options['rank'] == 3:
             conv_layer_type = tf.keras.layers.Conv3D
             maxpool_layer_type = tf.keras.layers.MaxPool3D
+            dropout_layer_type = tf.keras.layers.SpatialDropout3D
         else:
             raise NotImplementedError('Rank should be 2 or 3')
 
@@ -749,7 +758,7 @@ class DenseTiramisu(SegBasisNet):
         x = convolutional_layer(x)
 
         if self.options['drop_out'][0]:
-            dropout_layer = tf.keras.layers.Dropout(rate=self.options['drop_out'][1], name=name + '/dropout')
+            dropout_layer = dropout_layer_type(rate=self.options['drop_out'][1], name=name + '/dropout')
             x = dropout_layer(x)
 
         pooling_layer = maxpool_layer_type(

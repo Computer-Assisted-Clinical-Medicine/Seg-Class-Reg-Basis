@@ -27,7 +27,7 @@ class KeepBestModel(tf.keras.callbacks.ModelCheckpoint):
         super().__init__(filepath, save_best_only=True, **kwargs)
         # maximum number of checkpoints to keep
         self.max_keep=max_keep
-        self._best_checkpoints = {}
+        self.best_checkpoints = {}
 
     def on_epoch_end(self, epoch, logs=None):
         super().on_epoch_end(epoch, logs=logs)
@@ -38,19 +38,19 @@ class KeepBestModel(tf.keras.callbacks.ModelCheckpoint):
         # get the value
         val = logs[self.monitor]
         # save it
-        self._best_checkpoints[val] = filename
+        self.best_checkpoints[val] = filename
         # see if there are more checkpoints than should be kept
-        if len(self._best_checkpoints) > self.max_keep:
+        if len(self.best_checkpoints) > self.max_keep:
             worst_value = None
             worst_checkpoint = None
             # iterate over all checkpoints
-            for chk_val, chk_file in self._best_checkpoints.items():
+            for chk_val, chk_file in self.best_checkpoints.items():
                 # remember the worst value
                 if worst_value is None or self.monitor_op(worst_value, chk_val):
                     worst_value = chk_val
                     worst_checkpoint = chk_file
             # remove from list
-            self._best_checkpoints.pop(worst_value)
+            self.best_checkpoints.pop(worst_value)
             if self.save_weights_only:
                 Path(worst_checkpoint).unlink()
 
