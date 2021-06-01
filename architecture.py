@@ -814,7 +814,6 @@ class DenseTiramisu(SegBasisNet):
         Builds DenseTiramisu
 
         '''
-        # TODO: make 3D version
         # TODO: parameters for pooling and dilations
         self.options['name'] = 'DenseTiramisu'
         self.options['n_blocks'] = len(self.options['layers_per_block'])
