@@ -310,6 +310,7 @@ class SegBasisLoader(DataLoader):
                 label_img = sitk.ReadImage(label_file)
             else:
                 label_img = None
+            assert not np.any(np.isnan(sitk.GetArrayFromImage(data_img))), f'Nans in the image after loading {data_file}'
             # adapt, resample and normalize them
             data_img, label_img = self.adapt_to_task(data_img, label_img)
             if self.do_resampling:
@@ -318,9 +319,11 @@ class SegBasisLoader(DataLoader):
                 else:
                     data_img = self._resample(data_img, label_img)
             data = sitk.GetArrayFromImage(data_img)
+            assert not np.any(np.isnan(data)), 'Nans in the image after converting to numpy'
             assert np.all(data < 1e6), 'Input values over were 1 000 000 found.'
             try:
                 data = self.normalize(data)
+                assert not np.any(np.isnan(data)), 'Nans in the image after normalization'
             except AssertionError as exc:
                 tf.print(f'There was the error {exc} when processing {data_file}.')
                 raise exc
@@ -370,8 +373,8 @@ class SegBasisLoader(DataLoader):
         lbl : np.array
             Numpy array containing the labels
         """
-        assert np.any(np.isnan(data)) is False, 'Nans in the image'
-        assert np.any(np.isnan(lbl)) is False, 'Nans in the labels'
+        assert not np.any(np.isnan(data)), 'Nans in the image in check'
+        assert not np.any(np.isnan(lbl)), 'Nans in the labels in check'
         assert np.sum(lbl) > 100, 'Not enough labels in the image'
         logger.debug('          Checking Labels (min, max) %s %s:', np.min(lbl), np.max(lbl))
         logger.debug('          Shapes (Data, Label): %s %s', data.shape, lbl.shape)

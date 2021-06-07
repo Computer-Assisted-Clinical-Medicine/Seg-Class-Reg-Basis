@@ -155,7 +155,7 @@ class UNet(SegBasisNet):
                 self.options['padding'], self.options['dilation_rate'],
                 self._select_final_activation(), False,
                 self.options['regularizer'], self.options['use_cross_hair'],
-                do_summary=True, name=f'UNet{self.options["rank"]}D-last'
+                do_summary=True, name=f'UNet{self.options["rank"]}D/last/Conn{self.options["rank"]}D'
             )
             logger.debug(' Probabilities have shape %s', self.outputs['probabilities'].shape)
 
