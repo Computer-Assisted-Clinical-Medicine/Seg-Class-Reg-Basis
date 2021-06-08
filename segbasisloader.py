@@ -162,7 +162,7 @@ class SegBasisLoader(DataLoader):
         # call the normalization callbacks, but only in training
         if self.mode == self.MODES.TRAIN:
             for n_call in self.normalization_callbacks:
-                n_call([sitk.ReadImage(self._get_filenames(f)[0]) for f in file_list])
+                n_call([sitk.ReadImage(self.get_filenames(f)[0]) for f in file_list])
         return super().__call__(file_list, batch_size, n_epochs=n_epochs, read_threads=read_threads)
 
     def _set_up_shapes_and_types(self):
@@ -200,7 +200,7 @@ class SegBasisLoader(DataLoader):
         elif self.mode is self.MODES.VALIDATE:
             self.sample_buffer_size = cfg.batch_capacity_train
 
-    def _get_filenames(self, file_id):
+    def get_filenames(self, file_id):
         """For compability reasons, get filenames without the preprocessed ones
 
         Parameters
@@ -310,7 +310,7 @@ class SegBasisLoader(DataLoader):
                 label_img = sitk.ReadImage(label_file)
             else:
                 label_img = None
-            assert not np.any(np.isnan(sitk.GetArrayFromImage(data_img))), f'Nans in the image after loading {data_file}'
+            assert not np.any(np.isnan(sitk.GetArrayFromImage(data_img))), f'Nans after loading {data_file}'
             # adapt, resample and normalize them
             data_img, label_img = self.adapt_to_task(data_img, label_img)
             if self.do_resampling:
@@ -812,7 +812,7 @@ class ApplyBasisLoader(SegBasisLoader):
         # if it does not exist, dataset conversion will be tried 
         else:
             # attemp to convert it
-            file_name_converted, _ = self._get_filenames(file_name)
+            file_name_converted, _ = self.get_filenames(file_name)
             # if that also does not work, raise error
             if not os.path.exists(file_name_converted):
                 raise FileNotFoundError(f'The test file {file_name} could not be found.')
@@ -1062,7 +1062,7 @@ class ApplyBasisLoader(SegBasisLoader):
         sitk.Image
             The original image
         """
-        img, _ = self._get_filenames(filename)
+        img, _ = self.get_filenames(filename)
         return sitk.ReadImage(img)
 
     def get_processed_image(self, filename):
