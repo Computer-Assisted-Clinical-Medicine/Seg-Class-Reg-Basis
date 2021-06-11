@@ -842,7 +842,7 @@ class DenseTiramisu(SegBasisNet):
             padding='same',
             dilation_rate=(1,)*rank,
             kernel_regularizer=self.options['regularizer'],
-            name=f'DT{rank}D-encoder/conv2d'
+            name=f'DT{rank}D-encoder/conv{rank}d'
         )
         x = first_layer(x)
         logger.debug('First Convolution Out: %s', x.get_shape())
@@ -891,7 +891,7 @@ class DenseTiramisu(SegBasisNet):
             kernel_regularizer=self.options['regularizer'],
             activation=None,
             use_bias=False,
-            name=f'DT{rank}D-prediction/conv2d'
+            name=f'DT{rank}D-prediction/conv{rank}d'
         )
         x = last_layer(x)
 
@@ -903,5 +903,153 @@ class DenseTiramisu(SegBasisNet):
         
         logger.debug('Mask Prediction: %s', x.get_shape())
         logger.debug('Finished model definition.')
+
+        return CustomKerasModel(inputs=self.inputs['x'], outputs=self.outputs['probabilities'])
+
+
+class DeepLabv3plus(SegBasisNet):
+    '''
+    Implements DeepLabv3plus.
+    inspired by https://github.com/srihari-humbarwadi/DeepLabV3_Plus-Tensorflow2.0
+    and https://github.com/bonlime/keras-deeplab-v3-plus
+    '''
+
+    def __init__(self, loss, is_training=True, kernel_dims=3, drop_out=(True, 0.2),
+        regularize=(True, 'L2', 0.001), backbone='resnet50', do_batch_normalization=True,
+        do_bias=False, activation='relu', **kwargs):
+        """Initialize the 100 layers Tiramisu
+
+        Parameters
+        ----------
+        loss : str
+            the type of loss to use
+        is_training : bool, optional
+            if in training, by default True
+        kernel_dims : int, optional
+            the dimensions of the kernel (dimension is automatic), by default 3
+        drop_out : tuple, optional
+            if dropout should be used, by default (True, 0.2) (from paper)
+        regularize : tuple, optional
+            if there should be regularization, by default (True, 'L2', 0.001)
+        do_batch_normalization : bool, optional
+            has to be true for dense nets, by default True
+        do_bias : bool, optional
+            has to be false because batch norm, by default False
+        activation : str, optional
+            which activation should be used, by default 'relu'
+        """
+
+        if do_bias:
+            print('use no bias with this network, bias set to False')
+            do_bias = False
+        if not do_batch_normalization:
+            print('always uses batch norm, set to True')
+            do_batch_normalization = True
+
+        self.layer_high = None
+        self.layer_low = None
+        self.backbone = None
+
+        # TODO: features for batch norm
+        # decay=0.9997
+        # epsilon=1e-5
+
+        super().__init__(loss, is_training, kernel_dims=kernel_dims, drop_out=drop_out,
+            regularize=regularize, backbone=backbone, do_bias=False, do_batch_normalization=True,
+            activation=activation, **kwargs)
+
+    @staticmethod
+    def get_name():
+        return 'DeepLabv3plus'
+
+    def _configure_backbone(self):
+        if self.options['backbone'] == 'resnet50':
+            if self.options['rank'] != 2:
+                raise ValueError('ResNet50 Backbone can only be used for 2D networks')
+            # should be output after removing the last 1 or 2 blocks (with factor 16 compared to input resolution)
+            self.layer_high = 'conv4_block6_out'
+            # should be with a factor 4 reduced compared to input resolution
+            self.layer_low = 'conv2_block3_out'
+            self.backbone = tf.keras.applications.ResNet50(include_top=False)
+        else:
+            raise NotImplementedError(f"Backbone {self.options['backbone']} unknown.")
+
+
+
+    def _build_model(self):
+        '''!
+        Builds DenseTiramisu
+
+        '''
+        self.options['name'] = 'DeepLabv3plus'
+        rank = self.options['rank']
+        backbone = self.options['backbone']
+
+        self._configure_backbone()
+
+        if rank == 2:
+            conv_layer_type = tf.keras.layers.Conv2D
+        elif rank == 3:
+            conv_layer_type = tf.keras.layers.Conv3D
+        else:
+            raise NotImplementedError('Rank should be 2 or 3')
+
+        x = self.inputs['x']
+        logger.debug('Start model definition')
+        logger.debug('Input Shape: %s', x.get_shape())
+
+        # get features from backbone
+        self.backbone.build(x.shape)
+
+        # TODO: add change in stride to only reduce features by factor 8 (memory intensive)
+
+        # for lower features, first reduce number of features with 1x1 conv with 48 filters
+        x_low = self.backbone.get_layer(self.layer_low).output
+        x_low = tf.keras.layers.Conv2D(
+            filters=48,
+            kernel_size=1,
+            padding='same',
+            kernel_regularizer=self.options['regularizer'],
+            use_bias=False,
+            name=f"DLv3plus{backbone}-decoder/low-level-reduction/conv{rank}d"
+        )(x_low)
+        x_low = tf.keras.layers.Activation(self.options['activation'], name="")(x_low)
+        x_low = tf.keras.layers.BatchNormalization(
+            name=f"DLv3plus{backbone}-decoder/low-level-reduction/bn"
+        )(x_low)
+
+        x_high = self.backbone.get_layer(self.layer_high).output
+        x_high = self.ASPP(x_high)
+        # 1x1 convolution
+        x_high = tf.keras.layers.Conv2D()(x_high)
+        x_high = self.upsample(x_high)
+
+        x = tf.keras.layers.Concatenate(name=f"DLv3plus{rank}D-decoder/concat")([x_low, x_high])
+
+        # after concatenation, do two 3x3 convs with 256 filters, BN and act
+        x = tf.keras.layers.Conv2D(
+            filters=256,
+            kernel_size=3,
+            padding='same',
+            kernel_regularizer=self.options['regularizer'],
+            use_bias=False,
+            name=f"DLv3plus{backbone}-decoder/low-level-reduction/conv{rank}d"
+        )(x)
+        x = tf.keras.layers.Activation(self.options['activation'], name="")(x)
+        x = tf.keras.layers.BatchNormalization(
+            name=f"DLv3plus{backbone}-decoder/low-level-reduction/bn"
+        )(x)
+
+        last_layer = conv_layer_type(
+            filters=self.options['out_channels'],
+            kernel_size=1,
+            padding='same',
+            dilation_rate=1,
+            kernel_regularizer=self.options['regularizer'],
+            activation=None,
+            use_bias=False,
+            name=f'DLv3plus{backbone}-decoder/pred-conv{rank}d'
+        )
+        x = last_layer(x)
 
         return CustomKerasModel(inputs=self.inputs['x'], outputs=self.outputs['probabilities'])
