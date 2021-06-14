@@ -27,7 +27,7 @@ class SegBasisNet(Network):
                  n_filters=(8, 16, 32, 64, 128), kernel_dims=3, n_convolutions=(2, 3, 2), drop_out=(False, 0.2),
                  regularize=(True, 'L2', 0.00001), do_batch_normalization=False, do_bias=True,
                  activation='relu', upscale='TRANS_CONV', downscale='MAX_POOL', res_connect=False, skip_connect=True,
-                 cross_hair=False, **kwargs):
+                 cross_hair=False, debug=False, **kwargs):
 
         # set tensorflow mixed precision policy (does not work together with gradient clipping)
         # policy = tf.keras.mixed_precision.experimental.Policy('mixed_float16')
@@ -49,6 +49,8 @@ class SegBasisNet(Network):
                 logger.warning("Caution: argument model_path is ignored in training!")
 
         self.options['model_path'] = model_path
+
+        self.options['debug'] = debug
 
         #write other kwargs to options
         for key, value in kwargs.items():
@@ -188,10 +190,13 @@ class SegBasisNet(Network):
                              'is not a supported loss function or cannot combined with ',
                              self.options['out_channels'], 'output channels.')
 
+    def _build_model(self) -> tf.keras.Model:
+        raise NotImplementedError('not implemented')
+
     # pylint: disable=arguments-differ
     def _run_train(self, logs_path, folder_name, training_dataset, validation_dataset, epochs,
                    l_r=0.001, optimizer='Adam', early_stopping=False, patience_es=10, reduce_lr_on_plateau=False,
-                   patience_lr_plat=5, factor_lr_plat=0.5, visualization_dataset=None, write_graph=True, **kwargs):
+                   patience_lr_plat=5, factor_lr_plat=0.5, visualization_dataset=None, write_graph=True, debug=False, **kwargs):
         """Run the training using the keras.Model.fit interface with a lot of callbacks.
 
         Parameters
@@ -242,8 +247,12 @@ class SegBasisNet(Network):
                 Dice(name='dice', num_classes=cfg.num_classes_seg),
                 'acc',
                 tf.keras.metrics.MeanIoU(num_classes=cfg.num_classes_seg)
-            ]
+            ],
+            run_eagerly=debug
         )
+
+        if self.options["debug"]:
+            self.model.run_eagerly = True
 
         # check the iterator sizes
         iter_per_epoch = cfg.samples_per_volume * cfg.num_files // cfg.batch_size_train
@@ -409,7 +418,8 @@ class SegBasisNet(Network):
             'use_cross_hair', 'res_connect', 'regularize', 'use_bias',
             'skip_connect', 'n_blocks'
         ]:
-            hyperparameters[opt] = self.options[opt]
+            if opt in self.options:
+                hyperparameters[opt] = self.options[opt]
         # check the types
         for key, value in hyperparameters.items():
             if type(value) in [list, tuple]:
