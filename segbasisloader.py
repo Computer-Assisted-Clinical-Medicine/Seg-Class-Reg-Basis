@@ -223,6 +223,7 @@ class SegBasisLoader(DataLoader):
             folder_name += '_resampled'
         pre_folder = os.path.join(cfg.preprocessed_dir, folder_name)
         if not os.path.exists(pre_folder):
+            logger.debug('preprocessing dir doues not exist, it will be created')
             os.makedirs(pre_folder)
         return pre_folder
 
@@ -698,7 +699,13 @@ class ApplyBasisLoader(SegBasisLoader):
             mode = self.MODES.APPLY
         assert(mode == self.MODES.APPLY), 'Use this loader only to apply data to an image'
         super().__init__(mode=mode, seed=seed, name=name, **kwargs)
-        self.training_shape = np.array(cfg.train_input_shape)
+        if len(cfg.train_input_shape) == 4:
+            self.training_shape = np.array(cfg.train_input_shape)
+        elif len(cfg.train_input_shape) == 3:
+            # add z-dimension of 1
+            self.training_shape = np.array([1] + cfg.train_input_shape)
+        else:
+            raise ValueError("cfg.train_input_shape should have 3 or 4 dimensions")
         # do not use caching when applying
         self.use_caching = False
         self.label = False
@@ -768,6 +775,7 @@ class ApplyBasisLoader(SegBasisLoader):
         # if rank is 4, add batch dimension
         if self.data_rank == 4:
             data = np.expand_dims(data, axis=0)
+        # TODO: remove, add that in the apply code
 
         # set shape
         self.dshapes = [data.shape[1:]]
@@ -844,8 +852,8 @@ class ApplyBasisLoader(SegBasisLoader):
         filename : str
             The name of the file to load
         min_padding : int, optional
-            The minimum amount of padding to use, if None, half of the smallest
-            training dimension will be used, by default None
+            The minimum amount of padding to use, if None, 15 will be used or the
+            amount needed to pad up to the training shape, by default None
 
         Returns
         -------
@@ -860,7 +868,11 @@ class ApplyBasisLoader(SegBasisLoader):
 
         if min_padding is None:
             # make sure to round up
-            min_p = (np.min(self.training_shape[:-1])+1) // 2
+            min_p = 15
+            # see if data is smaller than the training shape
+            min_index = 4 - self.data_rank
+            max_diff = (self.training_shape[min_index:3] - data.shape[min_index:3]).max()
+            min_p = np.maximum(max_diff, min_p)
         else:
             min_p = min_padding
 
@@ -928,8 +940,8 @@ class ApplyBasisLoader(SegBasisLoader):
             The shape of the window to use with the extent of the window (z,y,x)
             if only one number is provided, this is used as z-extent
         overlap : int
-            The overlap between two windows, if None, the minimum training shape
-            except the number of channels will be used, default None
+            The overlap between two windows, if None, 15 will be used, default None
+            For 2D data, there will only be overlap in-plane.
 
         Returns
         -------
@@ -939,12 +951,24 @@ class ApplyBasisLoader(SegBasisLoader):
 
         # get the overlap (this is derived from the training shape and used as padding between slices)
         if overlap is None:
-            overlap = (np.min(self.training_shape[:-1])-2) // 2
+            if self.data_rank == 3:
+                overlap = [0] + [15] * 2
+            else:
+                overlap = [15] * 3
+        elif isinstance(overlap, int):
+            if self.data_rank == 3:
+                overlap = [0] + [overlap] * 3
+            else:
+                overlap = [overlap] * 3
+        else:
+            assert len(overlap)==3, "Overlap should have length 3"
         self.last_overlap = overlap
 
-        # remove the batch dimension
         assert np.all(img.shape == self.last_shape), 'Shape does not match the last image'
-        img = img[0]
+
+        # remove the batch dimension
+        if img.ndim == 5:
+            img = img[0]
 
         if isinstance(window_shape, int):
             window_shape = (window_shape, img.shape[1], img.shape[2])
@@ -963,7 +987,7 @@ class ApplyBasisLoader(SegBasisLoader):
         for i in range(3):
             if window_shape[i] < img.shape[i]:
                 # the stride uses two times the overlap, because it is needed for both patches
-                stride[i] = window_shape[i] - overlap*2
+                stride[i] = window_shape[i] - overlap[i]*2
             else:
                 # in this case, window and image shape are the same, the stride should be the image shape
                 stride[i] = 1
@@ -1028,10 +1052,14 @@ class ApplyBasisLoader(SegBasisLoader):
             The stitched image
         """
         patches = np.array(patches)
-        assert len(patches.shape) == 6, 'dimensions should be 6'
+        if self.data_rank == 3:
+            assert len(patches.shape) == 4, 'dimensions should be 4'
+            assert np.all(patches.shape[1:3] == self.last_window_shape[1:]), 'wrong patch shape'
+        else:
+            assert len(patches.shape) == 6, 'dimensions should be 6'
+            assert patches.shape[1] == 1, 'batch number should be 1'
+            assert np.all(patches.shape[2:5] == self.last_window_shape), 'wrong patch shape'
         assert patches.shape[0] == self.last_indices.shape[0], 'wrong number of patches'
-        assert patches.shape[1] == 1, 'batch number should be 1'
-        assert np.all(patches.shape[2:5] == self.last_window_shape), 'wrong patch shape'
         # last dimension is unknown, it is the number of channels in the input 
         # and the number of classes in the output
 
@@ -1039,13 +1067,21 @@ class ApplyBasisLoader(SegBasisLoader):
         stitched_image = np.zeros(self.last_shape[:-1] + (patches.shape[-1],))
         ovl = self.last_overlap
         for num, indices in enumerate(self.last_indices):
-            stitched_image[
-                :, # batch stays the same
-                indices[0]+ovl:indices[0]-ovl+self.last_window_shape[0],
-                indices[1]+ovl:indices[1]-ovl+self.last_window_shape[1],
-                indices[2]+ovl:indices[2]-ovl+self.last_window_shape[2],
-                : # channel stay the same
-            ] = patches[num,:,ovl:-ovl,ovl:-ovl,ovl:-ovl,:] # pylint: disable=invalid-unary-operand-type
+            if self.data_rank == 3:
+                stitched_image[
+                    indices[0]+ovl[0]:indices[0]-ovl[0]+self.last_window_shape[0],
+                    indices[1]+ovl[1]:indices[1]-ovl[1]+self.last_window_shape[1],
+                    indices[2]+ovl[2]:indices[2]-ovl[2]+self.last_window_shape[2],
+                    : # channel stay the same
+                ] =  patches[num,ovl[1]:-ovl[1],ovl[2]:-ovl[2],:]
+            else:
+                stitched_image[
+                    :, # batch stays the same
+                    indices[0]+ovl[0]:indices[0]-ovl[0]+self.last_window_shape[0],
+                    indices[1]+ovl[1]:indices[1]-ovl[1]+self.last_window_shape[1],
+                    indices[2]+ovl[2]:indices[2]-ovl[2]+self.last_window_shape[2],
+                    : # channel stay the same
+                ] = patches[num,:,ovl[0]:-ovl[0],ovl[1]:-ovl[1],ovl[2]:-ovl[2],:] # pylint: disable=invalid-unary-operand-type
         return stitched_image
 
     def get_original_image(self, filename):
