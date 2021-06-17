@@ -64,16 +64,18 @@ class CustomTBCallback(tf.keras.callbacks.TensorBoard):
     log_dir : str
         The location of the log
     visualization_dataset : tf.data.Dataset
-        The dataset for visualization. This will only be executed every 5 epochs,
-        because it is computationally expensive. If None, there will be no
+        The dataset for visualization. If None, there will be no
         visualization, by default None
+    visualization_frequency : float
+        How often images and gradients should be written
     **kwargs
         All other arguments will be passed on to tf.keras.callbacks.TensorBoard.
     """
 
-    def __init__(self, log_dir, visualization_dataset=None, write_grads=True, **kwargs):
+    def __init__(self, log_dir, visualization_dataset=None, visualization_frequency=5, write_grads=True, **kwargs):
         super().__init__(log_dir=log_dir, **kwargs)
         self.visualization_dataset = visualization_dataset
+        self.visualization_frequency = visualization_frequency
         self.write_grads = write_grads
 
     def on_epoch_end(self, epoch, logs=None):
@@ -82,6 +84,9 @@ class CustomTBCallback(tf.keras.callbacks.TensorBoard):
             # write learning rate
             with tf.name_scope('learning_rate'):
                 tf.summary.scalar('learning_rate', self.model.optimizer.learning_rate, step=epoch)
+            # only write on every epoch divisible by visualization_frequency
+            if epoch % self.visualization_frequency != 0:
+                return
             # write gradients
             if self.write_grads:
                 if self.visualization_dataset is None:
@@ -101,9 +106,6 @@ class CustomTBCallback(tf.keras.callbacks.TensorBoard):
                     for weights, grads in zip(self.model.trainable_weights, gradients):
                         tf.summary.histogram(
                             weights.name.replace(':', '_') + '_grads', data=grads, step=epoch)
-            # only write on every 5th epoch
-            if epoch %5 != 0:
-                return
             if self.visualization_dataset is not None:
                 # take one sample from the visualization dataset
                 for sample in self.visualization_dataset.take(1):

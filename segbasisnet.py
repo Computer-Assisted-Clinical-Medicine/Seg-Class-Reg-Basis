@@ -320,7 +320,8 @@ class SegBasisNet(Network):
             embeddings_freq=0,
             write_grads=True,
             write_graph=write_graph,
-            visualization_dataset=visualization_dataset
+            visualization_dataset=visualization_dataset,
+            visualization_frequency=5
         )
         callbacks.append(tb_callback)
 
