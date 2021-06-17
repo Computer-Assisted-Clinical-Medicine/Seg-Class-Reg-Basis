@@ -465,11 +465,29 @@ class SegBasisNet(Network):
         # if 2D, run each layer as a batch, this should probably not run out of memory
         if self.options['rank'] == 2:
             predictions = []
-            for x in np.expand_dims(image_data, axis=1):
+            window_shape = [1] + cfg.train_input_shape[:2]
+            overlap = [0, 15, 15]
+            image_data_patches = application_dataset.get_windowed_test_sample(image_data, window_shape, overlap)
+            # remove z-dimension
+            image_data_patches = image_data_patches.reshape([-1] + cfg.train_input_shape)
+            # turn into batches with last batch being not a full one
+            batch_rest = image_data_patches.shape[0] % cfg.batch_size_train
+            batch_shape = (-1, cfg.batch_size_train) + image_data_patches.shape[-3:]
+            if batch_rest != 0:
+                image_data_batched = image_data_patches[:-batch_rest].reshape(batch_shape)
+                last_batch_shape = (batch_rest,) + image_data_patches.shape[-3:]
+                last_batch = image_data_patches[-batch_rest:].reshape(last_batch_shape)
+            else:
+                image_data_batched = image_data_patches.reshape(batch_shape)
+            for x in image_data_batched:
                 pred = self.model(x, training=False)
                 predictions.append(pred)
+            if batch_rest != 0:
+                pred = self.model(last_batch, training=False)
+                predictions.append(pred)
             # concatenate
-            probability_map = np.concatenate(predictions)
+            probability_patches = np.concatenate(predictions)
+            probability_map = application_dataset.stitch_patches(probability_patches)
             logger.debug('Applied in 2D using the original size of each slice.')
         # otherwise, just run it
         else:

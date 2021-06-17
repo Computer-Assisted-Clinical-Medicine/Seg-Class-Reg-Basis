@@ -1,6 +1,7 @@
 '''Collection of architecures that can be used for segmentation
 '''
 import logging
+from typing import List
 
 import numpy as np
 import tensorflow as tf
@@ -915,7 +916,7 @@ class DeepLabv3plus(SegBasisNet):
     '''
 
     def __init__(self, loss, is_training=True, kernel_dims=3, drop_out=(True, 0.2),
-        regularize=(True, 'L2', 0.001), backbone='resnet50', aspp_rates=(2,4,6), do_batch_normalization=True,
+        regularize=(True, 'L2', 0.001), backbone='resnet50', aspp_rates=(6,12,18), do_batch_normalization=True,
         do_bias=False, activation='relu', **kwargs):
         """Initialize the 100 layers Tiramisu
 
@@ -974,7 +975,23 @@ class DeepLabv3plus(SegBasisNet):
         else:
             raise NotImplementedError(f"Backbone {self.options['backbone']} unknown.")
 
-    def upsample(self, x, size, name="up"):
+    def upsample(self, x:tf.Tensor, size:List, name="up") -> tf.Tensor:
+        """Do bilinear upsampling of the data
+
+        Parameters
+        ----------
+        x : tf.Tensor
+            The input Tensor
+        size : List
+            The size which should be upsampled to
+        name : str, optional
+            Name used for this layer, by default "up"
+
+        Returns
+        -------
+        tf.Tensor
+            The upsampled tensor
+        """
         x = tf.image.resize(
             x,
             size=size,
@@ -983,8 +1000,36 @@ class DeepLabv3plus(SegBasisNet):
         )
         return x
 
-    def convolution(self, x, filters:float, size=3, dilation_rate=None, padding="same",
-        depthwise_separable=False, depth_activation=False, name="conv"):
+    def convolution(self, x:tf.Tensor, filters:float, size=3, dilation_rate=None, padding="same",
+        depthwise_separable=False, depth_activation=False, name="conv") -> tf.Tensor:
+        """Do a convolution (depthwise if specified). Depthwise convolutions work
+        by first applying a convolution to each feature map separately followed
+        by a 1x1 convolution.
+
+        Parameters
+        ----------
+        x : tf.Tensor
+            Input tensor
+        filters : float
+            How many filters should be used
+        size : int, optional
+            The kernel size (the same will be used in all dimensions), by default 3
+        dilation_rate : int, optional
+            Rate if using dilated convolutions, by default None
+        padding : str, optional
+            Which padding to use, by default "same"
+        depthwise_separable : bool, optional
+            If the convolution should be depthwise separable, by default False
+        depth_activation : bool, optional
+            If there should be an activation after the depthwise convolution, by default False
+        name : str, optional
+            The name of the layer, by default "conv"
+
+        Returns
+        -------
+        tf.Tensor
+            [description]
+        """
 
         if dilation_rate is None:
             dilation_rate = size
@@ -1028,7 +1073,27 @@ class DeepLabv3plus(SegBasisNet):
         )(x)
         return x
 
-    def aspp(self, x, rates, filters=256, name="ASPP"):
+    def aspp(self, x:tf.Tensor, rates:List, filters=256, name="ASPP") -> tf.Tensor:
+        """Do atrous convolutions spatial pyramid pooling, the rates are used for
+        3x3 convolutions with additional features from a 1x1 convolution and
+        global pooling. The number of output features is (2 + len(rates)) * filters.
+
+        Parameters
+        ----------
+        x : tf.Tensor
+            Input tensor
+        rates : List
+            The atrous (dilation rates)
+        filters : int, optional
+            How many filters to use per layer, by default 256
+        name : str, optional
+            The name, by default "ASPP"
+
+        Returns
+        -------
+        tf.Tensor
+            The resulting tensor
+        """
         input_size = tf.keras.backend.int_shape(x)[1:3]
         results = []
         # do 1x1
@@ -1036,7 +1101,10 @@ class DeepLabv3plus(SegBasisNet):
         # do 3x3 convs with the corresponding rates
         for r in rates:
             results.append(
-                self.convolution(x, filters, size=3, dilation_rate=r, depthwise_separable=True, depth_activation=True, name=f"{name}/conv_3x3_rate_{r}")
+                self.convolution(
+                    x, filters, size=3, dilation_rate=r, depthwise_separable=True,
+                    depth_activation=True, name=f"{name}/conv_3x3_rate_{r}"
+                )
             )
         # do global average pooling
         pool = tf.keras.layers.GlobalAvgPool2D(name=f"{name}/global_pool/pool")(x)
@@ -1050,7 +1118,7 @@ class DeepLabv3plus(SegBasisNet):
 
     def _build_model(self) -> Model:
         '''!
-        Builds DenseTiramisu
+        Builds DeepLabv3plus
 
         '''
         self.options['name'] = 'DeepLabv3plus'
@@ -1126,7 +1194,7 @@ class DeepLabv3plus(SegBasisNet):
 
         self.outputs['probabilities'] = tf.keras.layers.Activation(
             self._select_final_activation(),
-            name=f'final_activation'
+            name='final_activation'
         )(x)
 
         if self.options["debug"]:
@@ -1134,7 +1202,23 @@ class DeepLabv3plus(SegBasisNet):
 
         return Model(inputs=self.inputs['x'], outputs=self.outputs['probabilities'])
 
-def diagnose_output(x, name="debug"):
+def diagnose_output(x:tf.Tensor, name="debug") -> tf.Tensor:
+    """Diagnose output. This can be added as an intermediate layer which will not
+    change the data but will print some diagnostics. It can also be used to set
+    breakpoints to access intermediate results during execution
+
+    Parameters
+    ----------
+    x : tf.Tensor
+        The tensor to diagnose
+    name : str, optional
+        The name, by default "debug"
+
+    Returns
+    -------
+    tf.Tensor
+        The input tensor without chnages
+    """
     if not tf.executing_eagerly():
         name = x.name
     tf.print(f"Diagnosing {name}")
