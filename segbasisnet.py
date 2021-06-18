@@ -196,7 +196,8 @@ class SegBasisNet(Network):
     # pylint: disable=arguments-differ
     def _run_train(self, logs_path, folder_name, training_dataset, validation_dataset, epochs,
                    l_r=0.001, optimizer='Adam', early_stopping=False, patience_es=10, reduce_lr_on_plateau=False,
-                   patience_lr_plat=5, factor_lr_plat=0.5, visualization_dataset=None, write_graph=True, debug=False, **kwargs):
+                   patience_lr_plat=5, factor_lr_plat=0.5, visualization_dataset=None, write_graph=True, debug=False,
+                   finetune_epoch=None, finetune_layers=None, finetune_lr=None, **kwargs):
         """Run the training using the keras.Model.fit interface with a lot of callbacks.
 
         Parameters
@@ -231,6 +232,16 @@ class SegBasisNet(Network):
         write_graph : bool, optional
             Controls if a graph should be written, can be used than only the first fold will
             get a graph, to prevent cluttering the output.
+        debug : bool, optional
+            build the network in debug mode and run it eagerly, by default false
+        finetune_epoch : int, optional
+            At which epoch fine-tuning should be enabled, if None, no finetuning will be done, by default None
+        finetune_layers : str or list, optional
+            Which layers should be finetuned. This can either be a list of names or all,
+            which enables training on all layers besides batchnorm layers, by default None
+        finetune_lr : float, optional
+            If not None, this rate will be set after enabling the finetuning, by default None
+
         """
 
         # set path
@@ -321,7 +332,7 @@ class SegBasisNet(Network):
             write_grads=True,
             write_graph=write_graph,
             visualization_dataset=visualization_dataset,
-            visualization_frequency=5
+            visualization_frequency=2
         )
         callbacks.append(tb_callback)
 
@@ -338,6 +349,15 @@ class SegBasisNet(Network):
             separator=';'
         )
         callbacks.append(csv_callback)
+
+        # callback for switch in trainable layers
+        if finetune_epoch is not None:
+            ft_callback = tf_utils.FinetuneLayers(
+                to_activate=finetune_layers,
+                epoch=finetune_epoch,
+                learning_rate=finetune_lr
+            )
+            callbacks.append(ft_callback)
 
         if 'CLUSTER' in os.environ:
             verbosity=2

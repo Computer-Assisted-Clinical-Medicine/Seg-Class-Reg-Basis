@@ -2,10 +2,14 @@
 logging and to only save the best weights, which does save disk space.
 """
 
+import logging
 from pathlib import Path
 
 import tensorflow as tf
 from . import config as cfg
+
+#configure logger
+logger = logging.getLogger(__name__)
 
 class KeepBestModel(tf.keras.callbacks.ModelCheckpoint):
     """This extends the tf.keras.callbacks.ModelCheckpoint class to delete the
@@ -54,6 +58,49 @@ class KeepBestModel(tf.keras.callbacks.ModelCheckpoint):
             if self.save_weights_only:
                 Path(worst_checkpoint).unlink()
 
+
+class FinetuneLayers(tf.keras.callbacks.Callback):
+    """[summary]
+
+    Parameters
+    ----------
+    to_activate : [type], optional
+        Which layers should be finetuned. This can either be a list of names or all,
+        which enables training on all layers (besides batchnorm layers if disabled), by default None
+    epoch : int, optional
+        At which epoch fine-tuning should be enabled, if None, no finetuning will be done, by default 10
+    train_bn : bool, optional
+        If batchnorm layers should be trainable, not recommended for finetuning, by default False
+    learning_rate : float, optional
+        If not None, this rate will be set after enabling the finetuning, by default None
+    """
+    def __init__(self, to_activate=None, epoch=10, train_bn=False, learning_rate=None):
+
+        self.to_activate = to_activate
+        self.epoch = epoch
+        self.train_bn = train_bn
+        self.learning_rate = learning_rate
+        super().__init__()
+
+    def on_epoch_begin(self, epoch, logs=None):
+        if epoch == self.epoch:
+            if self.to_activate == "all":
+                for layer in self.model.layers:
+                    # do not add batch norm layers
+                    if not self.train_bn and isinstance(layer, tf.keras.layers.BatchNormalization):
+                        continue
+                    if not layer.trainable:
+                        layer.trainable = True
+                        logger.debug("Made layer %s trainable", layer.name)
+            elif isinstance(self.to_activate, list):
+                for l_name in self.to_activate:
+                    self.model.get_layer(l_name).trainable = True
+                    logger.debug("Made layer %s trainable", l_name)
+            if self.learning_rate is not None:
+                tf.keras.backend.set_value(self.model.optimizer.lr, self.learning_rate)
+                logger.info("Learning rate changed to %f", self.learning_rate)
+
+        return super().on_epoch_begin(epoch, logs=logs)
 
 class CustomTBCallback(tf.keras.callbacks.TensorBoard):
     """Extended TensorBoard callback, it will also always log the learning rate
