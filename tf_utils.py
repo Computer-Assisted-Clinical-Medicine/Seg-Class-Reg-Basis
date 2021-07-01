@@ -4,16 +4,21 @@ logging and to only save the best weights, which does save disk space.
 
 import logging
 from pathlib import Path
+from typing import List
 
 import tensorflow as tf
 from . import config as cfg
 
-#configure logger
+# configure logger
 logger = logging.getLogger(__name__)
+
+# some callbacks do only have one public method.
+# pylint: disable=too-few-public-methods
+
 
 class KeepBestModel(tf.keras.callbacks.ModelCheckpoint):
     """This extends the tf.keras.callbacks.ModelCheckpoint class to delete the
-    worst model once more than max_keep models are saved. This can help to 
+    worst model once more than max_keep models are saved. This can help to
     reduce the amount of storage needed for the training.
 
     Parameters
@@ -27,13 +32,16 @@ class KeepBestModel(tf.keras.callbacks.ModelCheckpoint):
     """
 
     def __init__(self, filepath, max_keep=3, save_best_only=True, **kwargs):
-        assert save_best_only, 'has to be true (only there for compability.'
+        assert save_best_only, "has to be true (only there for compability."
         super().__init__(filepath, save_best_only=True, **kwargs)
         # maximum number of checkpoints to keep
-        self.max_keep=max_keep
+        self.max_keep = max_keep
         self.best_checkpoints = {}
 
     def on_epoch_end(self, epoch, logs=None):
+        """On epoch end, save the checkpoint if it was better than max_keep and
+        delete the worst one.
+        """
         super().on_epoch_end(epoch, logs=logs)
         filename = self._get_file_path(epoch, logs)
         # if the file was not saved, return
@@ -60,11 +68,12 @@ class KeepBestModel(tf.keras.callbacks.ModelCheckpoint):
 
 
 class FinetuneLayers(tf.keras.callbacks.Callback):
-    """[summary]
+    """For finetuning, this callback will enable the training of certain layers
+    at a selected epoch.
 
     Parameters
     ----------
-    to_activate : [type], optional
+    to_activate : List, optional
         Which layers should be finetuned. This can either be a list of names or all,
         which enables training on all layers (besides batchnorm layers if disabled), by default None
     epoch : int, optional
@@ -74,6 +83,7 @@ class FinetuneLayers(tf.keras.callbacks.Callback):
     learning_rate : float, optional
         If not None, this rate will be set after enabling the finetuning, by default None
     """
+
     def __init__(self, to_activate=None, epoch=10, train_bn=False, learning_rate=None):
 
         self.to_activate = to_activate
@@ -83,11 +93,14 @@ class FinetuneLayers(tf.keras.callbacks.Callback):
         super().__init__()
 
     def on_epoch_begin(self, epoch, logs=None):
+        """Enable the training at the begin of the selected epoch."""
         if epoch == self.epoch:
             if self.to_activate == "all":
                 for layer in self.model.layers:
                     # do not add batch norm layers
-                    if not self.train_bn and isinstance(layer, tf.keras.layers.BatchNormalization):
+                    if not self.train_bn and isinstance(
+                        layer, tf.keras.layers.BatchNormalization
+                    ):
                         continue
                     if not layer.trainable:
                         layer.trainable = True
@@ -102,9 +115,12 @@ class FinetuneLayers(tf.keras.callbacks.Callback):
 
         return super().on_epoch_begin(epoch, logs=logs)
 
+
 class CustomTBCallback(tf.keras.callbacks.TensorBoard):
     """Extended TensorBoard callback, it will also always log the learning rate
     and write images of the segmentation if a visualization dataset is provided.
+    The visualization takes about 10 seconds, so for a lot of epochs, a frequency
+    of more than 1 should be used.
 
     Parameters
     ----------
@@ -119,47 +135,75 @@ class CustomTBCallback(tf.keras.callbacks.TensorBoard):
         All other arguments will be passed on to tf.keras.callbacks.TensorBoard.
     """
 
-    def __init__(self, log_dir, visualization_dataset=None, visualization_frequency=5, write_grads=True, **kwargs):
+    def __init__(
+        self,
+        log_dir,
+        visualization_dataset=None,
+        visualization_frequency=5,
+        write_grads=True,
+        **kwargs,
+    ):
         super().__init__(log_dir=log_dir, **kwargs)
         self.visualization_dataset = visualization_dataset
         self.visualization_frequency = visualization_frequency
         self.write_grads = write_grads
 
+    @tf.function
+    def get_gradients(self, dataset: tf.data.Dataset) -> List[tf.Tensor]:
+        """Get the gradients for the model and the given dataset.
+
+        Parameters
+        ----------
+        dataset : tf.data.Dataset
+            The dataset to use. Only one element is used.
+
+        Returns
+        -------
+        List[tf.Tensor]
+            The gradients with respect to the loss. The list has the same members
+            and dimensions as self.model.trainable_weights
+        """
+        sample = next(iter(dataset))
+        x, y = sample
+        with tf.GradientTape() as tape:
+            # predict it
+            probabilities = self.model(x)
+            # get the loss
+            loss = self.model.compiled_loss(y_true=y, y_pred=probabilities)
+            # do backpropagation
+            gradients = tape.gradient(loss, self.model.trainable_weights)
+        return gradients
+
     def on_epoch_end(self, epoch, logs=None):
+        """Write metrics to tensorboard at the end of the epoch."""
         super().on_epoch_end(epoch, logs=logs)
         with self._train_writer.as_default():
             # write learning rate
-            with tf.name_scope('learning_rate'):
-                tf.summary.scalar('learning_rate', self.model.optimizer.learning_rate, step=epoch)
+            with tf.name_scope("learning_rate"):
+                tf.summary.scalar(
+                    "learning_rate", self.model.optimizer.learning_rate, step=epoch
+                )
             # only write on every epoch divisible by visualization_frequency
             if epoch % self.visualization_frequency != 0:
                 return
             # write gradients
             if self.write_grads:
                 if self.visualization_dataset is None:
-                    raise ValueError('Visualization Dataset should be provided for gradients.')
-                # record gradients
-                with tf.GradientTape() as grad:
-                    # get sample
-                    sample = list(self.visualization_dataset.take(1))[0]
-                    x, y = sample
-                    # predict it
-                    probabilities = self.model(x)
-                    # get the loss
-                    loss = self.model.compiled_loss(y_true=y, y_pred=probabilities)
-                    # do backpropagation
-                    gradients = grad.gradient(loss, self.model.trainable_weights)
-                    # write gradients
-                    for weights, grads in zip(self.model.trainable_weights, gradients):
-                        tf.summary.histogram(
-                            weights.name.replace(':', '_') + '_grads', data=grads, step=epoch)
+                    raise ValueError(
+                        "Visualization Dataset should be provided for gradients."
+                    )
+                gradients = self.get_gradients(self.visualization_dataset)
+                # write gradients
+                for weights, grads in zip(self.model.trainable_weights, gradients):
+                    tf.summary.histogram(
+                        weights.name.replace(":", "_") + "_grads", data=grads, step=epoch
+                    )
             if self.visualization_dataset is not None:
                 # take one sample from the visualization dataset
                 for sample in self.visualization_dataset.take(1):
                     x, y = sample
                     probabilities = self.model(x)
                     write_images(x, y, probabilities, step=epoch)
-        return
 
 
 def write_images(x, y, probabilities, step):
@@ -180,8 +224,8 @@ def write_images(x, y, probabilities, step):
     """
 
     in_channels = x.shape[-1]
-    dimension = len(x.shape) - 2 # substract one dimension for batches and channels
-    max_image_output=1
+    dimension = len(x.shape) - 2  # substract one dimension for batches and channels
+    max_image_output = 1
 
     # take central slice of 3D data
     if dimension == 3:
@@ -192,56 +236,66 @@ def write_images(x, y, probabilities, step):
 
     predictions = tf.argmax(probabilities, -1)
 
-
-    with tf.name_scope('01_Input_and_Predictions'):
+    with tf.name_scope("01_Input_and_Predictions"):
         if in_channels == 1:
             image_fc = convert_float_to_image(x)
-            tf.summary.image('train_img', image_fc, step, max_image_output)
+            tf.summary.image("train_img", image_fc, step, max_image_output)
         else:
             for cls in range(in_channels):
                 image = convert_float_to_image(x[:, :, :, cls])
                 if cls == 0:
                     image_fc = image
-                tf.summary.image('train_img_c'+str(cls), image, step, max_image_output)
+                tf.summary.image("train_img_c" + str(cls), image, step, max_image_output)
 
-        label = tf.expand_dims(tf.cast(tf.argmax(y, -1)
-                * (255 // (cfg.num_classes_seg - 1)), tf.uint8), axis=-1)
-        tf.summary.image('train_seg_lbl', label, step, max_image_output)
-        pred = tf.expand_dims(tf.cast(predictions
-                * (255 // (cfg.num_classes_seg - 1)), tf.uint8), axis=-1)
-        tf.summary.image('train_seg_pred', pred, step, max_image_output)
+        label = tf.expand_dims(
+            tf.cast(tf.argmax(y, -1) * (255 // (cfg.num_classes_seg - 1)), tf.uint8),
+            axis=-1,
+        )
+        tf.summary.image("train_seg_lbl", label, step, max_image_output)
+        pred = tf.expand_dims(
+            tf.cast(predictions * (255 // (cfg.num_classes_seg - 1)), tf.uint8), axis=-1
+        )
+        tf.summary.image("train_seg_pred", pred, step, max_image_output)
 
-
-    with tf.name_scope('02_Combined_predictions (prediction in red, label in green, both in yellow)'):
+    with tf.name_scope(
+        "02_Combined_predictions (prediction in red, label in green, both in yellow)"
+    ):
         # set to first channel where both labels are zero
         mask = tf.cast(tf.math.logical_and(pred == 0, label == 0), tf.uint8)
         # set those values to the mask
-        label += image_fc*mask
-        pred += image_fc*mask
+        label += image_fc * mask
+        pred += image_fc * mask
         # set the opposite values of the image to zero
-        image_fc -= image_fc*(1-mask)
+        image_fc -= image_fc * (1 - mask)
         combined = tf.concat([pred, label, image_fc], -1)
-        tf.summary.image('train_seg_combined', combined, step, max_image_output)
+        tf.summary.image("train_seg_combined", combined, step, max_image_output)
 
-
-    with tf.name_scope('03_Probabilities'):
+    with tf.name_scope("03_Probabilities"):
         if dimension == 2:
             for cls in range(cfg.num_classes_seg):
-                tf.summary.image('train_seg_prob_' + str(cls), tf.expand_dims(tf.cast(probabilities[:, :, :, cls]
-                    * 255, tf.uint8), axis=-1), step, max_image_output)
+                tf.summary.image(
+                    "train_seg_prob_" + str(cls),
+                    tf.expand_dims(
+                        tf.cast(probabilities[:, :, :, cls] * 255, tf.uint8), axis=-1
+                    ),
+                    step,
+                    max_image_output,
+                )
 
-
-    with tf.name_scope('04_Class_Labels'):
+    with tf.name_scope("04_Class_Labels"):
         if cfg.num_classes_seg == 2:
             pass
         else:
             for cls in range(cfg.num_classes_seg):
-                tf.summary.image('train_seg_lbl' + str(cls), tf.expand_dims(tf.cast(y[:, :, :, cls]
-                    * 255, tf.uint8), axis=-1), step, max_image_output)
+                tf.summary.image(
+                    "train_seg_lbl" + str(cls),
+                    tf.expand_dims(tf.cast(y[:, :, :, cls] * 255, tf.uint8), axis=-1),
+                    step,
+                    max_image_output,
+                )
 
-    return
 
-def convert_float_to_image(image:tf.Tensor)->tf.Tensor:
+def convert_float_to_image(image: tf.Tensor) -> tf.Tensor:
     """Convert a float tensor to a greyscale image with values between 0 and 255.
     This is done by setting the minimum to 0 and the maximum to 255. It is assumed
     that outliers were already removed.

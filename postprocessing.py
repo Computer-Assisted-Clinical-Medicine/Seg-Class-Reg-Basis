@@ -6,7 +6,7 @@ import SimpleITK as sitk
 from scipy import ndimage
 
 
-def keep_big_structures(input_image:sitk.Image, target_image, n_keep=1):
+def keep_big_structures(input_image: sitk.Image, target_image, n_keep=1):
     """In the labelled image, keep the n_keep largest structures (by volume)
 
     Parameters
@@ -27,7 +27,7 @@ def keep_big_structures(input_image:sitk.Image, target_image, n_keep=1):
     n_voxels = np.bincount(labels.ravel())
 
     # convert to dataframe (and drop the background)
-    n_pixels = pd.Series(n_voxels[1:], index=np.arange(n_labels)+1, dtype=int)
+    n_pixels = pd.Series(n_voxels[1:], index=np.arange(n_labels) + 1, dtype=int)
     # select the labels to remove
     to_remove = n_pixels.sort_values(ascending=False)[n_keep:].index
     # create a mask
@@ -60,7 +60,7 @@ def keep_big_structures(input_image:sitk.Image, target_image, n_keep=1):
             featureImage=input_sitk,
             label=label,
             backgroundValue=0,
-            negated=True
+            negated=True,
         )
 
     sitk.WriteImage(processed_image, str(target_image))

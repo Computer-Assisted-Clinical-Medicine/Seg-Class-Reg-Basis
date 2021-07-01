@@ -15,23 +15,23 @@ from .normalization import NORMALIZING
 
 ##### Names and Paths #####
 
-#these files are used to store the different sets
-train_csv = 'train.csv'
-fine_csv = 'fine.csv'
-vald_csv = 'vald.csv'
-test_csv = 'test.csv'
+# these files are used to store the different sets
+train_csv = "train.csv"
+fine_csv = "fine.csv"
+vald_csv = "vald.csv"
+test_csv = "test.csv"
 
-#prefixes are used for file names
-sample_file_name_prefix = 'sample-' 
-label_file_name_prefix = 'label-'
-#the suffix determines the format
-file_suffix = '.nrrd'
+# prefixes are used for file names
+sample_file_name_prefix = "sample-"
+label_file_name_prefix = "label-"
+# the suffix determines the format
+file_suffix = ".nrrd"
 # preprocessed_dir
-preprocessed_dir : Any = None
+preprocessed_dir: Any = None
 
 
 ##### Shapes and Capacities #####
-if socket.gethostname() == 'ckm4cad':
+if socket.gethostname() == "ckm4cad":
     ONSERVER = True
     op_parallelism_threads = 6
     batch_size_train = 16
@@ -53,31 +53,31 @@ file_name_capacity = 140
 ##### Data #####
 num_channels = 3
 num_slices = 1
-num_classes_seg = 2  #the number of classes including the background
+num_classes_seg = 2  # the number of classes including the background
 num_dimensions = 3
-#has to be smaller than the target size
+# has to be smaller than the target size
 train_dim = 128
 
 if num_dimensions == 2:
     train_input_shape = [train_dim, train_dim, num_channels]
     train_label_shape = [train_dim, train_dim, num_classes_seg]
 elif num_dimensions == 3:
-    num_slices_train = 16 # should be divisible by 16 for UNet
+    num_slices_train = 16  # should be divisible by 16 for UNet
     train_input_shape = [num_slices_train, train_dim, train_dim, num_channels]
     train_label_shape = [num_slices_train, train_dim, train_dim, num_classes_seg]
 
-dtype = tf.float32 #the datatype to use inside of tensorflow
-dtype_np = np.float32 # the datatype used in numpy, should be the same as in tf
+dtype = tf.float32  # the datatype to use inside of tensorflow
+dtype_np = np.float32  # the datatype used in numpy, should be the same as in tf
 data_train_split = 0.75
 number_of_vald = 4
 
 
 ##### Preprocessing #####
 normalizing_method = NORMALIZING.QUANTILE
-#values between outside of the quantiles norm_min_q and norm_max_q are normalized to interval [-1, 1]
+# values between outside of the quantiles norm_min_q and norm_max_q are normalized to interval [-1, 1]
 norm_min_q = 0.01
 norm_max_q = 0.99
-#values between outside of norm_min_v and norm_max_v are normalized to interval [-1, 1]
+# values between outside of norm_min_v and norm_max_v are normalized to interval [-1, 1]
 norm_min_v = -150
 norm_max_v = 275
 
@@ -86,24 +86,28 @@ if do_resampling:
     target_spacing = [1, 1, 3]
 target_type_image = sitk.sitkFloat32
 target_type_label = sitk.sitkUInt8
-data_background_value = 0 #data outside the image is set to this value
-label_background_value = 0 #labels to this
+data_background_value = 0  # data outside the image is set to this value
+label_background_value = 0  # labels to this
 
 
 ###### Sample Mining #####
-percent_of_object_samples = 0.5 # how many samples should contain the objects (in percent of samples_per_volume)
-samples_per_volume = 80 # the number of sample per image
-background_label_percentage = 0.15 # the maximum fraction of labelled voxels allowed in a background patch
+percent_of_object_samples = (
+    0.5  # how many samples should contain the objects (in percent of samples_per_volume)
+)
+samples_per_volume = 80  # the number of sample per image
+background_label_percentage = (
+    0.15  # the maximum fraction of labelled voxels allowed in a background patch
+)
 # This can be used to avoid oversampling large tumors.
 
 add_noise = False
-noise_typ = None # TODO: add rician noise
+noise_typ = None  # TODO: add rician noise
 standard_deviation = 0.025
-mean_poisson = 30 # relative to full scale
+mean_poisson = 30  # relative to full scale
 
 max_rotation = 0.0  # the maximum amount of rotation that is allowed (between 0 and 1)
 # resolution is augmented by a factor between min_resolution_augment and max_resolution_augment
-# the values can be scalars or lists, if a list is used, then all axes are scaled individually 
+# the values can be scalars or lists, if a list is used, then all axes are scaled individually
 min_resolution_augment = 1
 max_resolution_augment = 1
 
@@ -123,4 +127,4 @@ max_weight = 1.2
 tissue_threshold = -0.9
 
 ##### Other variables #####
-num_files : Optional[int] = None # TODO: remove from config
+num_files: Optional[int] = None  # TODO: remove from config
