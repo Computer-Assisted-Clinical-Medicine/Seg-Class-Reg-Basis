@@ -127,13 +127,13 @@ class UNet(SegBasisNet):
             regularize=self.options["regularize"],
             padding="SAME",
             activation=self.options["regularize"],
-            name='Unet',
+            name="Unet",
             ratio=1,
             dilation_rate=1,
             cross_hair=self.options["cross_hair"],
             res_connect=self.options["res_connect"],
             res_connect_type=self.options["res_connect_type"],
-            skip_connect=self.options["skip_connect"]
+            skip_connect=self.options["skip_connect"],
         )
 
 
