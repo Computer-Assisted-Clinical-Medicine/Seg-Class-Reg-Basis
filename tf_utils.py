@@ -84,7 +84,7 @@ class FinetuneLayers(tf.keras.callbacks.Callback):
         If not None, this rate will be set after enabling the finetuning, by default None
     """
 
-    def __init__(self, to_activate=None, epoch=10, train_bn=False, learning_rate=None):
+    def __init__(self, to_activate=None, epoch=10, train_bn=True, learning_rate=None):
 
         self.to_activate = to_activate
         self.epoch = epoch

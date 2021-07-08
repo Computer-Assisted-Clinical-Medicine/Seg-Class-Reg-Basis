@@ -290,6 +290,9 @@ class DeepLabv3plus(SegBasisNet):
             **kwargs,
         )
 
+        # last layer should be 16 times smaller than the input
+        self.divisible_by = 16
+
     @staticmethod
     def get_name():
         return "DeepLabv3plus"

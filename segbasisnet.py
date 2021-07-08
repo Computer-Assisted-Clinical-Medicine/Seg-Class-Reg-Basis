@@ -436,21 +436,27 @@ class SegBasisNet(Network):
         dict
             the hyperparameters as a dictionary
         """
+        # TODO: move into the individual networks
         hyperparameters = {
             "dimension": self.options["rank"],
             "drop_out_rate": self.options["drop_out"][1],
             "regularize": self.options["regularize"][0],
             "regularizer": self.options["regularize"][1],
             "regularizer_param": self.options["regularize"][2],
-            "kernel_dim": self.options["kernel_dims"][0],
-            "dilation_rate_first": self.options["dilation_rate"][0],
         }
+        if isinstance(self.options["kernel_dims"], list):
+            hyperparameters["kernel_dim"] = self.options["kernel_dims"][0]
+        else:
+            hyperparameters["kernel_dim"] = self.options["kernel_dims"]
+        if "dilation_rate" in self.options:
+            hyperparameters["dilation_rate_first"] = self.options["dilation_rate"][0]
         if self.options["regularize"]:
             if isinstance(self.options["regularizer"], tf.keras.regularizers.L2):
                 hyperparameters["L2"] = self.options["regularizer"].get_config()["l2"]
         # add filters
-        for i, f in enumerate(self.options["n_filters"]):
-            hyperparameters[f"n_filters_{i}"] = f
+        if "n_filters" in self.options:
+            for i, f in enumerate(self.options["n_filters"]):
+                hyperparameters[f"n_filters_{i}"] = f
         for opt in [
             "use_bias",
             "loss",
@@ -463,6 +469,7 @@ class SegBasisNet(Network):
             "use_bias",
             "skip_connect",
             "n_blocks",
+            "backbone",
         ]:
             if opt in self.options:
                 hyperparameters[opt] = self.options[opt]
