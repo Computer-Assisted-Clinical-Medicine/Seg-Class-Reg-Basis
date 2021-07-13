@@ -27,31 +27,59 @@ class KeepBestModel(tf.keras.callbacks.ModelCheckpoint):
         Where the models should be saved
     max_keep : int, optional
         The maximum amount of models/weights to keep, by default 3
-    save_best_only : bool, optional
-        Always true, is there only for compability, by default True
+    decay : float, optional
+        If there should be an exponential moving average for the value with the
+        specified rate.
     """
 
-    def __init__(self, filepath, max_keep=3, save_best_only=True, **kwargs):
-        assert save_best_only, "has to be true (only there for compability."
-        super().__init__(filepath, save_best_only=True, **kwargs)
+    def __init__(self, filepath, max_keep=3, decay=None, **kwargs):
+        super().__init__(filepath, save_best_only=False, **kwargs)
         # maximum number of checkpoints to keep
         self.max_keep = max_keep
         self.best_checkpoints = {}
+        self.decay = decay
+        if decay is not None:
+            self.previous_val = 0
 
     def on_epoch_end(self, epoch, logs=None):
         """On epoch end, save the checkpoint if it was better than max_keep and
         delete the worst one.
         """
-        super().on_epoch_end(epoch, logs=logs)
-        filename = self._get_file_path(epoch, logs)
-        # if the file was not saved, return
-        if not self._checkpoint_exists(filename):
-            return
         # get the value
-        val = logs[self.monitor]
+        if self.decay is None:
+            val = logs[self.monitor]
+        # with moving average if specified
+        else:
+            val = self.decay * self.previous_val + (1 - self.decay) * logs[self.monitor]
+            self.previous_val = val
+            logger.info("Monitored values %s is %5f", self.monitor, logs[self.monitor])
+
+        # see if it was better than any checkpoint
+        save = False
+        for best_val in self.best_checkpoints:
+            # see if it is better
+            if self.monitor_op(val, best_val):
+                save = True
+        # see if there are less than max_keep checkpoints
+        if len(self.best_checkpoints) < self.max_keep:
+            save = True
+
+        # return if it was not better
+        if not save:
+            logger.info("Value %5f for %s did not improve", val, self.monitor)
+            return
+
+        logger.info(
+            "Value %5f for %s did improve and the weights will be saved.", val, self.monitor
+        )
+
         # save it
+        self._save_model(epoch=epoch, logs=logs)
+        filename = self._get_file_path(epoch, logs)
+        # write it to the dictionary
         self.best_checkpoints[val] = filename
-        # see if there are more checkpoints than should be kept
+
+        # see if there are checkpoints than should be removed
         if len(self.best_checkpoints) > self.max_keep:
             worst_value = None
             worst_checkpoint = None
@@ -62,9 +90,12 @@ class KeepBestModel(tf.keras.callbacks.ModelCheckpoint):
                     worst_value = chk_val
                     worst_checkpoint = chk_file
             # remove from list
+            logger.info("Worst file %s will be deleted.", worst_checkpoint)
             self.best_checkpoints.pop(worst_value)
-            if self.save_weights_only:
+            try:
                 Path(worst_checkpoint).unlink()
+            except FileNotFoundError:
+                logger.info("The file %s was not found", worst_checkpoint)
 
 
 class FinetuneLayers(tf.keras.callbacks.Callback):
@@ -79,7 +110,7 @@ class FinetuneLayers(tf.keras.callbacks.Callback):
     epoch : int, optional
         At which epoch fine-tuning should be enabled, if None, no finetuning will be done, by default 10
     train_bn : bool, optional
-        If batchnorm layers should be trainable, not recommended for finetuning, by default False
+        If batchnorm layers should be trainable, not recommended for finetuning, by default True
     learning_rate : float, optional
         If not None, this rate will be set after enabling the finetuning, by default None
     """

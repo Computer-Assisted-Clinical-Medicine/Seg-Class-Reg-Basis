@@ -206,6 +206,7 @@ class SegBasisNet(Network):
         epochs,
         l_r=0.001,
         optimizer="Adam",
+        best_model_decay=0.7,
         early_stopping=False,
         patience_es=10,
         reduce_lr_on_plateau=False,
@@ -237,6 +238,9 @@ class SegBasisNet(Network):
             The learning rate, by default 0.001
         optimizer : str, optional
             The name of the optimizer, by default 'Adam'
+        best_model_decay : float, optional
+            The decay rate used for averaging the metric when saving the best model,
+            by default 0.7, None means no moving average
         early_stopping : bool, optional
             If early stopping should be used, by default False
         patience_es : int, optional
@@ -310,9 +314,9 @@ class SegBasisNet(Network):
             save_weights_only=True,
             verbose=0,
             save_freq="epoch",
-            save_best_only=True,
             monitor="val_dice",
             mode="max",
+            decay=best_model_decay,
         )
         callbacks.append(cp_best_callback)
 
