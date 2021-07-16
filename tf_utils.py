@@ -74,10 +74,9 @@ class KeepBestModel(tf.keras.callbacks.ModelCheckpoint):
         )
 
         # save it
-        self._save_model(epoch=epoch, logs=logs)
-        filename = self._get_file_path(epoch, logs)
+        self._save_model(epoch, logs)
         # write it to the dictionary
-        self.best_checkpoints[val] = filename
+        self.best_checkpoints[val] = self._get_file_path(epoch, logs)
 
         # see if there are checkpoints than should be removed
         if len(self.best_checkpoints) > self.max_keep:
@@ -96,6 +95,15 @@ class KeepBestModel(tf.keras.callbacks.ModelCheckpoint):
                 Path(worst_checkpoint).unlink()
             except FileNotFoundError:
                 logger.info("The file %s was not found", worst_checkpoint)
+
+    def _save_model(self, epoch, logs):
+        filename = self._get_file_path(epoch, logs)
+        if self.save_weights_only:
+            self.model.save_weights(filename, overwrite=True, options=self._options)
+        else:
+            self.model.save(filename, overwrite=True, options=self._options)
+        if not Path(filename).exists():
+            raise FileNotFoundError(f"The saved model {filename} was not found.")
 
 
 class FinetuneLayers(tf.keras.callbacks.Callback):
