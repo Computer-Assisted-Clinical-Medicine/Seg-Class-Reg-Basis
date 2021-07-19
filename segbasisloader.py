@@ -61,7 +61,7 @@ class SegBasisLoader(DataLoader):
         samples_per_volume=None,
         normalizing_method=None,
         do_resampling=None,
-        shuffle=True,
+        shuffle=None,
         sample_buffer_size=None,
     ):
         super().__init__(
@@ -97,7 +97,18 @@ class SegBasisLoader(DataLoader):
         else:
             self.do_resampling = cfg.do_resampling
 
-        # shape attributes
+        # set channel and class parameters
+        self.n_channels = cfg.num_channels
+        self.n_seg = cfg.num_classes_seg
+
+        # set shapes
+        self.dshapes = None
+        self.data_rank = None
+        self.dtypes = None
+
+        # set the capacity
+        if sample_buffer_size is None:
+            self.sample_buffer_size = cfg.batch_capacity_train
 
         # set callbacks for normalization (in case it should be applied to the complete dataset)
         self.normalization_callbacks = []
@@ -210,11 +221,7 @@ class SegBasisLoader(DataLoader):
         - slice_shift
 
         """
-        # this function is always called in the init
-        # pylint: disable=attribute-defined-outside-init
 
-        self.n_channels = cfg.num_channels
-        self.n_seg = cfg.num_classes_seg
         if self.mode is self.MODES.TRAIN or self.mode is self.MODES.VALIDATE:
             self.dtypes = [cfg.dtype, cfg.dtype]
             self.dshapes = [
@@ -229,17 +236,6 @@ class SegBasisLoader(DataLoader):
             raise ValueError(f"Not allowed mode {self.mode}")
 
         self.data_rank = len(self.dshapes[0])
-
-    def _set_up_capacities(self):
-        """
-        sets buffer size for sample buffer based on cfg.batch_capacity_train and
-        cfg.batch_capacity_train based on self.mode
-
-        """
-        # false positive, gets called after definition
-        # pylint:disable=access-member-before-definition,attribute-defined-outside-init
-        if self.sample_buffer_size is None:
-            self.sample_buffer_size = cfg.batch_capacity_train
 
     def get_filenames(self, file_id):
         """For compability reasons, get filenames without the preprocessed ones
