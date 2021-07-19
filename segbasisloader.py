@@ -64,6 +64,10 @@ class SegBasisLoader(DataLoader):
         shuffle=None,
         sample_buffer_size=None,
     ):
+
+        # set new properties derived in the shape
+        self.data_rank = None
+
         super().__init__(
             mode=mode,
             seed=seed,
@@ -71,6 +75,8 @@ class SegBasisLoader(DataLoader):
             shuffle=shuffle,
             sample_buffer_size=sample_buffer_size,
         )
+
+        assert self.data_rank in [3, 4], "The rank should be 3 or 4."
 
         # use caching
         self.use_caching = True
@@ -100,11 +106,6 @@ class SegBasisLoader(DataLoader):
         # set channel and class parameters
         self.n_channels = cfg.num_channels
         self.n_seg = cfg.num_classes_seg
-
-        # set shapes
-        self.dshapes = None
-        self.data_rank = None
-        self.dtypes = None
 
         # set the capacity
         if sample_buffer_size is None:
@@ -221,6 +222,8 @@ class SegBasisLoader(DataLoader):
         - slice_shift
 
         """
+        # dtypes and dshapes are defined in the base class
+        # pylint: disable=attribute-defined-outside-init
 
         if self.mode is self.MODES.TRAIN or self.mode is self.MODES.VALIDATE:
             self.dtypes = [cfg.dtype, cfg.dtype]

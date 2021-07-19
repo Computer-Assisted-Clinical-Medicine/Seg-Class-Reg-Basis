@@ -53,11 +53,6 @@ class ApplyBasisLoader(SegBasisLoader):
         self.divisible_by = divisible_by
         assert self.divisible_by % 2 == 0
 
-        # set shapes
-        self.dshapes = None
-        self.data_rank = None
-        self.dtypes = None
-
         # remember the last file
         self.last_file = None
         self.last_file_name = None
@@ -98,6 +93,7 @@ class ApplyBasisLoader(SegBasisLoader):
         - slice_shift
 
         """
+        # pylint: disable=attribute-defined-outside-init
         self.dtypes = [cfg.dtype]
         self.data_rank = len(cfg.train_input_shape)
         self.dshapes = []
@@ -116,7 +112,7 @@ class ApplyBasisLoader(SegBasisLoader):
         # TODO: remove, add that in the apply code
 
         # set shape
-        self.dshapes = [data.shape[1:]]
+        self.dshapes = [data.shape[1:]]  # pylint: disable=attribute-defined-outside-init
         if not self.data_rank == len(self.dshapes[0]):
             raise ValueError(f"Data has rank {len(self.dshapes[0])}, not {self.data_rank}.")
 

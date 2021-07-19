@@ -126,7 +126,7 @@ class UNet(SegBasisNet):
             downscale=self.options["downscale"],
             regularize=self.options["regularize"],
             padding="SAME",
-            activation=self.options["regularize"],
+            activation=self.options["activation"],
             name="Unet",
             ratio=1,
             dilation_rate=1,
