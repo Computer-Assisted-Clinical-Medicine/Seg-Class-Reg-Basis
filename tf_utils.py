@@ -225,24 +225,31 @@ class CustomTBCallback(tf.keras.callbacks.TensorBoard):
             # only write on every epoch divisible by visualization_frequency
             if epoch % self.visualization_frequency != 0:
                 return
-            # write gradients
-            if self.write_grads:
-                if self.visualization_dataset is None:
-                    raise ValueError(
-                        "Visualization Dataset should be provided for gradients."
-                    )
-                gradients = self.get_gradients(self.visualization_dataset)
-                # write gradients
-                for weights, grads in zip(self.model.trainable_weights, gradients):
-                    tf.summary.histogram(
-                        weights.name.replace(":", "_") + "_grads", data=grads, step=epoch
-                    )
+            # write images
             if self.visualization_dataset is not None:
                 # take one sample from the visualization dataset
                 for sample in self.visualization_dataset.take(1):
                     x, y = sample
                     probabilities = self.model(x)
                     write_images(x, y, probabilities, step=epoch)
+            # write gradients
+            if self.write_grads:
+                if self.visualization_dataset is None:
+                    raise ValueError(
+                        "Visualization Dataset should be provided for gradients."
+                    )
+                try:
+                    gradients = self.get_gradients(self.visualization_dataset)
+                except tf.errors.ResourceExhaustedError as err:
+                    tf.print("OOM Error when calculating gradients, skipped and disabled")
+                    self.write_grads = False
+                    logger.exception(err)
+                    return
+                # write gradients
+                for weights, grads in zip(self.model.trainable_weights, gradients):
+                    tf.summary.histogram(
+                        weights.name.replace(":", "_") + "_grads", data=grads, step=epoch
+                    )
 
 
 def write_images(x, y, probabilities, step):
