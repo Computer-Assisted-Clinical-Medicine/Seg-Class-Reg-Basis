@@ -416,13 +416,15 @@ class SegBasisLoader(DataLoader):
         data : np.array
             Numpy array containing the data
         lbl : np.array
-            Numpy array containing the labels
+            Numpy array containing the labels (or None)
         """
         assert not np.any(np.isnan(data)), "Nans in the image in check"
-        assert not np.any(np.isnan(lbl)), "Nans in the labels in check"
-        assert np.sum(lbl) > 100, "Not enough labels in the image"
-        logger.debug("Checking Labels (min, max) %s %s:", np.min(lbl), np.max(lbl))
-        logger.debug("Shapes (Data, Label): %s %s", data.shape, lbl.shape)
+        if lbl is not None:
+            assert not np.any(np.isnan(lbl)), "Nans in the labels in check"
+            assert np.sum(lbl) > 100, "Not enough labels in the image"
+            logger.debug("Checking Labels (min, max) %s %s:", np.min(lbl), np.max(lbl))
+            logger.debug("Shape Label: %s", lbl.shape)
+        logger.debug("Shape Data: %s", data.shape)
 
     def normalize(self, img: np.ndarray) -> np.ndarray:
         """Normaize an image. The specified normalization method is used.
@@ -554,6 +556,9 @@ class SegBasisLoader(DataLoader):
             If mode is apply, this is raised, the Apply loader should be used instead
         """
 
+        if self.mode == self.MODES.APPLY:
+            raise NotImplementedError("Use the original data loader")
+
         # augment whole images
         data_img, label_img = self._augment_images(data_img, label_img)
 
@@ -611,7 +616,7 @@ class SegBasisLoader(DataLoader):
         samples = np.zeros(batch_shape + (self.n_channels,), dtype=cfg.dtype_np)
         labels = np.zeros(batch_shape, dtype=np.uint8)
 
-        # get the background origins (get twice as many, in case they contain labels)
+        # get the background origins (get thrice as many, in case they contain labels)
         # This is faster than drawing again each time
         background_shape = (3 * n_background, 3)
         origins_background = np.random.randint(
@@ -656,22 +661,15 @@ class SegBasisLoader(DataLoader):
                 + "or increasing the background_label_percentage (especially for 3D)."
             )
 
-        if self.mode == self.MODES.APPLY:
-            raise NotImplementedError("Use the original data loader")
-
         # if rank is 3, squash the z-axes
         if self.data_rank == 3:
             samples = samples.squeeze(axis=1)
             labels = labels.squeeze(axis=1)
 
-        # assert np.sum(labels) > 0 # only for debugging
-
-        # augment and convert to one_hot_label
-        if self.mode is not self.MODES.APPLY:
-            # augment
-            labels_onehot = np.squeeze(np.eye(self.n_seg)[labels.flat]).reshape(
-                labels.shape + (-1,)
-            )
+        # convert to one_hot_label
+        labels_onehot = np.squeeze(np.eye(self.n_seg)[labels.flat]).reshape(
+            labels.shape + (-1,)
+        )
 
         logger.debug(
             "Sample shape: %s, Label_shape: %s",
