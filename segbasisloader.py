@@ -77,9 +77,6 @@ class SegBasisLoader(DataLoader):
             sample_buffer_size=sample_buffer_size,
         )
 
-        if cfg.num_channels > 1:
-            assert self.data_rank in [3, 4], "The rank should be 3 or 4."
-
         # use caching
         self.use_caching = True
 
@@ -243,6 +240,8 @@ class SegBasisLoader(DataLoader):
             raise ValueError(f"Not allowed mode {self.mode}")
 
         self.data_rank = len(self.dshapes[0])
+
+        assert self.data_rank in [3, 4], "The rank should be 3 or 4."
 
     def get_filenames(self, file_id):
         """For compability reasons, get filenames without the preprocessed ones
