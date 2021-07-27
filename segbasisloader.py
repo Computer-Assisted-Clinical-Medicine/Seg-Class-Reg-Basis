@@ -4,6 +4,7 @@ will augment the images while the apply loader can be used to pass whole images.
 import logging
 import os
 from enum import Enum
+from typing import List
 
 import numpy as np
 import SimpleITK as sitk
@@ -76,7 +77,8 @@ class SegBasisLoader(DataLoader):
             sample_buffer_size=sample_buffer_size,
         )
 
-        assert self.data_rank in [3, 4], "The rank should be 3 or 4."
+        if cfg.num_channels > 1:
+            assert self.data_rank in [3, 4], "The rank should be 3 or 4."
 
         # use caching
         self.use_caching = True
@@ -201,7 +203,9 @@ class SegBasisLoader(DataLoader):
         else:
             raise NotImplementedError(f"{self.normalizing_method} is not implemented")
 
-    def __call__(self, file_list, batch_size, n_epochs=50, read_threads=1):
+    def __call__(
+        self, file_list: List[str], batch_size: int, n_epochs=50, read_threads=1, **kwargs
+    ):
         # call the normalization callbacks, but only in training
         if self.mode == self.MODES.TRAIN:
             for n_call in self.normalization_callbacks:
