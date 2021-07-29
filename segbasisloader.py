@@ -64,6 +64,7 @@ class SegBasisLoader(DataLoader):
         do_resampling=None,
         shuffle=None,
         sample_buffer_size=None,
+        **kwargs,
     ):
 
         # set new properties derived in the shape
@@ -75,6 +76,7 @@ class SegBasisLoader(DataLoader):
             name=name,
             shuffle=shuffle,
             sample_buffer_size=sample_buffer_size,
+            **kwargs,
         )
 
         # use caching

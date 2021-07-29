@@ -44,52 +44,19 @@ class SegBasisNet(Network):
         # policy = tf.keras.mixed_precision.experimental.Policy('mixed_float16')
         # tf.keras.mixed_precision.experimental.set_policy(policy)
 
-        self.inputs = {}
-        self.outputs = {}
-        self.variables = {}
-        self.options = {}
-        self.options["is_training"] = is_training
-        self.options["do_finetune"] = do_finetune
-        self.options["regularize"] = regularize
+        self.custom_objects = {"Dice": Dice}
 
-        if not self.options["is_training"] or (
-            self.options["is_training"] and self.options["do_finetune"]
-        ):
-            if model_path == "":
-                raise ValueError("Model Path cannot be empty for Finetuning or Inference!")
-        else:
-            if model_path != "":
-                logger.warning("Caution: argument model_path is ignored in training!")
-
-        self.options["model_path"] = model_path
-
-        self.options["debug"] = debug
-
-        # write other kwargs to options
-        for key, value in kwargs.items():
-            self.options[key] = value
-
-        if self.options["is_training"] and not self.options["do_finetune"]:
-            self._set_up_inputs()
-            self.options[
-                "drop_out"
-            ] = drop_out  # if [0] is True, dropout is added to the graph with keep_prob [2]
-            self.options["regularizer"] = self._get_reg()
-            self.options["activation"] = activation
-            # if training build everything according to parameters
-            self.options["in_channels"] = self.inputs["x"].shape.as_list()[-1]
-            # rank is the input number of dimensions (without channels and batch size)
-            self.options["rank"] = len(self.inputs["x"].shape) - 2
-
-            self.options["loss"] = loss_name
-            self.outputs["loss"] = self._get_loss()
-            self.model = self._build_model()
-            self.model._name = self.get_name()
-        else:
-            # for finetuning load net from file
-            self._load_net()
-            self.options["loss"] = loss_name
-            self.outputs["loss"] = self._get_loss()
+        super().__init__(
+            loss=loss_name,
+            is_training=is_training,
+            do_finetune=do_finetune,
+            model_path=model_path,
+            regularize=regularize,
+            drop_out=drop_out,
+            activation=activation,
+            debug=debug,
+            **kwargs,
+        )
 
         # window size when applying the network
         self.window_size = None
@@ -104,11 +71,12 @@ class SegBasisNet(Network):
         )
         self.options["out_channels"] = cfg.num_classes_seg
 
-    def _get_loss(self) -> Callable:
+    def _get_loss(self, loss_name) -> Callable:
         """
-        Returns loss depending on `self.options['loss']``.
+        Returns loss depending on loss.
 
-        self.options['loss'] should be in {'DICE', 'TVE', 'GDL', 'CEL', 'WCEL'}.
+        loss should be in {'DICE', 'TVE', 'GDL', 'CEL', 'WCEL'}.
+
         Returns
         -------
         Callable
@@ -117,58 +85,55 @@ class SegBasisNet(Network):
         # many returns do not affect the readability
         # pylint: disable=too-many-return-statements
 
-        if self.options["loss"] == "DICE":
+        if loss_name == "DICE":
             return loss.dice_loss
 
-        if self.options["loss"] == "DICE-FNR":
+        if loss_name == "DICE-FNR":
             return loss.dice_with_fnr_loss
 
-        if self.options["loss"] == "TVE":
+        if loss_name == "TVE":
             return loss.tversky_loss
 
-        if self.options["loss"] == "GDL":
+        if loss_name == "GDL":
             return loss.generalized_dice_loss
 
-        if self.options["loss"] == "GDL-FPNR":
+        if loss_name == "GDL-FPNR":
             return loss.generalized_dice_with_fpr_fnr_loss
 
-        if self.options["loss"] == "NDL":
+        if loss_name == "NDL":
             return loss.normalized_dice_loss
 
-        if self.options["loss"] == "EDL":
+        if loss_name == "EDL":
             return loss.equalized_dice_loss
 
-        if self.options["loss"] == "WDL":
-            return loss.weighted_dice_loss
-
-        if self.options["loss"] == "CEL":
+        if loss_name == "CEL":
             if self.options["out_channels"] > 2:
                 return loss.categorical_cross_entropy_loss
             else:
                 return loss.binary_cross_entropy_loss
 
-        if self.options["loss"] == "ECEL":
+        if loss_name == "ECEL":
             return loss.equalized_categorical_cross_entropy
 
-        if self.options["loss"] == "NCEL":
+        if loss_name == "NCEL":
             return loss.normalized_categorical_cross_entropy
 
-        if self.options["loss"] == "WCEL":
+        if loss_name == "WCEL":
             return loss.weighted_categorical_cross_entropy
 
-        if self.options["loss"] == "ECEL-FNR":
+        if loss_name == "ECEL-FNR":
             return loss.equalized_categorical_cross_entropy_with_fnr
 
-        if self.options["loss"] == "WCEL-FPR":
+        if loss_name == "WCEL-FPR":
             return loss.weighted_categorical_crossentropy_with_fpr_loss
 
-        if self.options["loss"] == "GCEL":
+        if loss_name == "GCEL":
             return loss.generalized_categorical_cross_entropy
 
-        if self.options["loss"] == "CEL+DICE":
+        if loss_name == "CEL+DICE":
             return loss.categorical_cross_entropy_and_dice_loss
 
-        raise ValueError(self.options["loss"], "is not a supported loss function.")
+        raise ValueError(loss_name, "is not a supported loss function.")
 
     def _select_final_activation(self):
         # http://dataaspirant.com/2017/03/07/difference-between-softmax-function-and-sigmoid-function/
@@ -415,22 +380,6 @@ class SegBasisNet(Network):
         self.model.save(model_dir / "model-best", save_format="tf")
         print("Saving finished.")
 
-    def _load_net(self):
-        # This loads the keras network and the first checkpoint file
-        self.model: tf.keras.Model = tf.keras.models.load_model(
-            self.options["model_path"], compile=False, custom_objects={"Dice": Dice}
-        )
-
-        epoch = Path(self.options["model_path"]).name.split("-")[-1]
-        self.variables["epoch"] = epoch
-
-        if self.options["is_training"] is False:
-            self.model.trainable = False
-        self.options["rank"] = len(self.model.inputs[0].shape) - 2
-        self.options["in_channels"] = self.model.inputs[0].shape.as_list()[-1]
-        self.options["out_channels"] = self.model.outputs[0].shape.as_list()[-1]
-        logger.info("Model was loaded")
-
     def get_hyperparameter_dict(self):
         """This function reads the hyperparameters from options and writes them to a dict of
         hyperparameters, which can then be read using tensorboard.
@@ -448,10 +397,11 @@ class SegBasisNet(Network):
             "regularizer": self.options["regularize"][1],
             "regularizer_param": self.options["regularize"][2],
         }
-        if isinstance(self.options["kernel_dims"], list):
-            hyperparameters["kernel_dim"] = self.options["kernel_dims"][0]
-        else:
-            hyperparameters["kernel_dim"] = self.options["kernel_dims"]
+        if "kernel_dim" in self.options:
+            if isinstance(self.options["kernel_dims"], list):
+                hyperparameters["kernel_dim"] = self.options["kernel_dims"][0]
+            else:
+                hyperparameters["kernel_dim"] = self.options["kernel_dims"]
         if "dilation_rate" in self.options:
             hyperparameters["dilation_rate_first"] = self.options["dilation_rate"][0]
         if self.options["regularize"]:
