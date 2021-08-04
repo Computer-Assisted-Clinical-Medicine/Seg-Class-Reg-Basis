@@ -3,7 +3,7 @@
 import logging
 import os
 from pathlib import Path
-from typing import Callable
+from typing import Callable, List, Union
 
 import numpy as np
 import SimpleITK as sitk
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # it inherits the public methods
 # pylint: disable=too-few-public-methods
 
-# TODO: remove dependence on Network or make it more abstract, it hardly does anything.
+
 class SegBasisNet(Network):
     """Basic network to perform segmentation."""
 
@@ -164,13 +164,15 @@ class SegBasisNet(Network):
     # pylint: disable=arguments-differ
     def _run_train(
         self,
-        logs_path,
-        folder_name,
-        training_dataset,
-        validation_dataset,
-        epochs,
+        logs_path: os.PathLike,
+        folder_name: str,
+        training_dataset: tf.data.Dataset,
+        validation_dataset: tf.data.Dataset,
+        epochs: int = 10,
         l_r=0.001,
         optimizer="Adam",
+        metrics=("dice", "acc", "meanIoU"),
+        monitor="val_loss",
         best_model_decay=0.7,
         early_stopping=False,
         patience_es=10,
@@ -203,6 +205,11 @@ class SegBasisNet(Network):
             The learning rate, by default 0.001
         optimizer : str, optional
             The name of the optimizer, by default 'Adam'
+        metrics : Collection[Union[str, Callable]], optional
+            The metrics that should be used a strings or Callables, by default ("dice", "acc", "meanIoU")
+        monitor : str, optional
+            The metric to monitor, used for early stopping and keeping the best model and lr reduction.
+            Prefix val_ means that the metric from the validation dataset will be used, by default "val_loss"
         best_model_decay : float, optional
             The decay rate used for averaging the metric when saving the best model,
             by default 0.7, None means no moving average
@@ -240,17 +247,24 @@ class SegBasisNet(Network):
         # do summary
         self.model.summary(print_fn=logger.info)
 
+        # set metrics
+        metric_objects: List[Union[str, Callable]] = []
+        for met in metrics:
+            if met == "dice":
+                metric_objects.append(Dice(name="dice", num_classes=cfg.num_classes_seg))
+            elif met == "meanIoU":
+                tf.keras.metrics.MeanIoU(num_classes=cfg.num_classes_seg)
+            # if nothing else is specified, just add it
+            elif isinstance(met, str):
+                metric_objects.append(met)
+
         # compile model
         self.model.compile(
             optimizer=self._get_optimizer(
                 optimizer, l_r, 0, clipvalue=self.options["clipping_value"]
             ),
             loss=self.outputs["loss"],
-            metrics=[
-                Dice(name="dice", num_classes=cfg.num_classes_seg),
-                "acc",
-                tf.keras.metrics.MeanIoU(num_classes=cfg.num_classes_seg),
-            ],
+            metrics=metrics,
             run_eagerly=debug,
         )
 
@@ -258,6 +272,7 @@ class SegBasisNet(Network):
             self.model.run_eagerly = True
 
         # check the iterator sizes
+        assert cfg.num_files is not None, "Number of files should be set"
         iter_per_epoch = cfg.samples_per_volume * cfg.num_files // cfg.batch_size_train
         assert iter_per_epoch > 0, "Steps per epoch is zero, lower the batch size"
         iter_per_vald = cfg.samples_per_volume * cfg.number_of_vald // cfg.batch_size_valid
@@ -275,12 +290,12 @@ class SegBasisNet(Network):
 
         # to save the best model
         cp_best_callback = tf_utils.KeepBestModel(
-            filepath=model_dir / "weights_best_{epoch:03d}-best{val_dice:1.3f}.hdf5",
+            filepath=model_dir / "weights_best_{epoch:03d}-best{val_loss:1.3f}.hdf5",
             save_weights_only=True,
             verbose=0,
             save_freq="epoch",
-            monitor="val_dice",
-            mode="max",
+            monitor="val_loss",
+            mode="min",
             decay=best_model_decay,
         )
         callbacks.append(cp_best_callback)
@@ -297,16 +312,16 @@ class SegBasisNet(Network):
         # early stopping
         if early_stopping:
             es_callback = tf.keras.callbacks.EarlyStopping(
-                monitor="val_dice", patience=patience_es, mode="max", min_delta=0.005
+                monitor="val_loss", patience=patience_es, mode="min", min_delta=0.005
             )
             callbacks.append(es_callback)
 
         # reduce learning rate on plateau
         if reduce_lr_on_plateau:
             lr_reduce_callback = tf.keras.callbacks.ReduceLROnPlateau(
-                monitor="val_dice",
+                monitor="val_loss",
                 patience=patience_lr_plat,
-                mode="max",
+                mode="min",
                 factor=factor_lr_plat,
                 verbose=1,
                 cooldown=5,
@@ -314,13 +329,15 @@ class SegBasisNet(Network):
             callbacks.append(lr_reduce_callback)
 
         # for tensorboard
+        # only write gradients if there is a visualization dataset
+        write_grads = visualization_dataset is not None
         tb_callback = tf_utils.CustomTBCallback(
             output_path / "logs",
             update_freq="epoch",
             profile_batch=(2, 12),
             histogram_freq=1,
             embeddings_freq=0,
-            write_grads=True,
+            write_grads=write_grads,
             write_graph=write_graph,
             visualization_dataset=visualization_dataset,
             visualization_frequency=1,

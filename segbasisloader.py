@@ -4,7 +4,7 @@ will augment the images while the apply loader can be used to pass whole images.
 import logging
 import os
 from enum import Enum
-from typing import List
+from typing import List, Optional
 
 import numpy as np
 import SimpleITK as sitk
@@ -203,12 +203,39 @@ class SegBasisLoader(DataLoader):
             raise NotImplementedError(f"{self.normalizing_method} is not implemented")
 
     def __call__(
-        self, file_list: List[str], batch_size: int, n_epochs=50, read_threads=1, **kwargs
-    ):
+        self,
+        file_list: List[str],
+        batch_size: Optional[int] = None,
+        n_epochs=50,
+        read_threads=1,
+        **kwargs,
+    ) -> tf.data.Dataset:
+        """Create the tensorflow dataset when calling the data loader
+
+        Parameters
+        ----------
+        file_list : List[str]
+            The files that should be loaded
+        batch_size : int
+            The batch size, if None, cfg.train_batch_size will be used, by default None
+        n_epochs : int, optional
+            The number of epochs. Each file will be used once per epoch, by default 50
+        read_threads : int, optional
+            The number of read threads, by default 1
+
+        Returns
+        -------
+        tf.data.Dataset
+            The tensorflow dataset, all files will be shuffled each epoch, then the
+            samples will be interleaved and the dataset is shuffled again with a
+            buffer 3 * number of files
+        """
         # call the normalization callbacks, but only in training
         if self.mode == self.MODES.TRAIN:
             for n_call in self.normalization_callbacks:
                 n_call([sitk.ReadImage(self.get_filenames(f)[0]) for f in file_list])
+        if batch_size is None:
+            batch_size = cfg.batch_size_train
         return super().__call__(
             file_list, batch_size, n_epochs=n_epochs, read_threads=read_threads
         )
