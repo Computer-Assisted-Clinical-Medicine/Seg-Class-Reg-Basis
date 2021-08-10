@@ -288,7 +288,7 @@ class ApplyBasisLoader(SegBasisLoader):
                 overlap = [0] + [15] * 2
             else:
                 overlap = [15] * 3
-        elif isinstance(overlap, int):
+        elif np.issubdtype(type(overlap), int):
             if self.data_rank == 3:
                 overlap = [0] + [overlap] * 3
             else:
