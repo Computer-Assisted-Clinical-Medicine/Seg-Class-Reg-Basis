@@ -154,7 +154,7 @@ def set_parameters_according_to_dimension(
 
     # set config
     if not preprocessed_dir.exists():
-        raise ValueError(f"{preprocessed_dir} not found.")
+        print(f"{preprocessed_dir} not found.")
     cfg.data_base_dir = str(preprocessed_dir)
 
 
