@@ -6,10 +6,7 @@ import socket
 from typing import Any, Optional
 
 import numpy as np
-import SimpleITK as sitk
 import tensorflow as tf
-
-from .normalization import NORMALIZING
 
 # pylint: disable=invalid-name
 
@@ -25,9 +22,9 @@ test_csv = "test.csv"
 sample_file_name_prefix = "sample-"
 label_file_name_prefix = "label-"
 # the suffix determines the format
-file_suffix = ".nrrd"
+file_suffix = ".nii.gz"
 # preprocessed_dir
-preprocessed_dir: Any = None
+data_base_dir: Any = None
 
 
 ##### Shapes and Capacities #####
@@ -70,25 +67,6 @@ dtype = tf.float32  # the datatype to use inside of tensorflow
 dtype_np = np.float32  # the datatype used in numpy, should be the same as in tf
 data_train_split = 0.75
 number_of_vald = 4
-
-
-##### Preprocessing #####
-normalizing_method = NORMALIZING.QUANTILE
-# values between outside of the quantiles norm_min_q and norm_max_q are normalized to interval [-1, 1]
-norm_min_q = 0.01
-norm_max_q = 0.99
-# values between outside of norm_min_v and norm_max_v are normalized to interval [-1, 1]
-norm_min_v = -150
-norm_max_v = 275
-
-do_resampling = True
-if do_resampling:
-    target_spacing = [1, 1, 3]
-target_type_image = sitk.sitkFloat32
-target_type_label = sitk.sitkUInt8
-data_background_value = 0  # data outside the image is set to this value
-label_background_value = 0  # labels to this
-
 
 ###### Sample Mining #####
 percent_of_object_samples = (

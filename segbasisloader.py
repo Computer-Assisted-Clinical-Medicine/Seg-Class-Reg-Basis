@@ -4,17 +4,14 @@ will augment the images while the apply loader can be used to pass whole images.
 import logging
 import os
 from enum import Enum
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 import SimpleITK as sitk
 import tensorflow as tf
 
 from . import config as cfg
-from . import normalization
-from .NetworkBasis import image
 from .NetworkBasis.dataloader import DataLoader
-from .normalization import NORMALIZING
 
 # configure logger
 logger = logging.getLogger(__name__)
@@ -28,8 +25,7 @@ class NOISETYP(Enum):
 
 
 class SegBasisLoader(DataLoader):
-    """A basis loader for segmentation network, should be extended for specific
-    task implementing the _adapt_to_task method. The Image is padded by a quarter of
+    """A basis loader for segmentation network. The Image is padded by a quarter of
     the sample size in each direction and the random patches are extracted.
 
     If frac_obj is > 0, the specific fraction of the samples_per_volume will be
@@ -40,6 +36,10 @@ class SegBasisLoader(DataLoader):
 
     Parameters
     ----------
+    file_dict : Dict[str, Dict[str, str]]
+        dictionary containing the file information, the key should be the id of
+        the data point and value should be a dict with the image and labels as
+        keys and the file paths as values
     seed : int, optional
         set a fixed seed for the loader, by default 42
     mode : has no effect, should not be Apply
@@ -55,13 +55,12 @@ class SegBasisLoader(DataLoader):
 
     def __init__(
         self,
+        file_dict: Dict[str, Dict[str, str]],
         mode=None,
         seed=42,
         name="reader",
         frac_obj=None,
         samples_per_volume=None,
-        normalizing_method=None,
-        do_resampling=None,
         shuffle=None,
         sample_buffer_size=None,
         **kwargs,
@@ -79,8 +78,8 @@ class SegBasisLoader(DataLoader):
             **kwargs,
         )
 
-        # use caching
-        self.use_caching = True
+        # save the file dict
+        self.file_dict = file_dict
 
         # get the fraction of the samples that should contain the object
         if frac_obj is None:
@@ -94,16 +93,6 @@ class SegBasisLoader(DataLoader):
         else:
             self.samples_per_volume = samples_per_volume
 
-        if normalizing_method is not None:
-            self.normalizing_method = normalizing_method
-        else:
-            self.normalizing_method = cfg.normalizing_method
-
-        if do_resampling is not None:
-            self.do_resampling = do_resampling
-        else:
-            self.do_resampling = cfg.do_resampling
-
         # set channel and class parameters
         self.n_channels = cfg.num_channels
         self.n_seg = cfg.num_classes_seg
@@ -111,96 +100,6 @@ class SegBasisLoader(DataLoader):
         # set the capacity
         if sample_buffer_size is None:
             self.sample_buffer_size = cfg.batch_capacity_train
-
-        # set callbacks for normalization (in case it should be applied to the complete dataset)
-        self.normalization_callbacks = []
-
-        # TODO: turn normalization into an object
-        # set the normalization_method
-        if self.normalizing_method == NORMALIZING.QUANTILE:
-            self.normalization_func = lambda img: normalization.normalie_channelwise(
-                image=img,
-                func=normalization.quantile,
-                lower_q=cfg.norm_min_q,
-                upper_q=cfg.norm_max_q,
-            )
-        elif self.normalizing_method == NORMALIZING.MEAN_STD:
-            self.normalization_func = lambda img: normalization.normalie_channelwise(
-                image=img, func=normalization.mean_std
-            )
-        elif self.normalizing_method == NORMALIZING.WINDOW:
-            self.normalization_func = lambda img: normalization.normalie_channelwise(
-                image=img,
-                func=normalization.window,
-                lower=cfg.norm_min_v,
-                upper=cfg.norm_max_v,
-            )
-        elif self.normalizing_method == NORMALIZING.HISTOGRAM_MATCHING:
-            # set file to export the landmarks to
-            self.landmark_file = os.path.join(
-                self._get_preprocessing_folder(), "landmarks.npz"
-            )
-            self.normalization_func = lambda img: normalization.histogram_matching_apply(
-                self.landmark_file, img, None, True
-            )
-            if not os.path.exists(self.landmark_file):
-                self.normalization_callbacks.append(
-                    lambda x: normalization.landmark_and_mean_extraction(
-                        self.landmark_file, x
-                    )
-                )
-        elif self.normalizing_method == NORMALIZING.Z_SCORE:
-            # set file to export the landmarks to (the same as for landmarks, because it extracts both)
-            self.landmark_file = os.path.join(
-                self._get_preprocessing_folder(), "landmarks.npz"
-            )
-            self.normalization_func = lambda img: normalization.z_score(
-                self.landmark_file, img
-            )
-            if not os.path.exists(self.landmark_file):
-                self.normalization_callbacks.append(
-                    lambda x: normalization.landmark_and_mean_extraction(
-                        self.landmark_file, x
-                    )
-                )
-        elif self.normalizing_method == NORMALIZING.HM_QUANTILE:
-            # normalize with quantile method before histogram matching
-            n_func = lambda img: normalization.quantile(
-                image=img, lower_q=cfg.norm_min_q, upper_q=cfg.norm_max_q
-            )
-            # set file to export the landmarks to
-            self.landmark_file = os.path.join(
-                self._get_preprocessing_folder(), "landmarks.npz"
-            )
-            self.normalization_func = lambda img: normalization.histogram_matching_apply(
-                self.landmark_file, img, n_func, False
-            )
-            if not os.path.exists(self.landmark_file):
-                self.normalization_callbacks.append(
-                    lambda x: normalization.landmark_and_mean_extraction(
-                        self.landmark_file, x, norm_func=n_func
-                    )
-                )
-        elif self.normalizing_method == NORMALIZING.HM_QUANT_MEAN:
-            # normalize with quantile method before histogram matching
-            n_func = lambda img: normalization.quantile(
-                image=img, lower_q=cfg.norm_min_q, upper_q=cfg.norm_max_q
-            )
-            # set file to export the landmarks to
-            self.landmark_file = os.path.join(
-                self._get_preprocessing_folder(), "landmarks.npz"
-            )
-            self.normalization_func = lambda img: normalization.histogram_matching_apply(
-                self.landmark_file, img, n_func, True
-            )
-            if not os.path.exists(self.landmark_file):
-                self.normalization_callbacks.append(
-                    lambda x: normalization.landmark_and_mean_extraction(
-                        self.landmark_file, x, norm_func=n_func
-                    )
-                )
-        else:
-            raise NotImplementedError(f"{self.normalizing_method} is not implemented")
 
     def __call__(
         self,
@@ -230,10 +129,6 @@ class SegBasisLoader(DataLoader):
             samples will be interleaved and the dataset is shuffled again with a
             buffer 3 * number of files
         """
-        # call the normalization callbacks, but only in training
-        if self.mode == self.MODES.TRAIN:
-            for n_call in self.normalization_callbacks:
-                n_call([sitk.ReadImage(self.get_filenames(f)[0]) for f in file_list])
         if batch_size is None:
             batch_size = cfg.batch_size_train
         return super().__call__(
@@ -282,58 +177,18 @@ class SegBasisLoader(DataLoader):
 
         Returns
         -------
-        [type]
-            [description]
+        str, str
+            The location of the image and labels
         """
-        sample, _, label, _ = self._get_filenames_cached(file_id)
-        return sample, label
-
-    def _get_preprocessing_folder(self):
-        # set preprocessing folder name
-        folder_name = f"pre_{self.normalizing_method.name}"
-        if self.do_resampling:
-            folder_name += "_resampled"
-        pre_folder = os.path.join(cfg.preprocessed_dir, folder_name)
-        if not os.path.exists(pre_folder):
-            logger.debug("preprocessing dir does not exist, it will be created")
-            os.makedirs(pre_folder)
-        return pre_folder
-
-    def _get_filenames_cached(self, file_id):
-        """Gets the filenames and the preprocessed filenames
-
-        Parameters
-        ----------
-        file_id : str
-            The file ID
-
-        Returns
-        -------
-        str, str, str, str
-            The path to the data_file and label_file in the cached and uncached version
-        """
-        # get the folder and id
-        folder, file_number = os.path.split(file_id)
-
-        pre_folder = self._get_preprocessing_folder()
-
-        # generate the file name for the sample
-        sample_name = cfg.sample_file_name_prefix + file_number
-        data_file = os.path.join(folder, sample_name + cfg.file_suffix)
-        if not os.path.exists(data_file):
-            raise Exception(f"The file {data_file} could not be found")
-        # generate the name of the preprocessed file
-        filename = f"{sample_name}.mhd"
-        data_file_pre = os.path.join(pre_folder, filename)
-
-        # generate the file name for the sample
-        label_name = cfg.label_file_name_prefix + file_number
-        label_file = os.path.join(folder, (label_name + cfg.file_suffix))
-        if not os.path.exists(data_file):
-            raise Exception(f"The file {label_file} could not be found")
-        # generate the name of the preprocessed file
-        label_file_pre = os.path.join(pre_folder, (label_name + ".mhd"))
-        return data_file, data_file_pre, label_file, label_file_pre
+        data = self.file_dict[file_id]
+        sample = os.path.join(cfg.data_base_dir, data["image"])
+        assert os.path.exists(sample), "image not found."
+        if "labels" in data:
+            labels = os.path.join(cfg.data_base_dir, data["labels"])
+            assert os.path.exists(labels), "labels not found."
+        else:
+            labels = None
+        return sample, labels
 
     def _load_file(self, file_name, load_labels=True):
         """Load a file, if the file is found in the chache, this is used, otherwise
@@ -364,64 +219,16 @@ class SegBasisLoader(DataLoader):
             file_id = str(file_name)
         logger.debug("        Loading %s (%s)", file_id, self.mode)
         # Use a SimpleITK reader to load the nii images and labels for training
-        data_file, data_file_pre, label_file, label_file_pre = self._get_filenames_cached(
-            file_id
-        )
-        # see if the preprocessed files exist
-        data_exist = os.path.exists(data_file_pre)
-        lbl_exist = os.path.exists(label_file_pre)
-        if data_exist and lbl_exist and self.use_caching and load_labels:
-            # load images
-            data = sitk.ReadImage(str(data_file_pre))
-            lbl = sitk.ReadImage(str(label_file_pre))
-        elif not load_labels and data_exist and self.use_caching:
-            # load images
-            data = sitk.ReadImage(str(data_file_pre))
-            lbl = None
+        data_file, label_file = self.get_filenames(file_id)
+        # load images
+        data_img = sitk.ReadImage(str(data_file))
+        if load_labels:
+            label_img = sitk.ReadImage(str(label_file))
         else:
-            # load images
-            data_img = sitk.ReadImage(data_file)
-            if load_labels:
-                label_img = sitk.ReadImage(label_file)
-            else:
-                label_img = None
-            assert not np.any(
-                np.isnan(sitk.GetArrayFromImage(data_img))
-            ), f"Nans after loading {data_file}"
-            # adapt, resample and normalize them
-            data_img, label_img = self.adapt_to_task(data_img, label_img)
-            if self.do_resampling:
-                if load_labels:
-                    data_img, label_img = self._resample(data_img, label_img)
-                else:
-                    data_img = self._resample(data_img, label_img)
-            data = sitk.GetArrayFromImage(data_img)
-            assert not np.any(np.isnan(data)), "Nans in the image after converting to numpy"
-            assert np.all(data < 1e6), "Input values over were 1 000 000 found."
-            try:
-                data = self.normalize(data)
-                assert not np.any(np.isnan(data)), "Nans in the image after normalization"
-            except AssertionError as exc:
-                tf.print(f"There was the error {exc} when processing {data_file}.")
-                raise exc
-            if load_labels:
-                lbl = sitk.GetArrayFromImage(label_img)
-            else:
-                lbl = None
-            # then check them
-            self._check_images(data, lbl)
-            # if everything is ok, save the preprocessed images
-            data_img_proc = sitk.GetImageFromArray(data)
-            data_img_proc.CopyInformation(data_img)
-            sitk.WriteImage(data_img_proc, str(data_file_pre))
-            data = data_img_proc
-            if load_labels:
-                label_img_proc = sitk.GetImageFromArray(lbl)
-                label_img_proc.CopyInformation(label_img)
-                sitk.WriteImage(label_img_proc, str(label_file_pre))
-                lbl = label_img_proc
-
-        return data, lbl
+            label_img = None
+        # adapt to task
+        data_img, label_img = self.adapt_to_task(data_img, label_img)
+        return data_img, label_img
 
     def adapt_to_task(self, data_img: sitk.Image, label_img: sitk.Image):
         """This function can be used to adapt the images to the task at hand.
@@ -439,113 +246,6 @@ class SegBasisLoader(DataLoader):
             The adapted image and labels
         """
         return data_img, label_img
-
-    def _check_images(self, data: np.ndarray, lbl: np.ndarray):
-        """Check the images for problems
-
-        Parameters
-        ----------
-        data : np.array
-            Numpy array containing the data
-        lbl : np.array
-            Numpy array containing the labels (or None)
-        """
-        assert not np.any(np.isnan(data)), "Nans in the image in check"
-        if lbl is not None:
-            assert not np.any(np.isnan(lbl)), "Nans in the labels in check"
-            assert np.sum(lbl) > 100, "Not enough labels in the image"
-            logger.debug("Checking Labels (min, max) %s %s:", np.min(lbl), np.max(lbl))
-            logger.debug("Shape Label: %s", lbl.shape)
-        logger.debug("Shape Data: %s", data.shape)
-
-    def normalize(self, img: np.ndarray) -> np.ndarray:
-        """Normaize an image. The specified normalization method is used.
-
-        Parameters
-        ----------
-        img : np.array, optional
-            the image to normalize
-
-        Returns
-        -------
-        np.array
-            Normalized image
-        """
-        assert not np.any(np.isnan(img)), "NaNs in the input image."
-        img_no_nan = np.nan_to_num(img, nan=cfg.data_background_value)
-
-        # normalie the image
-        image_normalized = self.normalization_func(img_no_nan)
-
-        # do checks
-        assert not np.any(np.isnan(image_normalized)), "NaNs in normalized image."
-        assert np.abs(image_normalized).max() < 1e3, "Voxel values over 1000."
-        return image_normalized
-
-    def _resample(self, data: sitk.Image, label=None):
-        """Resample the image and labels to the spacing specified in the config.
-        The orientation is not changed, but it is checked, that all directions are
-        perpendicular to each other.
-
-        Parameters
-        ----------
-        data : sitk.Image
-            The image
-        label : sitk.Image, optional
-            The labels, optional, by default None
-
-        Returns
-        -------
-        sitk.Image
-            One or two images, depending if labels are provided
-        """
-        data_info = image.get_data_info(data)
-        # assure that the images are similar
-        if label is not None:
-            assert np.allclose(
-                data_info["orig_direction"], label.GetDirection(), atol=0.01
-            ), "label and image do not have the same direction"
-            assert np.allclose(
-                data_info["orig_origin"], label.GetOrigin(), atol=0.01
-            ), "label and image do not have the same origin"
-            assert np.allclose(
-                data_info["orig_spacing"], label.GetSpacing(), atol=0.01
-            ), "label and image do not have the same spacing"
-
-        target_info = {}
-        target_info["target_spacing"] = cfg.target_spacing
-
-        # make sure the spacing is orthogonal
-        orig_dirs = np.array(data_info["orig_direction"]).reshape(3, 3)
-        assert np.isclose(
-            np.dot(orig_dirs[0], orig_dirs[1]), 0, atol=0.01
-        ), "x and y not orthogonal"
-        assert np.isclose(
-            np.dot(orig_dirs[0], orig_dirs[2]), 0, atol=0.01
-        ), "x and z not orthogonal"
-        assert np.isclose(
-            np.dot(orig_dirs[1], orig_dirs[2]), 0, atol=0.01
-        ), "y and z not orthogonal"
-        target_info["target_direction"] = data_info["orig_direction"]
-
-        # calculate the new size
-        orig_size = np.array(data_info["orig_size"]) * np.array(data_info["orig_spacing"])
-        target_info["target_size"] = list(
-            (orig_size / np.array(cfg.target_spacing)).astype(int)
-        )
-
-        target_info["target_type_image"] = cfg.target_type_image
-        target_info["target_type_label"] = cfg.target_type_label
-
-        return image.resample_sitk_image(
-            data,
-            target_info,
-            data_background_value=cfg.data_background_value,
-            do_adapt_resolution=self.do_resampling,
-            label=label,
-            label_background_value=cfg.label_background_value,
-            do_augment=False,
-        )
 
     def _read_file_and_return_numpy_samples(self, file_name_queue: bytes):
         """Helper function getting the actual samples
@@ -592,14 +292,19 @@ class SegBasisLoader(DataLoader):
             raise NotImplementedError("Use the original data loader")
 
         # augment whole images
-        data_img, label_img = self._augment_images(data_img, label_img)
+        assert isinstance(data_img, sitk.Image), "data should be an SimpleITK image"
+        assert isinstance(label_img, sitk.Image), "labels should be an SimpleITK image"
+        # augment only in training
+        if self.mode == self.MODES.TRAIN:
+            data_img, label_img = self._augment_images(data_img, label_img)
 
         # convert samples to numpy arrays
         data = sitk.GetArrayFromImage(data_img)
         lbl = sitk.GetArrayFromImage(label_img)
 
         # augment the numpy arrays
-        data, lbl = self._augment_numpy(data, lbl)
+        if self.mode == self.MODES.TRAIN:
+            data, lbl = self._augment_numpy(data, lbl)
 
         # check that there are labels
         assert np.any(lbl != 0), "no labels found"
@@ -648,9 +353,9 @@ class SegBasisLoader(DataLoader):
         samples = np.zeros(batch_shape + (self.n_channels,), dtype=cfg.dtype_np)
         labels = np.zeros(batch_shape, dtype=np.uint8)
 
-        # get the background origins (get thrice as many, in case they contain labels)
+        # get the background origins (get twice as many, in case they contain labels)
         # This is faster than drawing again each time
-        background_shape = (3 * n_background, 3)
+        background_shape = (2 * n_background, 3)
         origins_background = np.random.randint(
             low=min_index, high=max_index, size=background_shape
         )
@@ -664,9 +369,10 @@ class SegBasisLoader(DataLoader):
             origins_foreground[:, i] = np.clip(origins_foreground[:, i], 0, m_index)
 
         # extract patches (pad if necessary), in separate function, do augmentation beforehand or with patches
-        origins = np.concatenate([origins_foreground, origins_background])
+        origins = list(np.concatenate([origins_foreground, origins_background]))
         # count the samples
         num = 0
+        counter = 0
         for i, j, k in origins:
             sample_patch = data_padded[
                 i : i + sample_shape[0], j : j + sample_shape[1], k : k + sample_shape[2]
@@ -686,6 +392,12 @@ class SegBasisLoader(DataLoader):
             # stop if there are enough samples
             if num >= self.samples_per_volume:
                 break
+            # add more samples if they threaten to run out
+            counter += 1
+            if counter == len(origins):
+                origins += list(
+                    np.random.randint(low=min_index, high=max_index, size=background_shape)
+                )
 
         if num < self.samples_per_volume:
             raise ValueError(
@@ -732,21 +444,21 @@ class SegBasisLoader(DataLoader):
             elif cfg.noise_typ == NOISETYP.POISSON:
                 poisson = np.random.poisson(cfg.mean_poisson, img.shape)
                 # scale according to the values
-                poisson = poisson * -cfg.mean_poisson / (cfg.norm_max_v - cfg.norm_min_v)
+                poisson = poisson * -cfg.mean_poisson
                 logger.debug("Minimum Poisson %.3f:", poisson.min())
                 logger.debug("Maximum Poisson %.3f:", poisson.max())
                 img = img + poisson
 
         return img, lbl
 
-    def _augment_images(self, data: sitk.Image, label: sitk.Image):
+    def _augment_images(self, image: sitk.Image, label: sitk.Image):
         """Augment images using sitk. Right now, rotations and scale changes are
         implemented. The values are set in the config. Images should already be
         resampled.
 
         Parameters
         ----------
-        data : sitk.Image
+        image : sitk.Image
             the image
         label : sitk.Image
             the labels
@@ -756,29 +468,59 @@ class SegBasisLoader(DataLoader):
         sitk.Image, sitk.Image
             the augmented data and labels
         """
-        data_info = image.get_data_info(data)
+        assert (
+            self.mode is self.MODES.TRAIN
+        ), "Augmentation should only be done in training mode"
 
-        target_info = {}
-        target_info["target_spacing"] = data_info["orig_spacing"]
-        target_info["target_direction"] = data_info["orig_direction"]
+        rotation = np.random.uniform(np.pi * -cfg.max_rotation, np.pi * cfg.max_rotation)
 
-        # do not change the resolution
-        target_info["target_size"] = data_info["orig_size"]
-        target_info["target_type_image"] = cfg.target_type_image
-        target_info["target_type_label"] = cfg.target_type_label
+        transform = sitk.Euler3DTransform()
+        # rotation center is center of the image center in world coordinates
+        rotation_center = image.TransformContinuousIndexToPhysicalPoint(
+            [i / 2 for i in image.GetSize()]
+        )
+        transform.SetCenter(rotation_center)
+        logger.debug("Augment Rotation: %s", rotation)
+        transform.SetRotation(0, 0, rotation)
+        transform.SetTranslation((0, 0, 0))
 
-        if self.mode is self.MODES.TRAIN:
-            return image.resample_sitk_image(
-                data,
-                target_info=target_info,
-                data_background_value=cfg.data_background_value,
-                do_adapt_resolution=False,
-                label=label,
-                label_background_value=cfg.label_background_value,
-                do_augment=True,
-                max_rotation_augment=cfg.max_rotation,
-                min_resolution_augment=cfg.min_resolution_augment,
-                max_resolution_augment=cfg.max_resolution_augment,
-            )
+        resolution_augmentation = np.random.uniform(
+            low=cfg.min_resolution_augment, high=cfg.max_resolution_augment
+        )
+        aug_target_spacing = np.array(image.GetSpacing()) * resolution_augmentation
+
+        # resample the image
+        resample_method = sitk.ResampleImageFilter()
+        resample_method.SetOutputSpacing(list(aug_target_spacing))
+        resample_method.SetDefaultPixelValue(0)
+        resample_method.SetInterpolator(sitk.sitkLinear)
+        resample_method.SetOutputDirection(image.GetDirection())
+        resample_method.SetOutputOrigin(image.GetOrigin())
+        resample_method.SetSize(image.GetSize())
+        resample_method.SetTransform(transform)
+        # for some reason, Float 32 does not work
+        resample_method.SetOutputPixelType(sitk.sitkFloat64)
+        # it does not work for multiple components per pixel
+        if image.GetNumberOfComponentsPerPixel() > 1:
+            components = []
+            for i in range(image.GetNumberOfComponentsPerPixel()):
+                component = sitk.VectorIndexSelectionCast(image, i)
+                assert (
+                    component.GetNumberOfComponentsPerPixel() == 1
+                ), "There only should be one component per pixel"
+                components.append(resample_method.Execute(component))
+            new_image = sitk.Compose(components)
         else:
-            return data, label
+            new_image = resample_method.Execute(image)
+
+        if label is not None:
+            # change setting for the label
+            resample_method.SetInterpolator(sitk.sitkNearestNeighbor)
+            resample_method.SetOutputPixelType(sitk.sitkUInt8)
+            resample_method.SetDefaultPixelValue(0)
+            # label: nearest neighbor resampling, fill with background
+            new_label = resample_method.Execute(label)
+        else:
+            new_label = None
+
+        return new_image, new_label

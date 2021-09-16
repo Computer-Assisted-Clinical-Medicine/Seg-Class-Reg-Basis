@@ -1,17 +1,150 @@
 """
 Different methods to normalize the input images
 """
-from enum import Enum
+import logging
 import os
-from typing import Callable, List
+from enum import Enum
+from typing import Any, Dict, Iterable, List, Optional
 
 import numpy as np
 import SimpleITK as sitk
+import yaml
 from scipy.interpolate import interp1d
+from tqdm import tqdm
+
+# configure logger
+logger = logging.getLogger(__name__)
+
+
+def all_subclasses(cls):
+    return set(cls.__subclasses__()).union(
+        [s for c in cls.__subclasses__() for s in all_subclasses(c)]
+    )
+
+
+class Normalization:
+    """This is the base class for image normalization. The normalization_func has
+    to be defined, which will do the normalization. train_normalization can also
+    be implemented, which can be used to determine some parameters used for the
+    normalization. properties_to_save should contain a list of all properties that
+    should be loaded and saved to get the normalization method back and parameters_to_save
+    should contain all parameters needed to create the normalization.
+    """
+
+    enum: Enum
+
+    properties_to_save: List[str] = []
+    parameters_to_save: List[str] = []
+
+    def __init__(self, normalize_channelwise=True) -> None:
+        self.normalize_channelwise = normalize_channelwise
+
+    def normalization_func(self, image: np.ndarray) -> np.ndarray:
+        return image
+
+    def train_normalization(self, images: Iterable[sitk.Image]) -> None:
+        pass
+
+    def normalize(self, image: sitk.Image) -> sitk.Image:
+        """Normalize an image. If normalize_channelwise is True, the normaliaztion
+        will be done channelwise, otherwise, it will be applied to the whole image.
+
+        Parameters
+        ----------
+        image : sitk.Image
+            The image to normalize
+
+        Returns
+        -------
+        np.array
+            The normalized image
+        """
+        image_np = sitk.GetArrayFromImage(image)
+        if image_np.ndim == 4 and self.normalize_channelwise:
+            if image_np.shape[3] > 1:
+                for i in range(image_np.shape[3]):
+                    # normalize each channel separately
+                    image_np[:, :, :, i] = self.normalization_func(image_np[:, :, :, i])
+            else:
+                # otherwise, normalie the whole image
+                image_np = self.normalization_func(image_np)
+        else:
+            # otherwise, normalie the whole image
+            image_np = self.normalization_func(image_np)
+
+        self.check_image(image_np)
+
+        # turn back into image
+        image_normalized = sitk.GetImageFromArray(image_np)
+        image_normalized.CopyInformation(image)
+        return image_normalized
+
+    def check_image(self, image: np.ndarray) -> None:
+        # do checks
+        assert not np.any(np.isnan(image)), "NaNs in normalized image."
+        assert np.abs(image).max() < 1e3, "Voxel values over 1000."
+
+    def get_parameters(self) -> Dict[str, Any]:
+        """get the parameters used to initialize the method, they are converted
+        to lists if they are numpy arrays (for nicer exports)"""
+        parameters: Dict[str, Any] = {}
+        for param in self.parameters_to_save:
+            val = getattr(self, param)
+            if isinstance(val, np.ndarray):
+                val = val.tolist()
+            parameters[param] = val
+        return parameters
+
+    def __call__(self, image: sitk.Image) -> sitk.Image:
+        return self.normalize(image)
+
+    def to_file(self, file_path: os.PathLike):
+        """Write all important properties and parameters to a file
+
+        Parameters
+        ----------
+        file_path : os.PathLike
+            The file to save to
+        """
+        properties: Dict[str, Any] = {}
+        for prop in self.properties_to_save:
+            # can't properly dump numpy arrays, so turn them into lists.
+            val = getattr(self, prop)
+            if isinstance(val, np.ndarray):
+                val = val.tolist()
+            properties[prop] = val
+        data = {
+            "parameters": self.get_parameters(),
+            "properties": properties,
+            "class": str(self.__class__),
+            "enum": self.enum,
+        }
+        with open(file_path, "w") as f:
+            yaml.dump(data, f)
+
+    @classmethod
+    def from_file(cls, file_path: os.PathLike):
+        """Load the properties of the normalization from a file, it should
+        already be initialized.
+
+        Parameters
+        ----------
+        file_path : os.pathlike
+            The file to load
+        """
+        with open(file_path, "r") as f:
+            data = yaml.load(f, Loader=yaml.Loader)
+        normalization = cls(**data["parameters"])
+        # set all properties from the dict
+        for prop, val in data["properties"].items():
+            setattr(normalization, prop, val)
+        return normalization
 
 
 class NORMALIZING(Enum):
-    """The different normalization types"""
+    """The different normalization types
+    To get the corresponding class, call get_class
+    """
 
     WINDOW = 0
     MEAN_STD = 1
@@ -19,41 +152,33 @@ class NORMALIZING(Enum):
     HISTOGRAM_MATCHING = 3
     Z_SCORE = 4
     HM_QUANTILE = 5
-    HM_QUANT_MEAN = 6
+
+    def get_class(self) -> Normalization:
+        """Get the corresponding normaliaztion class for an enum, it has to be a subclass
+        of the Normalization class.
+
+        Parameters
+        ----------
+        enum : NORMALIZING
+            The enum
+
+        Returns
+        -------
+        Normalization
+            The normalization class
+
+        Raises
+        ------
+        ValueError
+            If the class was found for that enum
+        """
+        for norm_cls in all_subclasses(Normalization):
+            if norm_cls.enum is self:
+                return norm_cls
+        raise ValueError(f"No normalization for {self.value}")
 
 
-def normalie_channelwise(image: np.ndarray, func: Callable, *args, **kwargs):
-    """Normalize an image channelwise. All arguments besides image and func are
-    passed onto the normalization function.
-
-    Parameters
-    ----------
-    image : np.array
-        The image to normalize
-    func : Callable
-        The function used for normalization.
-
-    Returns
-    -------
-    np.array
-        The normalized image
-    """
-    image_normed = image.copy()
-    # see if there are multiple channels
-    if image.ndim == 4:
-        if image.shape[3] > 1:
-            for i in range(image.shape[3]):
-                # normalize each channel separately
-                image_normed[:, :, :, i] = func(image[:, :, :, i], *args, **kwargs)
-            return image_normed
-        else:
-            # otherwise, normalie the whole image
-            return func(image, *args, **kwargs)
-    else:
-        # otherwise, normalie the whole image
-        return func(image, *args, **kwargs)
-
-
+# define a few functions used by multiple normalizations
 def clip_outliers(image: np.ndarray, lower_q: float, upper_q: float):
     """Clip the outliers above and below a certain quantile.
 
@@ -104,270 +229,371 @@ def window(image: np.ndarray, lower: float, upper: float):
     # rescale to between -1 and 1
     image_normed = (image_normed * 2) - 1
 
-    return image_normed
+    return image_normed  # type: ignore
 
 
-def quantile(image: np.ndarray, lower_q: float, upper_q: float) -> np.ndarray:
+class Window(Normalization):
+    """Normalize the image by a window. The image is clipped to the lower and
+    upper value and then scaled to a range between -1 and 1.
+
+    Parameters
+    ----------
+    lower : float
+        The lower window value
+    upper : float
+        The higher value
+    normalize_channelwise : bool
+        If it should be applied channelwise, does not matter for window.
+    """
+
+    enum = NORMALIZING.WINDOW
+
+    parameters_to_save = ["lower", "upper", "normalize_channelwise"]
+
+    def __init__(self, lower: float, upper: float, normalize_channelwise: bool) -> None:
+        self.lower = lower
+        self.upper = upper
+        if lower >= upper:
+            raise ValueError("Lower has to be lower than upper")
+        super().__init__(normalize_channelwise=normalize_channelwise)
+
+    def normalization_func(self, image: np.ndarray) -> np.ndarray:
+        """Normalize the image by a window. The image is clipped to the lower and
+        upper value and then scaled to a range between -1 and 1.
+
+        Parameters
+        ----------
+        image : np.array
+            The image as numpy array
+
+        Returns
+        -------
+        np.array
+            The normalized image
+        """
+        return window(image=image, lower=self.lower, upper=self.upper)
+
+
+class Quantile(Normalization):
     """Normalize the image by quantiles. The image is clipped to the lower and
     upper quantiles of the image and then scaled to a range between -1 and 1.
 
     Parameters
     ----------
-    image : np.array
-        The image as numpy array
     lower_q : float
         The lower quantile (between 0 and 1)
     upper_q : float
         The upper quantile (between 0 and 1)
-
-    Returns
-    -------
-    np.array
-        The normalized image
+    normalize_channelwise : bool
+        If it should be applied channelwise
     """
-    assert upper_q > lower_q, "Upper quantile has to be larger than the lower."
-    assert (
-        np.sum(np.isnan(image)) == 0
-    ), f"There are {np.sum(np.isnan(image)):.2f} NaNs in the image."
 
-    a_min = np.quantile(image, lower_q)
-    a_max = np.quantile(image, upper_q)
+    enum = NORMALIZING.QUANTILE
 
-    assert a_max > a_min, "Both quantiles are the same."
+    parameters_to_save = ["lower_q", "upper_q", "normalize_channelwise"]
 
-    return window(image, a_min, a_max)
+    def __init__(self, lower_q: float, upper_q: float, normalize_channelwise=True) -> None:
+        self.lower_q = lower_q
+        self.upper_q = upper_q
+        super().__init__(normalize_channelwise=normalize_channelwise)
+
+    def normalization_func(self, image: np.ndarray) -> np.ndarray:
+        """Normalize the image by quantiles. The image is clipped to the lower and
+        upper quantiles of the image and then scaled to a range between -1 and 1.
+
+        Parameters
+        ----------
+        image : np.array
+            The image as numpy array
+
+        Returns
+        -------
+        np.array
+            The normalized image
+        """
+        assert (
+            self.upper_q > self.lower_q
+        ), "Upper quantile has to be larger than the lower."
+        assert (
+            np.sum(np.isnan(image)) == 0
+        ), f"There are {np.sum(np.isnan(image)):.2f} NaNs in the image."
+
+        a_min = np.quantile(image, self.lower_q)
+        a_max = np.quantile(image, self.upper_q)
+
+        assert a_max > a_min, "Both quantiles are the same."
+
+        return window(image, a_min, a_max)
 
 
-def mean_std(image: np.ndarray) -> np.ndarray:
+class MeanSTD(Normalization):
     """Subtract the mean from image and the divide it by the standard deviation
     generating a value similar to the Z-Score.
 
     Parameters
     ----------
-    image : np.array
-        The image to normalize
-
-    Returns
-    -------
-    np.array
-        The normalized image
+    normalize_channelwise : bool
+        If it should be applied channelwise
     """
-    image_normed = image - np.mean(image)
-    std = np.std(image_normed)
-    assert std > 0, "The standard deviation of the image is 0."
-    image_normed = image_normed / std
 
-    return image_normed
+    enum = NORMALIZING.MEAN_STD
+
+    def normalization_func(self, image: np.ndarray) -> np.ndarray:
+        """Subtract the mean from image and the divide it by the standard deviation
+        generating a value similar to the Z-Score.
+
+        Parameters
+        ----------
+        image : np.array
+            The image to normalize
+
+        Returns
+        -------
+        np.array
+            The normalized image
+        """
+        image_normed = image - np.mean(image)
+        std = np.std(image_normed)
+        assert std > 0, "The standard deviation of the image is 0."
+        image_normed = image_normed / std
+
+        return image_normed
 
 
-def get_landmarks(img: np.ndarray, percs: np.ndarray) -> np.ndarray:
-    """
-    get the landmarks for the Nyul and Udupa norm method for a specific image
+class HistogramMatching(Normalization):
+    """Apply histogram matching to an image. The provided quantiles will be used
+    as landmarks to match the histograms. The values will also be clipped to be
+    within the lowest and highest landmark. This only works for 3D images.
 
     Parameters
     ----------
-    img : np.ndarray
-        image on which to find landmarks
-    percs : np.ndarray
-        corresponding landmark quantiles to extract
-
-    Returns
-    -------
-    np.ndarray
-        intensity values corresponding to percs in img
+    quantiles : List[float]
+        corresponding landmark quantiles to extract, if None, 1%, 99% and steps of
+        10% between 10% and 90% will be used.
+    mask_quantile : float
+        Values below this quantile will be ignored, by default 0
     """
-    landmarks = np.quantile(img, percs)
-    return landmarks
 
+    enum = NORMALIZING.HISTOGRAM_MATCHING
 
-def landmark_and_mean_extraction(
-    landmark_file,
-    images: List[sitk.Image],
-    mask_percentile=0,
-    percs=np.concatenate(([0.01], np.arange(0.10, 0.91, 0.10), [0.99])),
-    norm_func=None,
-):
-    """Extract the mean and landmarks (quantiles) and the standard deviation
-    from a set of images and export it to a files.
+    parameters_to_save = ["quantiles", "mask_quantile"]
+    properties_to_save = ["standard_scale", "means", "stds"]
 
-    Parameters
-    ----------
-    landmark_file : str
-        The file where the features are saved
-    images : List[sitk.Image]
-        The list of images where the landmarks get extracted from
-    mask_percentile : int, optional
-        The percentile to use as mask value, by default 10
-    percs : np.array, optional
-        the quantiles to use for the landmarks, by default
-        np.concatenate(([.05], np.arange(.10, .91, .10), [.95]))
-    norm_func : function, optional
-        An optional function which will be applied to each image before feature
-        extraction, by default None
-    """
-    # initialize the scale
-    standard_scale_list = []
-    means_list = []
-    stds_list = []
-    for image in images:
-        # get data
-        img_data = sitk.GetArrayFromImage(image)
-        # iterate over channels
-        landmarks = []
-        current_mean = []
-        current_std = []
-        for i in range(img_data.shape[3]):
+    def __init__(self, quantiles: List[float] = None, mask_quantile=0) -> None:
+        if quantiles is None:
+            quantiles = np.concatenate(([0.01], np.arange(0.10, 0.91, 0.10), [0.99]))
+        self.quantiles = np.array(quantiles)
+        if not np.all(self.quantiles >= 0):
+            raise ValueError("All quantiles should be >= 0.")
+        if not np.all(self.quantiles <= 1):
+            raise ValueError("All quantiles should be <= 1.")
+        if not np.all(self.quantiles[1:] - self.quantiles[:-1] > 0):
+            raise ValueError("Quantiles should be ascending.")
+        self.mask_quantile = mask_quantile
+
+        # set properties that will be determined during normalization training
+        self.standard_scale: Optional[np.ndarray] = None
+        self.means: Optional[np.ndarray] = None
+        self.stds: Optional[np.ndarray] = None
+
+        super().__init__(normalize_channelwise=True)
+
+    def get_landmarks(self, img: np.ndarray) -> np.ndarray:
+        """
+        get the landmarks for the Nyul and Udupa norm method for a specific image
+
+        Parameters
+        ----------
+        img : np.ndarray
+            image on which to find landmarks
+
+        Returns
+        -------
+        np.ndarray
+            intensity values corresponding to percs in img
+        """
+        landmarks = np.quantile(img, self.quantiles)
+        return landmarks
+
+    def train_normalization(self, images: Iterable[sitk.Image]) -> None:
+        """Extract the mean and landmarks (quantiles) and the standard deviation
+        from a set of images.
+        """
+        # initialize the scale
+        standard_scale_list = []
+        means_list = []
+        stds_list = []
+        for image in tqdm(images, unit="image", desc="Train Normalization"):
+            # get data
+            img_data = sitk.GetArrayFromImage(image)
+            assert img_data.ndim == 3, "Only 3D images are supported"
             # extract the channel and clip the outliers
-            image_mod = clip_outliers(img_data[:, :, :, i], percs[0], percs[-1])
-            # normalize if specified
-            if norm_func is not None:
-                image_mod = norm_func(image_mod)
+            image_mod = clip_outliers(img_data, self.quantiles[0], self.quantiles[-1])
             # set mask if not present
-            mask_data = image_mod > np.percentile(image_mod, mask_percentile)
+            mask_data = image_mod > np.quantile(image_mod, self.mask_quantile)
             # apply mask
             masked = image_mod[mask_data]
             # get landmarks
-            landmarks.append(get_landmarks(masked, percs))
+            landmarks = self.get_landmarks(masked)
             # get mean
-            current_mean.append(image_mod.mean())
+            current_mean = image_mod.mean()
             # get std
-            current_std.append(image_mod.std())
+            current_std = image_mod.std()
 
-        # gather landmarks for standard scale
-        standard_scale_list.append(landmarks)
-        means_list.append(current_mean)
-        stds_list.append(current_std)
-    standard_scale = np.array(standard_scale_list)
-    means = np.array(means_list)
-    stds = np.array(stds_list)
-    np.savez(
-        landmark_file,
-        percs=percs,
-        standard_scale=standard_scale.mean(axis=0),
-        all_landmarks=standard_scale,
-        means=means,
-        stds=stds,
-        means_mean=means.mean(axis=0),
-        stds_mean=stds.mean(axis=0),
-        mask_percentile=mask_percentile,
-    )
+            # gather landmarks for standard scale
+            standard_scale_list.append(landmarks)
+            means_list.append(float(current_mean))
+            stds_list.append(float(current_std))
 
+        mean_standard_scale = np.mean(np.array(standard_scale_list), axis=0)
+        assert isinstance(mean_standard_scale, np.ndarray), "mean scale should be an array"
+        self.standard_scale = mean_standard_scale
+        self.means = np.array(means_list)
+        self.stds = np.array(stds_list)
 
-def histogram_matching_apply(
-    landmark_file, image: np.ndarray, norm_func=None, subtract_mean=False
-) -> np.ndarray:
-    """Apply the histogram matching to an image
+    def normalize(self, image: sitk.Image) -> sitk.Image:
+        """Apply the histogram matching to an image
 
-    Parameters
-    ----------
-    landmark_file : str
-        The file where the landmarks are saved
-    image : np.array
-        The image
-    norm_func : function, optional
-        An optional function which will be applied to each image before histogram
-        matching, by default None
-    subtract_mean : bool, optional
-        If this is true, the mean will be subtracted and all images will be
-        divided by the standard deviation, by default false
+        Parameters
+        ----------
+        image : sitk.Image
+            The image
 
-    Returns
-    -------
-    np.array
-        The normalized image
+        Returns
+        -------
+        sitk.Image
+            The normalized image
+        """
 
-    Raises
-    ------
-    FileNotFoundError
-        If the landmark file was not found
-    """
-    if not os.path.exists(landmark_file):
-        raise FileNotFoundError(f"The landmark file {landmark_file} was not found.")
-    # load landmark file
-    data_file = np.load(landmark_file)
-    percs = data_file["percs"]
-    mask_percentile = data_file["mask_percentile"]
+        image_np = sitk.GetArrayFromImage(image)
 
-    image_normed = np.copy(image)
+        assert image_np.ndim == 3, "Only 3D images are supported"
 
-    for i in range(image.shape[3]):
-        standard_scale = data_file["standard_scale"][i]
-
-        # redefine standard scale
-        if subtract_mean:
-            standard_range = standard_scale[-1] - standard_scale[0]
-            standard_scale = (
-                2
-                * (standard_scale - standard_scale[standard_scale.size // 2])
-                / standard_range
-            )
+        assert self.standard_scale is not None, "No training was performed."
 
         # get the clipped image
-        image_clipped = clip_outliers(image[:, :, :, i], percs[0], percs[-1])
-        # normalize if specified
-        if norm_func is not None:
-            image_clipped = norm_func(image_clipped)
+        image_clipped = clip_outliers(image_np, self.quantiles[0], self.quantiles[-1])
         # get mask
-        mask_image = image_clipped > np.percentile(image_clipped, mask_percentile)
+        mask_image = image_clipped > np.quantile(image_clipped, self.mask_quantile)
         # apply mask
         masked = image_clipped[mask_image]
 
         # get landmarks
-        landmarks = get_landmarks(masked, percs)
+        landmarks = self.get_landmarks(masked)
 
         # create interpolation function (with extremes of standard scale as fill values)
         f = interp1d(
             landmarks,
-            standard_scale,
-            fill_value=(standard_scale[0], standard_scale[-1]),
+            self.standard_scale,
+            fill_value=(self.standard_scale[0], self.standard_scale[-1]),
             bounds_error=False,
         )
 
         # apply it
-        image_normed[:, :, :, i] = f(image_clipped)
+        image_np = f(image_clipped)
 
-    assert np.abs(image_normed).max() < 1e3, "Voxel values over 1000 detected"
-    return image_normed
+        # rescale to a range between -1 and 1
+        image_np = (
+            2
+            * (image_np - self.standard_scale[0])
+            / (self.standard_scale[-1] - self.standard_scale[0])
+            - 1
+        )
+
+        assert np.abs(image_np).max() < 10, "Voxel values over 10 detected"
+        image_normalized = sitk.GetImageFromArray(image_np)
+        image_normalized.CopyInformation(image)
+        return image_normalized
 
 
-def z_score(landmark_file, image: np.ndarray) -> np.ndarray:
+class ZScore(HistogramMatching):
     """Apply the z_score normalization to an image. This means the mean of all
     images will be subtracted and then the values will be divided by the
-    standard deviation.
+    standard deviation. This is always done channelwise.
 
     Parameters
     ----------
-    landmark_file : str
-        The file where the landmarks are saved
-    image : np.array
-        The image
-
-    Returns
-    -------
-    np.array
-        The normalized image
-
-    Raises
-    ------
-    FileNotFoundError
-        If the landmark file was not found
+    min_q : float
+        The minimum quantile to use, values below will be clipped, by default 0
+    max_q : float
+        The maximum quantile to use, values above will be clipped, by default 1
     """
-    if not os.path.exists(landmark_file):
-        raise FileNotFoundError(f"The landmark file {landmark_file} was not found.")
-    # load landmark file
-    data_file = np.load(landmark_file)
-    percs = data_file["percs"]
 
-    image_normed = np.copy(image)
+    enum = NORMALIZING.Z_SCORE
 
-    for i in range(image.shape[3]):
-        mean = data_file["means_mean"][i]
-        std = data_file["stds_mean"][i]
+    parameters_to_save = ["min_q", "max_q"]
+    properties_to_save = ["means", "stds"]
 
-        # get the clipped image
-        image_clipped = clip_outliers(image[:, :, :, i], percs[0], percs[-1])
+    def __init__(self, min_q: float = 0, max_q: float = 1) -> None:
+        self.min_q = min_q
+        self.max_q = max_q
+        super().__init__(quantiles=[self.min_q, 0.5, self.max_q], mask_quantile=0)
 
-        # apply it
-        image_normed[:, :, :, i] = (image_clipped - mean) / std
+    def normalize(self, image: sitk.Image) -> sitk.Image:
+        """Apply the Z-Score normalization to an image
 
-    return image_normed
+        Parameters
+        ----------
+        image : sitk.Image
+            The image
+
+        Returns
+        -------
+        sitk.Image
+            The normalized image
+        """
+
+        image_np = sitk.GetArrayFromImage(image)
+
+        assert self.means is not None, "No training was performed."
+        assert self.stds is not None, "No training was performed."
+
+        for i in range(image_np.shape[3]):
+            mean = self.means[i]
+            std = self.stds[i]
+
+            # get the clipped image
+            image_clipped = clip_outliers(image[:, :, :, i], self.min_q, self.max_q)
+
+            # apply it
+            image_np[:, :, :, i] = (image_clipped - mean) / std
+
+        assert np.abs(image_np).max() < 1e3, "Voxel values over 1000 detected"
+        image_normalized = sitk.GetImageFromArray(image_np)
+        image_normalized.CopyInformation(image)
+        return image_normalized
+
+
+class HMQuantile(HistogramMatching):
+    """Apply histogram matching to an image. The provided quantiles will be used
+    as landmarks to match the histograms. Previous to the histogram matching,
+    quantile normalization will be performed. The lowest and highest quantiles
+    in the quantiles will be used.
+
+    Parameters
+    ----------
+    quantiles : List[float]
+        corresponding landmark quantiles to extract, if None, 1%, 99% and steps of
+        10% between 10% and 90% will be used.
+    mask_quantile : float
+        Values below this quantile will be ignored, by default 0
+    """
+
+    enum = NORMALIZING.HM_QUANTILE
+
+    def __init__(self, quantiles: List[float], mask_quantile=0) -> None:
+        super().__init__(quantiles=quantiles, mask_quantile=mask_quantile)
+        self.quantile_norm = Quantile(
+            lower_q=self.quantiles[0],
+            upper_q=self.quantiles[-1],
+            normalize_channelwise=True,
+        )
+
+    def train_normalization(self, images: Iterable[sitk.Image]) -> None:
+        # apply quantile normalization
+        images = (self.quantile_norm(img) for img in images)
+        return super().train_normalization(images)
+
+    def normalize(self, image: sitk.Image) -> sitk.Image:
+        image = self.quantile_norm(image)
+        return super().normalize(image)

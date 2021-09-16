@@ -38,8 +38,12 @@ def create_test_files(test_path=Path("test_data"), n_files=5) -> list:
     for i in range(n_files):
         patient_number = f"test{i}"
 
-        labelfile = test_path / f"{cfg.label_file_name_prefix}{patient_number}.nrrd"
-        imagefile = test_path / f"{cfg.sample_file_name_prefix}{patient_number}.nrrd"
+        labelfile = (
+            test_path / f"{cfg.label_file_name_prefix}{patient_number}{cfg.file_suffix}"
+        )
+        imagefile = (
+            test_path / f"{cfg.sample_file_name_prefix}{patient_number}{cfg.file_suffix}"
+        )
 
         training_files.append(str(test_path / f"{patient_number}"))
 

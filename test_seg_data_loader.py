@@ -12,7 +12,7 @@ import tensorflow as tf
 
 from . import create_test_files
 from . import config as cfg
-from .segbasisloader import NORMALIZING, SegBasisLoader
+from .segbasisloader import SegBasisLoader
 from .segapplyloader import ApplyBasisLoader
 
 # pylint: disable=protected-access,duplicate-code
@@ -24,7 +24,7 @@ def set_seeds():
     tf.random.set_seed(42)
 
 
-def get_loader(name, normalizing_method=NORMALIZING.QUANTILE, precent_obj=0.33):
+def get_loader(name, file_dict, precent_obj=0.33):
     """
     Get the data loader using the specified module, normalization method and
     object percentage.
@@ -32,18 +32,21 @@ def get_loader(name, normalizing_method=NORMALIZING.QUANTILE, precent_obj=0.33):
     # generate loader
     if name == "train":
         data_loader = SegBasisLoader(
-            name="training_loader",
-            frac_obj=precent_obj,
-            normalizing_method=normalizing_method,
+            name="training_loader", frac_obj=precent_obj, file_dict=file_dict
         )
     elif name == "vald":
         data_loader = SegBasisLoader(
             mode=SegBasisLoader.MODES.VALIDATE,
             frac_obj=precent_obj,
             name="validation_loader",
+            file_dict=file_dict,
         )
     elif name == "test":
-        data_loader = ApplyBasisLoader(mode=SegBasisLoader.MODES.APPLY, name="test_loader")
+        data_loader = ApplyBasisLoader(
+            mode=SegBasisLoader.MODES.APPLY,
+            name="test_loader",
+            file_dict=file_dict,
+        )
     return data_loader
 
 
@@ -55,6 +58,20 @@ def load_dataset(test_dir):
     # add data path
     file_list = create_test_files.create_test_files(test_dir)
 
+    file_dict = {}
+    for f in file_list:
+        f_path = Path(f)
+        name = f_path.name
+        image_name = f_path.parent / (cfg.sample_file_name_prefix + name + cfg.file_suffix)
+        labels_name = f_path.parent / (cfg.label_file_name_prefix + name + cfg.file_suffix)
+        file_dict[name] = {
+            "image": image_name.relative_to(test_dir),
+            "labels": labels_name.relative_to(test_dir),
+        }
+
+    # only use names for the file list
+    file_list = list(file_dict.keys())
+
     id_tensor = tf.squeeze(tf.convert_to_tensor(file_list, dtype=tf.string))
     # Create dataset from list of file names
     file_list_ds = tf.data.Dataset.from_tensor_slices(id_tensor)
@@ -63,7 +80,7 @@ def load_dataset(test_dir):
 
     cfg.num_files = len(file_list)
 
-    return file_list, files_list_b
+    return file_list, files_list_b, file_dict
 
 
 def set_parameters_according_to_dimension(
@@ -137,9 +154,8 @@ def set_parameters_according_to_dimension(
 
     # set config
     if not preprocessed_dir.exists():
-        preprocessed_dir.mkdir(parents=True)
-    cfg.preprocessed_dir = str(preprocessed_dir)
-    cfg.normalizing_method = cfg.NORMALIZING.QUANTILE
+        raise ValueError(f"{preprocessed_dir} not found.")
+    cfg.data_base_dir = str(preprocessed_dir)
 
 
 def estimate_batch_size(dimension, a_name):
@@ -188,23 +204,13 @@ names = [
     "train",
     # "vald"
 ]
-normalizing_methods = [
-    # NORMALIZING.HM_QUANTILE,
-    # NORMALIZING.HM_QUANT_MEAN,
-    NORMALIZING.QUANTILE,
-    # NORMALIZING.WINDOW,
-    # NORMALIZING.MEAN_STD,
-    NORMALIZING.HISTOGRAM_MATCHING,
-    # NORMALIZING.Z_SCORE,
-]
 frac_objects = [0, 0.3, 1]
 
 
 @pytest.mark.parametrize("dimension", dimensions)
 @pytest.mark.parametrize("name", names)
-@pytest.mark.parametrize("normalizing_method", normalizing_methods)
 @pytest.mark.parametrize("frac_obj", frac_objects)
-def test_functions(dimension, name, normalizing_method, frac_obj):
+def test_functions(dimension, name, frac_obj):
     """Test the individual functions contained in the wrapper.
 
     Parameters
@@ -217,21 +223,17 @@ def test_functions(dimension, name, normalizing_method, frac_obj):
 
     test_dir = Path("test_data")
 
-    set_parameters_according_to_dimension(dimension, 2, test_dir / "data_preprocessed")
+    set_parameters_according_to_dimension(dimension, 2, test_dir)
 
     set_seeds()
 
-    # generate loader
-    data_loader = get_loader(name, normalizing_method, frac_obj)
-
     # get names from csv
-    file_list, files_list_b = load_dataset(test_dir)
+    file_list, files_list_b, file_dict = load_dataset(test_dir)
+
+    # generate loader
+    data_loader = get_loader(name, file_dict, frac_obj)
 
     print(f"Loading Dataset {name}.")
-
-    # execute the callbacks
-    for callback in data_loader.normalization_callbacks:
-        callback([sitk.ReadImage(data_loader.get_filenames(f)[0]) for f in file_list])
 
     print("\tLoad a numpy sample")
     data_read = data_loader._read_file_and_return_numpy_samples(files_list_b[0])
@@ -269,9 +271,8 @@ def test_functions(dimension, name, normalizing_method, frac_obj):
 
 @pytest.mark.parametrize("dimension", dimensions)
 @pytest.mark.parametrize("name", names)
-@pytest.mark.parametrize("normalizing_method", normalizing_methods)
 @pytest.mark.parametrize("frac_obj", frac_objects)
-def test_wrapper(dimension, name, normalizing_method, frac_obj):
+def test_wrapper(dimension, name, frac_obj):
     """Test the complete wrapper and check shapes
 
     Parameters
@@ -290,15 +291,15 @@ def test_wrapper(dimension, name, normalizing_method, frac_obj):
 
     test_dir = Path("test_data")
 
-    set_parameters_according_to_dimension(dimension, 2, test_dir / "data_preprocessed")
+    set_parameters_according_to_dimension(dimension, 2, test_dir)
 
     set_seeds()
 
-    # generate loader
-    data_loader = get_loader(name, normalizing_method, frac_obj)
-
     # get names from csv
-    file_list, _ = load_dataset(test_dir)
+    file_list, _, file_dict = load_dataset(test_dir)
+
+    # generate loader
+    data_loader = get_loader(name, file_dict, frac_obj)
 
     data_file, _ = data_loader.get_filenames(str(file_list[0]))
     first_image = sitk.GetArrayFromImage(sitk.ReadImage(data_file))
@@ -404,21 +405,20 @@ def test_wrapper(dimension, name, normalizing_method, frac_obj):
         assert np.mean(n_objects.reshape(-1) > 0) >= frac_obj
 
 
-@pytest.mark.parametrize("normalizing_method", normalizing_methods)
-def test_apply_loader(normalizing_method):
+def test_apply_loader():
     """
     Test the apply loader by loading a few images and verify the padding
     """
 
     test_dir = Path("test_data")
 
-    set_parameters_according_to_dimension(3, 2, test_dir / "data_preprocessed")
+    set_parameters_according_to_dimension(3, 2, test_dir)
 
     # get names from csv
-    file_list, _ = load_dataset(test_dir)
+    file_list, _, file_dict = load_dataset(test_dir)
     filename = file_list[0]
 
-    loader = get_loader("test", normalizing_method)
+    loader = get_loader("test", file_dict)
 
     image_data = loader(filename)
 
@@ -442,6 +442,5 @@ if __name__ == "__main__":
     # run functions for better debugging
     for dim in dimensions:
         for mod_name in names:
-            for norm_meth in normalizing_methods:
-                test_functions(dim, mod_name, norm_meth, frac_obj=0.4)
-                test_wrapper(dim, mod_name, norm_meth, frac_obj=0.4)
+            test_functions(dim, mod_name, frac_obj=0.4)
+            test_wrapper(dim, mod_name, frac_obj=0.4)

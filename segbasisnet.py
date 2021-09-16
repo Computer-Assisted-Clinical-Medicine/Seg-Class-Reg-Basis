@@ -253,7 +253,9 @@ class SegBasisNet(Network):
             if met == "dice":
                 metric_objects.append(Dice(name="dice", num_classes=cfg.num_classes_seg))
             elif met == "meanIoU":
-                tf.keras.metrics.MeanIoU(num_classes=cfg.num_classes_seg)
+                metric_objects.append(
+                    tf.keras.metrics.MeanIoU(num_classes=cfg.num_classes_seg)
+                )
             # if nothing else is specified, just add it
             elif isinstance(met, str):
                 metric_objects.append(met)
@@ -264,7 +266,7 @@ class SegBasisNet(Network):
                 optimizer, l_r, 0, clipvalue=self.options["clipping_value"]
             ),
             loss=self.outputs["loss"],
-            metrics=metrics,
+            metrics=metric_objects,
             run_eagerly=debug,
         )
 
@@ -622,8 +624,8 @@ class SegBasisNet(Network):
         sitk.WriteImage(predicted_label_orig, str(pred_path.resolve()))
 
         if cfg.write_probabilities:
-            with open(Path(apply_path) / f"prediction-{name}-{version}.npy", "wb") as f:
-                np.save(f, probability_map)
+            with open(Path(apply_path) / f"prediction-{name}-{version}.npz", "wb") as f:
+                np.savez_compressed(f, probability_map)
 
         if cfg.write_intermediaries:
             # write the preprocessed image

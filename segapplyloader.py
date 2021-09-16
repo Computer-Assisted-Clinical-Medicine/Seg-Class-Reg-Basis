@@ -3,6 +3,7 @@ will augment the images while the apply loader can be used to pass whole images.
 """
 import logging
 import os
+from typing import Dict
 
 import numpy as np
 import SimpleITK as sitk
@@ -24,6 +25,10 @@ class ApplyBasisLoader(SegBasisLoader):
 
     Parameters
     ----------
+    file_dict : Dict[str, Dict[str, str]]
+        dictionary containing the file information, the key should be the id of
+        the data point and value should be a dict with the image and labels as
+        keys and the file paths as values
     mode : has no effect, should be None or APPLY
     seed : int, optional
         Has no effect, by default 42
@@ -31,12 +36,20 @@ class ApplyBasisLoader(SegBasisLoader):
         The name, by default 'apply_loader'
     """
 
-    def __init__(self, mode=None, seed=42, name="apply_loader", divisible_by=16, **kwargs):
+    def __init__(
+        self,
+        file_dict: Dict[str, Dict[str, str]],
+        mode=None,
+        seed=42,
+        name="apply_loader",
+        divisible_by=16,
+        **kwargs,
+    ):
         if mode is None:
             mode = self.MODES.APPLY
         assert mode == self.MODES.APPLY, "Use this loader only to apply data to an image"
 
-        super().__init__(mode=mode, seed=seed, name=name, **kwargs)
+        super().__init__(file_dict=file_dict, mode=mode, seed=seed, name=name, **kwargs)
 
         if len(cfg.train_input_shape) == 4:
             self.training_shape = np.array(cfg.train_input_shape)
@@ -136,21 +149,8 @@ class ApplyBasisLoader(SegBasisLoader):
             logger.debug("        Loading %s (%s)", file_name, self.mode)
             # load image
             data_img = sitk.ReadImage(file_name)
-            # adapt, resample and normalize them
-            data_img, _ = self.adapt_to_task(data_img, None)
-            if self.do_resampling:
-                data_img = self._resample(data_img)
-            data = sitk.GetArrayFromImage(data_img)
-            data = self.normalize(data)
-            # if everything is ok, save the preprocessed images
-            data_img_proc = sitk.GetImageFromArray(data)
-            data_img_proc.CopyInformation(data_img)
 
-            # cache it in memory
-            self.last_file = data_img_proc
-            self.last_file_name = file_name
-
-            return data_img_proc, None
+            return data_img, None
 
         # if it does not exist, dataset conversion will be tried
         else:
@@ -197,6 +197,7 @@ class ApplyBasisLoader(SegBasisLoader):
         """
         data = self.get_test_sample(filename)
 
+        assert self.data_rank is not None, "Set up shapes and types first"
         pad_with = np.zeros((1 + self.data_rank, 2), dtype=int)
         # do not pad the batch axis (z for the 2D case) and the last axis (channels)
         min_dim = 1
@@ -247,6 +248,7 @@ class ApplyBasisLoader(SegBasisLoader):
             The output without padding
         """
         padding = self.last_padding
+        assert self.last_shape is not None, "only remove padding after adding it."
         assert (
             data.shape[:3] == self.last_shape[:3]
         ), "data shape does not match the padding"
@@ -388,6 +390,7 @@ class ApplyBasisLoader(SegBasisLoader):
         np.ndarray
             The stitched image
         """
+        assert self.last_window_shape is not None, "only stitch patches after creating them"
         patches = np.array(patches)
         if self.data_rank == 3:
             assert len(patches.shape) == 4, "dimensions should be 4"
