@@ -239,6 +239,8 @@ def preprocess_dataset(
     normalizations = []
     for num in range(num_channels):
         norm_file = base_dir / preprocessed_dir / f"normalization_mod{num}.yaml"
+        if not norm_file.parent.exists():
+            norm_file.parent.mkdir(parents=True)
         if norm_file.exists():
             norm = normalization_class.from_file(norm_file)
             # make sure the parameters are correct

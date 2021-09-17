@@ -332,11 +332,19 @@ class MeanSTD(Normalization):
 
     Parameters
     ----------
+    mask_quantile : float
+        Quantile to use for the lower bound of the mask when calculating the std
     normalize_channelwise : bool
         If it should be applied channelwise
     """
 
     enum = NORMALIZING.MEAN_STD
+
+    parameters_to_save = ["mask_quantile"]
+
+    def __init__(self, mask_quantile=0.05, normalize_channelwise=True) -> None:
+        self.mask_quantile = mask_quantile
+        super().__init__(normalize_channelwise=normalize_channelwise)
 
     def normalization_func(self, image: np.ndarray) -> np.ndarray:
         """Subtract the mean from image and the divide it by the standard deviation
@@ -352,8 +360,14 @@ class MeanSTD(Normalization):
         np.array
             The normalized image
         """
+        # clip image
+        image = clip_outliers(image, 0.01, 0.95)
+        # set mask if not present
+        mask_data = image > np.quantile(image, self.mask_quantile)
+        # apply mask
+        image_masked = image[mask_data]
         image_normed = image - np.mean(image)
-        std = np.std(image_normed)
+        std = np.std(image_masked)
         assert std > 0, "The standard deviation of the image is 0."
         image_normed = image_normed / std
 
@@ -558,7 +572,6 @@ class ZScore(HistogramMatching):
             # apply it
             image_np[:, :, :, i] = (image_clipped - mean) / std
 
-        assert np.abs(image_np).max() < 1e3, "Voxel values over 1000 detected"
         image_normalized = sitk.GetImageFromArray(image_np)
         image_normalized.CopyInformation(image)
         return image_normalized
@@ -581,7 +594,10 @@ class HMQuantile(HistogramMatching):
 
     enum = NORMALIZING.HM_QUANTILE
 
-    def __init__(self, quantiles: List[float], mask_quantile=0) -> None:
+    def __init__(self, quantiles: List[float] = None, mask_quantile=0) -> None:
+        if quantiles is None:
+            quantiles = np.concatenate(([0.01], np.arange(0.10, 0.91, 0.10), [0.99]))
+        self.quantiles = np.array(quantiles)
         super().__init__(quantiles=quantiles, mask_quantile=mask_quantile)
         self.quantile_norm = Quantile(
             lower_q=self.quantiles[0],
