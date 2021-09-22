@@ -624,8 +624,11 @@ class SegBasisNet(Network):
         sitk.WriteImage(predicted_label_orig, str(pred_path.resolve()))
 
         if cfg.write_probabilities:
-            with open(Path(apply_path) / f"prediction-{name}-{version}.npz", "wb") as f:
-                np.savez_compressed(f, probability_map)
+            # turn probabilities into an image
+            probability_map_img = sitk.GetImageFromArray(probability_map)
+            probability_map_img.CopyInformation(orig_processed)
+            f_name = Path(apply_path) / f"prediction-{name}-{version}_probabilities{cfg.file_suffix}"
+            sitk.WriteImage(probability_map_img, str(f_name.resolve()))
 
         if cfg.write_intermediaries:
             # write the preprocessed image

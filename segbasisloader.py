@@ -335,6 +335,15 @@ class SegBasisLoader(DataLoader):
         ), "sample dims do not match data dims"
         max_padding = sample_shape // 4
 
+        # if the image is too small otherwise, pad some more
+        size_diff = sample_shape - (data.shape[:-1] + max_padding * 2)
+        if np.any(size_diff >= 0):
+            logger.debug("Sample size to small witrh %s, padding will be increased", sample_shape)
+            # add padding to the dimensions with a positive difference
+            max_padding += np.ceil(np.maximum(size_diff, 0) / 2).astype(int)
+            # add one extra to make it bigger
+            max_padding += (size_diff >= 0).astype(int)
+
         # pad the data (using 0s)
         pad_with = ((max_padding[0],) * 2, (max_padding[1],) * 2, (max_padding[2],) * 2)
         data_padded = np.pad(data, pad_with + ((0, 0),))
@@ -346,7 +355,10 @@ class SegBasisLoader(DataLoader):
         min_index = np.zeros(3, dtype=int)
         # the maximum is the new data shape minus the sample shape (accounting for the padding)
         max_index = data_padded.shape[:-1] - sample_shape
-        assert np.all(min_index <= max_index), "image to small to get patches"
+        assert np.all(min_index < max_index), (
+            f"image to small too get patches size {data_padded.shape[:-1]} < sample "
+            + f"shape {sample_shape} with padding {pad_with} and orig. size {data.shape[:-1]}"
+        )
 
         # create the arrays to store the samples
         batch_shape = (n_foreground + n_background,) + tuple(sample_shape)
