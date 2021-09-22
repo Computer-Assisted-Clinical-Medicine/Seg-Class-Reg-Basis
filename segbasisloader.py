@@ -338,7 +338,9 @@ class SegBasisLoader(DataLoader):
         # if the image is too small otherwise, pad some more
         size_diff = sample_shape - (data.shape[:-1] + max_padding * 2)
         if np.any(size_diff >= 0):
-            logger.debug("Sample size to small witrh %s, padding will be increased", sample_shape)
+            logger.debug(
+                "Sample size to small witrh %s, padding will be increased", sample_shape
+            )
             # add padding to the dimensions with a positive difference
             max_padding += np.ceil(np.maximum(size_diff, 0) / 2).astype(int)
             # add one extra to make it bigger

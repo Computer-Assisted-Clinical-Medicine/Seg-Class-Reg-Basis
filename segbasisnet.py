@@ -627,7 +627,10 @@ class SegBasisNet(Network):
             # turn probabilities into an image
             probability_map_img = sitk.GetImageFromArray(probability_map)
             probability_map_img.CopyInformation(orig_processed)
-            f_name = Path(apply_path) / f"prediction-{name}-{version}_probabilities{cfg.file_suffix}"
+            f_name = (
+                Path(apply_path)
+                / f"prediction-{name}-{version}_probabilities{cfg.file_suffix}"
+            )
             sitk.WriteImage(probability_map_img, str(f_name.resolve()))
 
         if cfg.write_intermediaries:
