@@ -4,7 +4,7 @@ Different methods to normalize the input images
 import logging
 import os
 from enum import Enum
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 import SimpleITK as sitk
@@ -386,17 +386,25 @@ class HistogramMatching(Normalization):
         10% between 10% and 90% will be used.
     mask_quantile : float
         Values below this quantile will be ignored, by default 0
+    center_volume : List[float]
+        A volume with this size in the center will be used to extract the landmarks,
+        if None, [150, 150, 80] is used, by default None
     """
 
     enum = NORMALIZING.HISTOGRAM_MATCHING
 
-    parameters_to_save = ["quantiles", "mask_quantile"]
+    parameters_to_save = ["quantiles", "mask_quantile", "center_volume"]
     properties_to_save = ["standard_scale", "means", "stds"]
 
-    def __init__(self, quantiles: List[float] = None, mask_quantile=0) -> None:
+    def __init__(
+        self, quantiles: List[float] = None, mask_quantile=0, center_volume=None
+    ) -> None:
         if quantiles is None:
             quantiles = np.concatenate(([0.01], np.arange(0.10, 0.91, 0.10), [0.99]))
         self.quantiles = np.array(quantiles)
+        if center_volume is None:
+            center_volume = [180, 180, 100]
+        self.center_volume = np.array(center_volume)
         if not np.all(self.quantiles >= 0):
             raise ValueError("All quantiles should be >= 0.")
         if not np.all(self.quantiles <= 1):
@@ -412,22 +420,52 @@ class HistogramMatching(Normalization):
 
         super().__init__(normalize_channelwise=True)
 
-    def get_landmarks(self, img: np.ndarray) -> np.ndarray:
+    def get_landmarks(self, image: sitk.Image) -> Tuple[np.ndarray, float, float]:
         """
         get the landmarks for the Nyul and Udupa norm method for a specific image
 
         Parameters
         ----------
-        img : np.ndarray
+        img : sitk.Image
             image on which to find landmarks
 
         Returns
         -------
         np.ndarray
             intensity values corresponding to percs in img
+        np.ndarray
+            mean of the image
+        np.ndarray
+            std of the image
         """
-        landmarks = np.quantile(img, self.quantiles)
-        return landmarks
+
+        # crop image to main region
+        n_voxels = np.round(self.center_volume / image.GetSpacing()).astype(int)
+        # make sure the region is smaller than the image
+        n_voxels = np.minimum(n_voxels, image.GetSize())
+        start = (image.GetSize() - n_voxels) // 2
+        end = start + n_voxels
+        assert np.all(start >= 0), "start should be 0 or higher."
+        assert np.all(end <= image.GetSize()), "The end should not be larger than the size."
+        image = image[[slice(s, e) for s, e in zip(start, end)]]
+        # get data
+        img_data = sitk.GetArrayFromImage(image)
+        assert img_data.ndim == 3, "Only 3D images are supported"
+        # extract the channel and clip the outliers
+        image_mod = clip_outliers(img_data, self.quantiles[0], self.quantiles[-1])
+        # set mask if not present
+        mask_data = image_mod > np.quantile(image_mod, self.mask_quantile)
+        # apply mask
+        masked = image_mod[mask_data]
+
+        # get landmarks
+        landmarks = np.quantile(masked, self.quantiles)
+        # get mean
+        mean = image_mod.mean()
+        # get std
+        std = image_mod.std()
+
+        return landmarks, mean, std
 
     def train_normalization(self, images: Iterable[sitk.Image]) -> None:
         """Extract the mean and landmarks (quantiles) and the standard deviation
@@ -438,21 +476,8 @@ class HistogramMatching(Normalization):
         means_list = []
         stds_list = []
         for image in tqdm(images, unit="image", desc="Train Normalization"):
-            # get data
-            img_data = sitk.GetArrayFromImage(image)
-            assert img_data.ndim == 3, "Only 3D images are supported"
-            # extract the channel and clip the outliers
-            image_mod = clip_outliers(img_data, self.quantiles[0], self.quantiles[-1])
-            # set mask if not present
-            mask_data = image_mod > np.quantile(image_mod, self.mask_quantile)
-            # apply mask
-            masked = image_mod[mask_data]
             # get landmarks
-            landmarks = self.get_landmarks(masked)
-            # get mean
-            current_mean = image_mod.mean()
-            # get std
-            current_std = image_mod.std()
+            landmarks, current_mean, current_std = self.get_landmarks(image)
 
             # gather landmarks for standard scale
             standard_scale_list.append(landmarks)
@@ -479,21 +504,12 @@ class HistogramMatching(Normalization):
             The normalized image
         """
 
+        # get landmarks
+        landmarks, _, _ = self.get_landmarks(image)
+
         image_np = sitk.GetArrayFromImage(image)
-
-        assert image_np.ndim == 3, "Only 3D images are supported"
-
-        assert self.standard_scale is not None, "No training was performed."
-
         # get the clipped image
         image_clipped = clip_outliers(image_np, self.quantiles[0], self.quantiles[-1])
-        # get mask
-        mask_image = image_clipped > np.quantile(image_clipped, self.mask_quantile)
-        # apply mask
-        masked = image_clipped[mask_image]
-
-        # get landmarks
-        landmarks = self.get_landmarks(masked)
 
         # create interpolation function (with extremes of standard scale as fill values)
         f = interp1d(
@@ -594,11 +610,15 @@ class HMQuantile(HistogramMatching):
 
     enum = NORMALIZING.HM_QUANTILE
 
-    def __init__(self, quantiles: List[float] = None, mask_quantile=0) -> None:
+    def __init__(
+        self, quantiles: List[float] = None, mask_quantile=0, center_volume=None
+    ) -> None:
         if quantiles is None:
             quantiles = np.concatenate(([0.01], np.arange(0.10, 0.91, 0.10), [0.99]))
         self.quantiles = np.array(quantiles)
-        super().__init__(quantiles=quantiles, mask_quantile=mask_quantile)
+        super().__init__(
+            quantiles=quantiles, mask_quantile=mask_quantile, center_volume=center_volume
+        )
         self.quantile_norm = Quantile(
             lower_q=self.quantiles[0],
             upper_q=self.quantiles[-1],
