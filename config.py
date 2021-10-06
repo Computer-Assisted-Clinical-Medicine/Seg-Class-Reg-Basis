@@ -92,7 +92,7 @@ max_resolution_augment = 1
 # TODO: implement with random spline field
 
 ##### Testing #####
-write_probabilities = True
+write_probabilities = False
 write_intermediaries = False
 
 ##### Loss Setting #####

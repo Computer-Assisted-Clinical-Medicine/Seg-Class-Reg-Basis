@@ -302,15 +302,6 @@ class SegBasisNet(Network):
         )
         callbacks.append(cp_best_callback)
 
-        # backup and restore
-        backup_dir = model_dir / "backup"
-        if not backup_dir.exists():
-            backup_dir.mkdir()
-        backup_callback = tf.keras.callbacks.experimental.BackupAndRestore(
-            backup_dir=backup_dir,
-        )
-        callbacks.append(backup_callback)
-
         # early stopping
         if early_stopping:
             es_callback = tf.keras.callbacks.EarlyStopping(
