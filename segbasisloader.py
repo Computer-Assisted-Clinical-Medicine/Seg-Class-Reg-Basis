@@ -300,6 +300,9 @@ class SegBasisLoader(DataLoader):
 
         # convert samples to numpy arrays
         data = sitk.GetArrayFromImage(data_img)
+        # add 4th dimension if it is not there
+        if data.ndim == 3:
+            data = np.expand_dims(data, axis=-1)
         lbl = sitk.GetArrayFromImage(label_img)
 
         # augment the numpy arrays
@@ -309,9 +312,9 @@ class SegBasisLoader(DataLoader):
         # check that there are labels
         assert np.any(lbl != 0), "no labels found"
         # check shape
-        assert np.all(data.shape[:-1] == lbl.shape)
         assert len(data.shape) == 4, "data should be 4d"
         assert len(lbl.shape) == 3, "labels should be 3d"
+        assert np.all(data.shape[:-1] == lbl.shape), f"{data.shape} - {lbl.shape}"
 
         # determine the number of background and foreground samples
         n_foreground = int(self.samples_per_volume * self.frac_obj)

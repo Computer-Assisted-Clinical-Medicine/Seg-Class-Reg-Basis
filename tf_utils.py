@@ -285,6 +285,8 @@ def write_images(x, y, probabilities, step):
     with tf.name_scope("01_Input_and_Predictions"):
         if in_channels == 1:
             image_fc = convert_float_to_image(x)
+            if image_fc.ndim == 5:
+                image_fc = image_fc[..., 0]
             tf.summary.image("train_img", image_fc, step, max_image_output)
         else:
             for cls in range(in_channels):
