@@ -271,6 +271,7 @@ def preprocess_dataset(
             cfg.sample_file_name_prefix + name + cfg.file_suffix
         )
         image_processed_path = base_dir / image_rel_path
+        labels_exist = True
         if "labels" in data:
             labels_path = data["labels"]
             label_rel_path = preprocessed_dir / str(
@@ -278,7 +279,7 @@ def preprocess_dataset(
             )
             labels_processed_path = base_dir / label_rel_path
         else:
-            labels_path = None
+            labels_exist = False
 
         # preprocess images
         preprocess_image(
@@ -293,8 +294,9 @@ def preprocess_dataset(
         if image_processed_path.exists():
             preprocessed_dict[str(name)] = {}
             preprocessed_dict[str(name)]["image"] = image_rel_path
-        if labels_processed_path.exists():
-            preprocessed_dict[str(name)]["labels"] = label_rel_path
+        if labels_exist:
+            if labels_processed_path.exists():
+                preprocessed_dict[str(name)]["labels"] = label_rel_path
 
     logger.info("Preprocessing finished.")
 

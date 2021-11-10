@@ -115,6 +115,9 @@ class ApplyBasisLoader(SegBasisLoader):
 
         # convert samples to numpy arrays
         data = sitk.GetArrayFromImage(data_img)
+        # add 4th dimension if it is not there
+        if data.ndim == 3:
+            data = np.expand_dims(data, axis=-1)
 
         if self.mode != self.MODES.APPLY:
             raise NotImplementedError("Use this loader only to apply data to an image")
