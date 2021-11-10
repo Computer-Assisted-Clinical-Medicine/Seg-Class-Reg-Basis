@@ -606,7 +606,7 @@ class SegBasisNet(Network):
             referenceImage=original_image,
             interpolator=sitk.sitkNearestNeighbor,
             outputPixelType=sitk.sitkUInt8,
-            useNearestNeighborExtrapolator=True,
+            useNearestNeighborExtrapolator=False,
         )
 
         # write resampled file
