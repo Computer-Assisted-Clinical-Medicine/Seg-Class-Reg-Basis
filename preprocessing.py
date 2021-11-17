@@ -62,15 +62,14 @@ def combine_images(
         num_labels = sitk.GetArrayFromImage(labels).astype(bool).sum()
         if num_labels == 0:
             logger.warning("No labels found in the image.")
-        labels = labels[overlap]
     # resample reference image to the new spacing if wanted
     if resample:
         assert target_spacing is not None
         # calculate spacing
         orig_size = np.array(reference_image.GetSize())
         orig_spacing = np.array(reference_image.GetSpacing())
-        # see how much the number of voxels in the same are is reduced
-        reduction_factor = np.prod(target_spacing / orig_spacing)
+
+        # set new sizes
         physical_size = orig_size * orig_spacing
         new_size = (physical_size / target_spacing).astype(int)
         new_physical_size = new_size * target_spacing
@@ -82,6 +81,12 @@ def combine_images(
         shift = np.dot((size_diff / 2), direction)
         new_origin = orig_origin + shift
 
+        # see how much the number of labels is reduced
+        if labels is not None:
+            orig_label_spacing = np.array(labels.GetSpacing())
+            # see how much the number of voxels in the same are is reduced
+            reduction_factor = np.prod(target_spacing / orig_label_spacing)
+
         resample_method = sitk.ResampleImageFilter()
         resample_method.SetDefaultPixelValue(0)
         resample_method.SetInterpolator(sitk.sitkBSplineResampler)
@@ -91,36 +96,36 @@ def combine_images(
         resample_method.SetOutputOrigin(list(new_origin))
         resample_method.SetOutputPixelType(sitk.sitkFloat32)
         resample_method.SetOutputSpacing(target_spacing)
-        reference_image = resample_method.Execute(reference_image)
+        reference_image_resized = resample_method.Execute(reference_image)
 
         if labels is not None:
             # also resample labels, but change interpolator
             resample_method.SetInterpolator(sitk.sitkNearestNeighbor)
             resample_method.SetOutputPixelType(sitk.sitkUInt8)
-            labels = resample_method.Execute(labels)
+            labels_resampled = resample_method.Execute(labels)
 
     # sample all images to the reference image
     resample_method = sitk.ResampleImageFilter()
-    resample_method.SetReferenceImage(reference_image)
+    resample_method.SetReferenceImage(reference_image_resized)
     resample_method.SetOutputPixelType(sitk.sitkFloat32)
     resample_method.SetInterpolator(sitk.sitkBSplineResampler)
 
-    images_resampled = [reference_image] + [
+    images_resampled = [reference_image_resized] + [
         resample_method.Execute(img) for img in images[1:]
     ]
 
     image_combine = sitk.Compose(images_resampled)
 
     # check labels
-    if labels is not None:
-        num_labels_res = sitk.GetArrayFromImage(labels).astype(bool).sum()
+    if labels_resampled is not None:
+        num_labels_res = sitk.GetArrayFromImage(labels_resampled).astype(bool).sum()
         if num_labels != 0 and num_labels_res < 10:
             raise NoLabelsInOverlap()
         # account for the differences in the spacing when seeing if labels are missing
         if num_labels_res < num_labels / reduction_factor * 0.85:
             logger.warning("Less labelled voxels in the resampled image.")
 
-    return image_combine, labels
+    return image_combine, labels_resampled
 
 
 def generate_mask(image: sitk.Image, lower_quantile=0.25) -> sitk.Image:
