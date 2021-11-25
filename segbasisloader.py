@@ -504,6 +504,16 @@ class SegBasisLoader(DataLoader):
         resolution_augmentation = np.random.uniform(
             low=cfg.min_resolution_augment, high=cfg.max_resolution_augment
         )
+        aug_spc = cfg.sample_target_spacing
+        # see if any values in target spacing are none
+        if np.any([ts is None for ts in aug_spc]):
+            ts_list = []
+            for num, spc in enumerate(aug_spc):
+                if spc is None:
+                    ts_list.append(image.GetSpacing()[num])
+                else:
+                    ts_list.append(spc)
+            aug_spc = tuple(ts_list)
         aug_target_spacing = np.array(cfg.sample_target_spacing) * resolution_augmentation
 
         # resample the image
