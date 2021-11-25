@@ -504,7 +504,7 @@ class SegBasisLoader(DataLoader):
         resolution_augmentation = np.random.uniform(
             low=cfg.min_resolution_augment, high=cfg.max_resolution_augment
         )
-        aug_target_spacing = np.array(image.GetSpacing()) * resolution_augmentation
+        aug_target_spacing = np.array(cfg.sample_target_spacing) * resolution_augmentation
 
         # resample the image
         resample_method = sitk.ResampleImageFilter()

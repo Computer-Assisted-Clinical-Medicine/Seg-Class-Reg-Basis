@@ -48,7 +48,8 @@ def combine_images(
     resample : bool, optional
         if resampling should be done, by default True
     target_spacing : tuple, optional
-        The spacing for the resampling, by default (1, 1, 3)
+        The spacing for the resampling, by default (1, 1, 3), if any values are None,
+        the original spacing is used
 
     Returns
     -------
@@ -68,6 +69,16 @@ def combine_images(
         # calculate spacing
         orig_size = np.array(reference_image.GetSize())
         orig_spacing = np.array(reference_image.GetSpacing())
+
+        # see if any values in target spacing are none
+        if np.any([ts is None for ts in target_spacing]):
+            ts_list = []
+            for num, spc in enumerate(target_spacing):
+                if spc is None:
+                    ts_list.append(orig_spacing[num])
+                else:
+                    ts_list.append(spc)
+            target_spacing = tuple(ts_list)
 
         # set new sizes
         physical_size = orig_size * orig_spacing
@@ -103,6 +114,21 @@ def combine_images(
             resample_method.SetInterpolator(sitk.sitkNearestNeighbor)
             resample_method.SetOutputPixelType(sitk.sitkUInt8)
             labels_resampled = resample_method.Execute(labels)
+    else:
+        # just resample the labels
+        reference_image_resized = sitk.Cast(reference_image, sitk.sitkFloat32)
+        if labels is not None:
+            resample_method = sitk.ResampleImageFilter()
+            resample_method.SetDefaultPixelValue(0)
+            resample_method.SetInterpolator(sitk.sitkNearestNeighbor)
+            resample_method.SetOutputDirection(reference_image_resized.GetDirection())
+            # for some reason, there is an error otherwise
+            resample_method.SetSize(reference_image_resized.GetSize())
+            resample_method.SetOutputOrigin(reference_image_resized.GetOrigin())
+            resample_method.SetOutputPixelType(sitk.sitkUInt8)
+            resample_method.SetOutputSpacing(reference_image_resized.GetSpacing())
+            labels_resampled = resample_method.Execute(labels)
+            reduction_factor = 1
 
     # sample all images to the reference image
     resample_method = sitk.ResampleImageFilter()

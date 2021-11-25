@@ -88,6 +88,7 @@ max_rotation = 0.0  # the maximum amount of rotation that is allowed (between 0 
 # the values can be scalars or lists, if a list is used, then all axes are scaled individually
 min_resolution_augment = 1
 max_resolution_augment = 1
+sample_target_spacing = [1, 1, 3]
 
 # TODO: implement with random spline field
 
