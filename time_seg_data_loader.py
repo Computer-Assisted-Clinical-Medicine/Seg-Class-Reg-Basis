@@ -44,15 +44,17 @@ def time_functions(dimension, name, timing_result):
 
     test_dir = Path("test_data")
 
-    set_parameters_according_to_dimension(dimension, 2, test_dir / "data_preprocessed")
+    set_parameters_according_to_dimension(dimension, 2, test_dir)
+
+    cfg.sample_target_spacing = (0.5, 0.5, None)
 
     set_seeds()
 
-    # generate loader
-    data_loader = get_loader(name)
-
     # get names from csv
-    _, files_list_b = load_dataset(test_dir)
+    _, files_list_b, file_dict = load_dataset(test_dir)
+
+    # generate loader
+    data_loader = get_loader(name, file_dict, 0.4)
 
     # time the individual functions
     load_time = []
@@ -120,7 +122,7 @@ def profile_functions(dimension, name):
 
     test_dir = Path("test_data")
 
-    set_parameters_according_to_dimension(dimension, 2, test_dir / "data_preprocessed")
+    set_parameters_according_to_dimension(dimension, 2, test_dir)
 
     profile_dir = test_dir / "profiles"
     if not profile_dir.exists():
@@ -129,11 +131,11 @@ def profile_functions(dimension, name):
 
     set_seeds()
 
-    # generate loader
-    data_loader = get_loader(name)
-
     # get names from csv
-    _, files_list_b = load_dataset(test_dir)
+    _, files_list_b, file_dict = load_dataset(test_dir)
+
+    # generate loader
+    data_loader = get_loader(name, file_dict, 0.4)
 
     def load_all_files():
         for file_id in files_list_b:
@@ -162,15 +164,15 @@ def time_wrapper(dimension, name, timing_result):
 
     test_dir = Path("test_data")
 
-    set_parameters_according_to_dimension(dimension, 2, test_dir / "data_preprocessed")
+    set_parameters_according_to_dimension(dimension, 2, test_dir)
 
     set_seeds()
 
-    # generate loader
-    data_loader = get_loader(name)
-
     # get names from csv
-    file_list, _ = load_dataset(test_dir)
+    file_list, _, file_dict = load_dataset(test_dir)
+
+    # generate loader
+    data_loader = get_loader(name, file_dict, 0.4)
 
     data_loader.get_filenames(str(file_list[0]))
 
@@ -284,7 +286,7 @@ def plot(dimension, samples_lbl, labels_lbl, samples_bkr=None, labels_bkr=None):
 timing: Dict[str, float] = {}
 
 dimensions = [2, 3]
-names = ["train", "vald"]
+names = ["train"]
 
 # call functions and time them
 for dim in dimensions:
