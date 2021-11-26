@@ -304,13 +304,14 @@ class SegBasisLoader(DataLoader):
         if data.ndim == 3:
             data = np.expand_dims(data, axis=-1)
         lbl = sitk.GetArrayFromImage(label_img)
+        assert np.any(lbl != 0), "no labels found after sITK augmentation"
 
         # augment the numpy arrays
         if self.mode == self.MODES.TRAIN:
             data, lbl = self._augment_numpy(data, lbl)
 
         # check that there are labels
-        assert np.any(lbl != 0), "no labels found"
+        assert np.any(lbl != 0), "no labels found after numpy augmentation"
         # check shape
         assert len(data.shape) == 4, "data should be 4d"
         assert len(lbl.shape) == 3, "labels should be 3d"
@@ -507,23 +508,28 @@ class SegBasisLoader(DataLoader):
         aug_spc = cfg.sample_target_spacing
         # see if any values in target spacing are none
         if np.any([ts is None for ts in aug_spc]):
-            ts_list = []
+            aug_target_spacing = []
             for num, spc in enumerate(aug_spc):
                 if spc is None:
-                    ts_list.append(image.GetSpacing()[num])
+                    aug_target_spacing.append(image.GetSpacing()[num])
                 else:
-                    ts_list.append(spc)
-            aug_spc = tuple(ts_list)
-        aug_target_spacing = np.array(cfg.sample_target_spacing) * resolution_augmentation
+                    aug_target_spacing.append(spc * resolution_augmentation)
+        else:
+            aug_target_spacing = list(aug_spc)
+        logger.info("        Spacing %s", aug_target_spacing)
+
+        size = np.array(image.GetSize())
+        spacing = np.array(image.GetSpacing())
+        new_size = [int(i) for i in size * spacing / aug_target_spacing]
 
         # resample the image
         resample_method = sitk.ResampleImageFilter()
-        resample_method.SetOutputSpacing(list(aug_target_spacing))
+        resample_method.SetOutputSpacing(aug_target_spacing)
         resample_method.SetDefaultPixelValue(0)
         resample_method.SetInterpolator(sitk.sitkLinear)
         resample_method.SetOutputDirection(image.GetDirection())
         resample_method.SetOutputOrigin(image.GetOrigin())
-        resample_method.SetSize(image.GetSize())
+        resample_method.SetSize(new_size)
         resample_method.SetTransform(transform)
         # for some reason, Float 32 does not work
         resample_method.SetOutputPixelType(sitk.sitkFloat64)
