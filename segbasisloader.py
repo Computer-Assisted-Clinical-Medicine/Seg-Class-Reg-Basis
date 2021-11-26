@@ -516,7 +516,7 @@ class SegBasisLoader(DataLoader):
                     aug_target_spacing.append(spc * resolution_augmentation)
         else:
             aug_target_spacing = list(aug_spc)
-        logger.info("        Spacing %s", aug_target_spacing)
+        logger.debug("        Spacing %s", aug_target_spacing)
 
         size = np.array(image.GetSize())
         spacing = np.array(image.GetSpacing())

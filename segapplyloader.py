@@ -210,7 +210,9 @@ class ApplyBasisLoader(SegBasisLoader):
             min_p = 15
             # see if data is smaller than the training shape
             min_index = 4 - self.data_rank
-            max_diff = (self.training_shape[min_index:3] - data.shape[min_index:3]).max()
+            max_diff = (
+                self.training_shape[min_index:3] - data.shape[min_index + 1 : 4]
+            ).max()
             min_p = np.maximum(max_diff, min_p)
         else:
             min_p = min_padding

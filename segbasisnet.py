@@ -542,6 +542,7 @@ class SegBasisNet(Network):
                             )
                             test_data = np.random.rand(*test_data_shape)
                             self.model(test_data, training=False)
+                            self.model.predict(x=test_data, batch_size=1)
                         except tf.errors.ResourceExhaustedError:
                             logger.debug(
                                 "Applying failed for window size %s in step %i.",
@@ -568,12 +569,13 @@ class SegBasisNet(Network):
                             break
                 # get windowed samples
                 image_data_patches = application_dataset.get_windowed_test_sample(
-                    image_data, self.window_size
+                    image_data, self.window_size, overlap=[5, 15, 15]
                 )
                 probability_patches = []
                 # apply
                 for x in image_data_patches:
-                    probability_patches.append(self.model(x, training=False))
+                    result = self.model.predict(x=x, batch_size=1)
+                    probability_patches.append(result)
                 probability_map = application_dataset.stitch_patches(probability_patches)
             else:
                 logger.debug("Applied using the original size of the image.")
