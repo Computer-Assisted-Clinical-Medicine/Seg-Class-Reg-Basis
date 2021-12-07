@@ -173,6 +173,7 @@ class SegBasisNet(Network):
         optimizer="Adam",
         metrics=("dice", "acc", "meanIoU"),
         monitor="val_loss",
+        monitor_mode="min",
         best_model_decay=0.7,
         early_stopping=False,
         patience_es=10,
@@ -180,6 +181,7 @@ class SegBasisNet(Network):
         patience_lr_plat=5,
         factor_lr_plat=0.5,
         visualization_dataset=None,
+        visualize_labels=True,
         write_graph=True,
         debug=False,
         finetune_epoch=None,
@@ -210,6 +212,8 @@ class SegBasisNet(Network):
         monitor : str, optional
             The metric to monitor, used for early stopping and keeping the best model and lr reduction.
             Prefix val_ means that the metric from the validation dataset will be used, by default "val_loss"
+        monitor_mode : str, optional
+            The mode to use for monitoring the metric, min or max, by default min
         best_model_decay : float, optional
             The decay rate used for averaging the metric when saving the best model,
             by default 0.7, None means no moving average
@@ -226,6 +230,8 @@ class SegBasisNet(Network):
         visualization_dataset: SegBasisLoader, optional
             If provided, this dataset will be used to visualize the training results for debugging.
             Writing the images can take a bit, so only use this for debugging purposes.
+        visualize_labels: bool, optional
+            If the labels should be visualized as images, by default True
         write_graph : bool, optional
             Controls if a graph should be written, can be used than only the first fold will
             get a graph, to prevent cluttering the output.
@@ -256,6 +262,20 @@ class SegBasisNet(Network):
                 metric_objects.append(
                     tf.keras.metrics.MeanIoU(num_classes=cfg.num_classes_seg)
                 )
+            elif met == "fp":
+                metric_objects.append(tf.keras.metrics.FalsePositives())
+            elif met == "fn":
+                metric_objects.append(tf.keras.metrics.FalseNegatives())
+            elif met == "tn":
+                metric_objects.append(tf.keras.metrics.TrueNegatives())
+            elif met == "tp":
+                metric_objects.append(tf.keras.metrics.TruePositives())
+            elif met == "precision":
+                metric_objects.append(tf.keras.metrics.Precision())
+            elif met == "recall":
+                metric_objects.append(tf.keras.metrics.Recall())
+            elif met == "auc":
+                metric_objects.append(tf.keras.metrics.AUC())
             # if nothing else is specified, just add it
             elif isinstance(met, str):
                 metric_objects.append(met)
@@ -292,12 +312,12 @@ class SegBasisNet(Network):
 
         # to save the best model
         cp_best_callback = tf_utils.KeepBestModel(
-            filepath=model_dir / "weights_best_{epoch:03d}-best{val_loss:1.3f}.hdf5",
+            filepath=model_dir / f"weights_best_{{epoch:03d}}-best{{{monitor}:1.3f}}.hdf5",
             save_weights_only=True,
             verbose=0,
             save_freq="epoch",
-            monitor="val_loss",
-            mode="min",
+            monitor=monitor,
+            mode=monitor_mode,
             decay=best_model_decay,
         )
         callbacks.append(cp_best_callback)
@@ -305,16 +325,16 @@ class SegBasisNet(Network):
         # early stopping
         if early_stopping:
             es_callback = tf.keras.callbacks.EarlyStopping(
-                monitor="val_loss", patience=patience_es, mode="min", min_delta=0.005
+                monitor=monitor, patience=patience_es, mode=monitor_mode, min_delta=0.005
             )
             callbacks.append(es_callback)
 
         # reduce learning rate on plateau
         if reduce_lr_on_plateau:
             lr_reduce_callback = tf.keras.callbacks.ReduceLROnPlateau(
-                monitor="val_loss",
+                monitor=monitor,
                 patience=patience_lr_plat,
-                mode="min",
+                mode=monitor_mode,
                 factor=factor_lr_plat,
                 verbose=1,
                 cooldown=5,
@@ -334,6 +354,7 @@ class SegBasisNet(Network):
             write_graph=write_graph,
             visualization_dataset=visualization_dataset,
             visualization_frequency=1,
+            write_labels=visualize_labels,
         )
         callbacks.append(tb_callback)
 

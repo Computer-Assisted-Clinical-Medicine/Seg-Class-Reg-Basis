@@ -4,7 +4,7 @@ Preprocess the input images
 import logging
 import os
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 import SimpleITK as sitk
@@ -22,6 +22,8 @@ class NoLabelsInOverlap(Exception):
 
 
 def load_image(path: os.PathLike):
+    if not path.exists():
+        raise FileNotFoundError(f"{path} not found")
     return sitk.ReadImage(str(path))
 
 
@@ -114,6 +116,8 @@ def combine_images(
             resample_method.SetInterpolator(sitk.sitkNearestNeighbor)
             resample_method.SetOutputPixelType(sitk.sitkUInt8)
             labels_resampled = resample_method.Execute(labels)
+        else:
+            labels_resampled = None
     else:
         # just resample the labels
         reference_image_resized = sitk.Cast(reference_image, sitk.sitkFloat32)
@@ -129,6 +133,8 @@ def combine_images(
             resample_method.SetOutputSpacing(reference_image_resized.GetSpacing())
             labels_resampled = resample_method.Execute(labels)
             reduction_factor = 1
+        else:
+            labels_resampled = None
 
     # sample all images to the reference image
     resample_method = sitk.ResampleImageFilter()
@@ -143,7 +149,7 @@ def combine_images(
     image_combine = sitk.Compose(images_resampled)
 
     # check labels
-    if labels_resampled is not None:
+    if labels is not None:
         num_labels_res = sitk.GetArrayFromImage(labels_resampled).astype(bool).sum()
         if num_labels != 0 and num_labels_res < 10:
             raise NoLabelsInOverlap()
@@ -244,15 +250,44 @@ def get_overlap(images: List[sitk.Image]) -> list:
 
 
 def preprocess_dataset(
-    data_set,
-    num_channels,
-    base_dir,
-    preprocessed_dir,
-    train_dataset,
-    preprocessing_parameters,
+    data_set: dict,
+    num_channels: int,
+    base_dir: Path,
+    preprocessed_dir: Path,
+    train_dataset: Iterable,
+    preprocessing_parameters: dict,
 ):
     """Preprocess the images by applying the normalization and then combining
     them into one image.
+
+    Parameters
+    ----------
+    data_set : dict
+        The images to process, should contain "images" key with a list of images
+        and can contain a "labels" key with the path to the labels file
+    num_channels : int
+        The number of channels (has to be the length of the "images" list)
+    base_dir : Path
+        The dir all other directories are relative to
+    preprocessed_dir : Path
+        The directory to save the preprocessed data to (relative to base dir)
+    train_dataset : Iterable
+        If the normalization is trained (like histogram matching), use these
+        images for training
+    preprocessing_parameters : dict
+        The parameters for the normalization, "normalizing_method" is NORMALIZING
+        enumerator to use, available classes are in Normalization, the dict
+        is passed to the class.
+
+    Returns
+    -------
+    [type]
+        [description]
+
+    Raises
+    ------
+    ValueError
+        [description]
     """
     if not preprocessed_dir.exists():
         preprocessed_dir.mkdir(parents=True)
@@ -311,6 +346,8 @@ def preprocess_dataset(
             labels_processed_path = base_dir / label_rel_path
         else:
             labels_exist = False
+            labels_path = None
+            labels_processed_path = None
 
         # preprocess images
         preprocess_image(
@@ -325,9 +362,15 @@ def preprocess_dataset(
         if image_processed_path.exists():
             preprocessed_dict[str(name)] = {}
             preprocessed_dict[str(name)]["image"] = image_rel_path
+        else:
+            raise FileNotFoundError(f"{image_processed_path} not found after preprocessing")
         if labels_exist:
             if labels_processed_path.exists():
                 preprocessed_dict[str(name)]["labels"] = label_rel_path
+            else:
+                raise FileNotFoundError(
+                    f"{labels_processed_path} not found after preprocessing"
+                )
 
     logger.info("Preprocessing finished.")
 
@@ -358,7 +401,11 @@ def preprocess_image(
         same length as the images
     """
     # preprocess if it does not exist yet
-    if not image_processed_path.exists():
+    if labels_path is None:
+        already_processed = image_processed_path.exists()
+    else:
+        already_processed = image_processed_path.exists() and labels_processed_path.exists()
+    if not already_processed:
         # load and normalize images
         images = [load_image(img) for img in image_paths]
         images_normalized = [norm(img) for img, norm in zip(images, normalizations)]

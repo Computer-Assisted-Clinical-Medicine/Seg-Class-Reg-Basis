@@ -170,6 +170,8 @@ class CustomTBCallback(tf.keras.callbacks.TensorBoard):
         visualization, by default None
     visualization_frequency : float
         How often images and gradients should be written
+    write_labels : bool
+        If labels should be written as images, by default True
     **kwargs
         All other arguments will be passed on to tf.keras.callbacks.TensorBoard.
     """
@@ -180,12 +182,14 @@ class CustomTBCallback(tf.keras.callbacks.TensorBoard):
         visualization_dataset=None,
         visualization_frequency=5,
         write_grads=True,
+        write_labels=True,
         **kwargs,
     ):
         super().__init__(log_dir=log_dir, **kwargs)
         self.visualization_dataset = visualization_dataset
         self.visualization_frequency = visualization_frequency
         self.write_grads = write_grads
+        self.write_labels = write_labels
 
     @tf.function
     def get_gradients(self, dataset: tf.data.Dataset) -> List[tf.Tensor]:
@@ -231,7 +235,9 @@ class CustomTBCallback(tf.keras.callbacks.TensorBoard):
                 for sample in self.visualization_dataset.take(1):
                     x, y = sample
                     probabilities = self.model(x)
-                    write_images(x, y, probabilities, step=epoch)
+                    write_images(
+                        x, y, probabilities, step=epoch, write_labels=self.write_labels
+                    )
             # write gradients
             if self.write_grads:
                 if self.visualization_dataset is None:
@@ -252,95 +258,104 @@ class CustomTBCallback(tf.keras.callbacks.TensorBoard):
                     )
 
 
-def write_images(x, y, probabilities, step):
+def write_images(sample, y, probabilities, step: int, write_labels=True):
     """Write images for the summary. If 3D data is provided, the central slice
     is used. All channels are written, the labels are written and the
     probabilites.
 
     Parameters
     ----------
-    x : tf.Tensor
-        The input images as Tensor
+    x : tf.Tensor|Tuple
+        The input images as Tuple of Tensors
     y : tf.Tensor
         The input labels
     probabilities : tf.Tensor
         The output of the network as probabilites (one per class)
     step : int
         Step number used for slider in tensorboard
+    write_labels : bool
+        If labels should be written, by default True
     """
 
-    in_channels = x.shape[-1]
-    dimension = len(x.shape) - 2  # substract one dimension for batches and channels
-    max_image_output = 1
+    # if it is not a tuple, make it one
+    if not isinstance(sample, tuple):
+        sample = (sample,)
+    if write_labels:
+        predictions = tf.argmax(probabilities, -1)
 
-    # take central slice of 3D data
-    if dimension == 3:
-        dim_z = x.shape[1]
-        x = x[:, dim_z // 2, :, :]
-        y = y[:, dim_z // 2, :, :]
-        probabilities = probabilities[:, dim_z // 2, :, :]
-
-    predictions = tf.argmax(probabilities, -1)
-
+    dimension = len(sample[0].shape) - 2  # substract one dimension for batches and channels
     with tf.name_scope("01_Input_and_Predictions"):
-        if in_channels == 1:
-            image_fc = convert_float_to_image(x)
-            if image_fc.ndim == 5:
-                image_fc = image_fc[..., 0]
-            tf.summary.image("train_img", image_fc, step, max_image_output)
-        else:
-            for cls in range(in_channels):
-                image = convert_float_to_image(x[:, :, :, cls])
-                if cls == 0:
-                    image_fc = image
-                tf.summary.image("train_img_c" + str(cls), image, step, max_image_output)
+        for num, x in enumerate(sample):
+            in_channels = x.shape[-1]
+            max_image_output = 1
+            name = f"train_img_{num}"
+            # take central slice of 3D data
+            if dimension == 3:
+                dim_z = x.shape[1]
+                x = x[:, dim_z // 2, :, :]
+            if in_channels == 1:
+                image_fc = convert_float_to_image(x)
+                if image_fc.ndim == 5:
+                    image_fc = image_fc[..., 0]
+                tf.summary.image(name, image_fc, step, max_image_output)
+            else:
+                for cls in range(in_channels):
+                    image = convert_float_to_image(x[:, :, :, cls])
+                    if cls == 0:
+                        image_fc = image
+                    tf.summary.image(name + "_c" + str(cls), image, step, max_image_output)
 
-        label = tf.expand_dims(
-            tf.cast(tf.argmax(y, -1) * (255 // (cfg.num_classes_seg - 1)), tf.uint8),
-            axis=-1,
-        )
-        tf.summary.image("train_seg_lbl", label, step, max_image_output)
-        pred = tf.expand_dims(
-            tf.cast(predictions * (255 // (cfg.num_classes_seg - 1)), tf.uint8), axis=-1
-        )
-        tf.summary.image("train_seg_pred", pred, step, max_image_output)
+        if write_labels:
+            y = y[:, dim_z // 2, :, :]
+            probabilities = probabilities[:, dim_z // 2, :, :]
 
-    with tf.name_scope(
-        "02_Combined_predictions (prediction in red, label in green, both in yellow)"
-    ):
-        # set to first channel where both labels are zero
-        mask = tf.cast(tf.math.logical_and(pred == 0, label == 0), tf.uint8)
-        # set those values to the mask
-        label += image_fc * mask
-        pred += image_fc * mask
-        # set the opposite values of the image to zero
-        image_fc -= image_fc * (1 - mask)
-        combined = tf.concat([pred, label, image_fc], -1)
-        tf.summary.image("train_seg_combined", combined, step, max_image_output)
+            label = tf.expand_dims(
+                tf.cast(tf.argmax(y, -1) * (255 // (cfg.num_classes_seg - 1)), tf.uint8),
+                axis=-1,
+            )
+            tf.summary.image("train_seg_lbl", label, step, max_image_output)
+            pred = tf.expand_dims(
+                tf.cast(predictions * (255 // (cfg.num_classes_seg - 1)), tf.uint8), axis=-1
+            )
+            tf.summary.image("train_seg_pred", pred, step, max_image_output)
 
-    with tf.name_scope("03_Probabilities"):
-        if dimension == 2:
-            for cls in range(cfg.num_classes_seg):
-                tf.summary.image(
-                    "train_seg_prob_" + str(cls),
-                    tf.expand_dims(
-                        tf.cast(probabilities[:, :, :, cls] * 255, tf.uint8), axis=-1
-                    ),
-                    step,
-                    max_image_output,
-                )
+    if write_labels:
+        with tf.name_scope(
+            "02_Combined_predictions (prediction in red, label in green, both in yellow)"
+        ):
+            # set to first channel where both labels are zero
+            mask = tf.cast(tf.math.logical_and(pred == 0, label == 0), tf.uint8)
+            # set those values to the mask
+            label += image_fc * mask
+            pred += image_fc * mask
+            # set the opposite values of the image to zero
+            image_fc -= image_fc * (1 - mask)
+            combined = tf.concat([pred, label, image_fc], -1)
+            tf.summary.image("train_seg_combined", combined, step, max_image_output)
 
-    with tf.name_scope("04_Class_Labels"):
-        if cfg.num_classes_seg == 2:
-            pass
-        else:
-            for cls in range(cfg.num_classes_seg):
-                tf.summary.image(
-                    "train_seg_lbl" + str(cls),
-                    tf.expand_dims(tf.cast(y[:, :, :, cls] * 255, tf.uint8), axis=-1),
-                    step,
-                    max_image_output,
-                )
+        with tf.name_scope("03_Probabilities"):
+            if dimension == 2:
+                for cls in range(cfg.num_classes_seg):
+                    tf.summary.image(
+                        "train_seg_prob_" + str(cls),
+                        tf.expand_dims(
+                            tf.cast(probabilities[:, :, :, cls] * 255, tf.uint8), axis=-1
+                        ),
+                        step,
+                        max_image_output,
+                    )
+
+        with tf.name_scope("04_Class_Labels"):
+            if cfg.num_classes_seg == 2:
+                pass
+            else:
+                for cls in range(cfg.num_classes_seg):
+                    tf.summary.image(
+                        "train_seg_lbl" + str(cls),
+                        tf.expand_dims(tf.cast(y[:, :, :, cls] * 255, tf.uint8), axis=-1),
+                        step,
+                        max_image_output,
+                    )
 
 
 def convert_float_to_image(image: tf.Tensor) -> tf.Tensor:

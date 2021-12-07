@@ -190,9 +190,10 @@ class SegBasisLoader(DataLoader):
             labels = None
         return sample, labels
 
-    def _load_file(self, file_name, load_labels=True):
-        """Load a file, if the file is found in the chache, this is used, otherwise
-        the file is preprocessed and added to the chache
+    def _load_file(self, file_name, load_labels=True, **kwargs):
+        """Load a file
+
+        Additional keyword arguments are passed to self.get_filenames
 
         Preprocessed files are saved as images, this increases the load time
         from 20 ms to 50 ms per image but is not really relevant compared to
@@ -219,7 +220,7 @@ class SegBasisLoader(DataLoader):
             file_id = str(file_name)
         logger.debug("        Loading %s (%s)", file_id, self.mode)
         # Use a SimpleITK reader to load the nii images and labels for training
-        data_file, label_file = self.get_filenames(file_id)
+        data_file, label_file = self.get_filenames(file_id, **kwargs)
         # load images
         data_img = sitk.ReadImage(str(data_file))
         if load_labels:
