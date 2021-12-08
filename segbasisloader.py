@@ -282,15 +282,7 @@ class SegBasisLoader(DataLoader):
         -------
         np.array, np.array
             The image samples and the lables as one hot labels
-
-        Raises
-        ------
-        NotImplementedError
-            If mode is apply, this is raised, the Apply loader should be used instead
         """
-
-        if self.mode == self.MODES.APPLY:
-            raise NotImplementedError("Use the original data loader")
 
         # augment whole images
         assert isinstance(data_img, sitk.Image), "data should be an SimpleITK image"
