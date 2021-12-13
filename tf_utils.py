@@ -306,8 +306,10 @@ def write_images(sample, y, probabilities, step: int, write_labels=True):
                     tf.summary.image(name + "_c" + str(cls), image, step, max_image_output)
 
         if write_labels:
-            y = y[:, dim_z // 2, :, :]
-            probabilities = probabilities[:, dim_z // 2, :, :]
+            if dimension == 3:
+                y = y[:, dim_z // 2, :, :]
+                probabilities = probabilities[:, dim_z // 2, :, :]
+                predictions = predictions[:, dim_z // 2, :, :]
 
             label = tf.expand_dims(
                 tf.cast(tf.argmax(y, -1) * (255 // (cfg.num_classes_seg - 1)), tf.uint8),
