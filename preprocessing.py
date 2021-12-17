@@ -281,13 +281,10 @@ def preprocess_dataset(
 
     Returns
     -------
-    [type]
-        [description]
-
-    Raises
-    ------
-    ValueError
-        [description]
+    dict
+        A new dictionary containing the processed images. All keys in the dict
+        for each individual patient are added to the new dict aswell. The keys are
+        kept the same also.
     """
     if not preprocessed_dir.exists():
         preprocessed_dir.mkdir(parents=True)
@@ -371,6 +368,11 @@ def preprocess_dataset(
                 raise FileNotFoundError(
                     f"{labels_processed_path} not found after preprocessing"
                 )
+
+        # add additional keys
+        additional_keys = set(data.keys()) - set(("labels", "images"))
+        for key in additional_keys:
+            preprocessed_dict[str(name)][key] = data[key]
 
     logger.info("Preprocessing finished.")
 
