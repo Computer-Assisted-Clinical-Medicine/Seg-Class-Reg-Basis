@@ -342,6 +342,8 @@ def preprocess_dataset(
             )
             labels_processed_path = base_dir / label_rel_path
         else:
+            labels_path = None
+            labels_processed_path = None
             labels_exist = False
             labels_path = None
             labels_processed_path = None
@@ -357,7 +359,9 @@ def preprocess_dataset(
         )
 
         if image_processed_path.exists():
-            preprocessed_dict[str(name)] = {}
+            preprocessed_dict[str(name)] = {
+                k: v for k, v in data.items() if k not in ("images", "labels")
+            }
             preprocessed_dict[str(name)]["image"] = image_rel_path
         else:
             raise FileNotFoundError(f"{image_processed_path} not found after preprocessing")

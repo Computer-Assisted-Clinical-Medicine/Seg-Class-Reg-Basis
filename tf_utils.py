@@ -105,6 +105,9 @@ class KeepBestModel(tf.keras.callbacks.ModelCheckpoint):
         if not Path(filename).exists():
             raise FileNotFoundError(f"The saved model {filename} was not found.")
 
+    def _get_file_path(self, epoch, logs):
+        return self.filepath.format(epoch=epoch + 1, **logs)
+
 
 class FinetuneLayers(tf.keras.callbacks.Callback):
     """For finetuning, this callback will enable the training of certain layers

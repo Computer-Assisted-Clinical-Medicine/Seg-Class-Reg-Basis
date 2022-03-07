@@ -4,7 +4,7 @@ will augment the images while the apply loader can be used to pass whole images.
 import logging
 import os
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import SimpleITK as sitk
@@ -36,7 +36,7 @@ class SegBasisLoader(DataLoader):
 
     Parameters
     ----------
-    file_dict : Dict[str, Dict[str, str]]
+    file_dict : Dict[str, Dict[str, Any]]
         dictionary containing the file information, the key should be the id of
         the data point and value should be a dict with the image and labels as
         keys and the file paths as values
@@ -55,7 +55,7 @@ class SegBasisLoader(DataLoader):
 
     def __init__(
         self,
-        file_dict: Dict[str, Dict[str, str]],
+        file_dict: Dict[str, Dict[str, Any]],
         mode=None,
         seed=42,
         name="reader",
@@ -69,6 +69,18 @@ class SegBasisLoader(DataLoader):
         # set new properties derived in the shape
         self.data_rank = None
 
+        # save the file dict
+        self.file_dict = file_dict
+
+        # set channel and class parameters
+        self.n_channels = cfg.num_channels
+        self.n_seg = cfg.num_classes_seg
+
+        # set the number of label images, classification and regression
+        self.n_label_images = 0
+        self.n_classification = 0
+        self.n_regression = 0
+
         super().__init__(
             mode=mode,
             seed=seed,
@@ -77,9 +89,6 @@ class SegBasisLoader(DataLoader):
             sample_buffer_size=sample_buffer_size,
             **kwargs,
         )
-
-        # save the file dict
-        self.file_dict = file_dict
 
         # get the fraction of the samples that should contain the object
         if frac_obj is None:
@@ -92,10 +101,6 @@ class SegBasisLoader(DataLoader):
             self.samples_per_volume = cfg.samples_per_volume
         else:
             self.samples_per_volume = samples_per_volume
-
-        # set channel and class parameters
-        self.n_channels = cfg.num_channels
-        self.n_seg = cfg.num_classes_seg
 
         # set the capacity
         if sample_buffer_size is None:
@@ -150,21 +155,59 @@ class SegBasisLoader(DataLoader):
         # dtypes and dshapes are defined in the base class
         # pylint: disable=attribute-defined-outside-init
 
-        if self.mode is self.MODES.TRAIN or self.mode is self.MODES.VALIDATE:
-            self.dtypes = [cfg.dtype, cfg.dtype]
-            self.dshapes = [
-                np.array(cfg.train_input_shape),
-                np.array(cfg.train_label_shape),
-            ]
-            # use the same shape for image and labels
-            assert np.all(
-                self.dshapes[0][:2] == self.dshapes[1][:2]
-            ), "Sample and label shapes do not match."
-        else:
+        if self.mode not in (self.MODES.TRAIN, self.MODES.VALIDATE):
             raise ValueError(f"Not allowed mode {self.mode}")
 
-        self.data_rank = len(self.dshapes[0])
+        # use the same shape for image and labels
+        image_shape = tuple(cfg.train_input_shape)
 
+        self.dshapes = []
+        self.dtypes = []
+
+        # get the first entry to derive the shapes
+        first = list(self.file_dict.values())[0]
+        if not "image" in first:
+            raise ValueError("This loader is made for images and expects one.")
+        if isinstance(first["image"], (list, tuple)):
+            self.dshapes += [image_shape] * len(first["image"])
+            self.dtypes += [cfg.dtype] * len(first["image"])
+            self.n_inputs = len(first["image"])
+        else:
+            self.dshapes.append(image_shape)
+            self.dtypes.append(cfg.dtype)
+            self.n_inputs = 1
+
+        self.n_labels = 0
+        if "labels" in first:
+            labels_shape = tuple(cfg.train_label_shape)
+            assert np.all(
+                np.array(image_shape[:2]) == labels_shape[:2]
+            ), "Sample and label shapes do not match."
+            if isinstance(first["labels"], (list, tuple)):
+                self.dshapes += [labels_shape] * len(first["labels"])
+                self.dtypes += [cfg.dtype] * len(first["labels"])
+                self.n_labels += len(first["labels"])
+                self.n_label_images = len(first["labels"])
+            else:
+                self.dshapes.append(labels_shape)
+                self.dtypes.append(cfg.dtype)
+                self.n_labels += 1
+                self.n_label_images = 1
+        if "classification" in first:
+            self.dshapes += [i.shape for i in first["classification"]]
+            self.dtypes += [cfg.dtype] * len(first["classification"])
+            self.n_labels += len(first["classification"])
+            self.n_classification = len(first["classification"])
+        if "regression" in first:
+            self.dshapes += [(1,)] * len(first["regression"])
+            self.dtypes += [cfg.dtype] * len(first["regression"])
+            self.n_labels += len(first["regression"])
+            self.n_regression = len(first["regression"])
+
+        assert len(self.dshapes) == len(self.dtypes)
+        assert np.all([isinstance(i, tuple) for i in self.dshapes])
+
+        self.data_rank = len(image_shape)
         assert self.data_rank in [3, 4], "The rank should be 3 or 4."
 
     def get_filenames(self, file_id):
@@ -261,11 +304,17 @@ class SegBasisLoader(DataLoader):
         np.array, np.array
             The samples and labels
         """
-        data_img, label_img = self._load_file(file_name_queue)
-        samples, labels = self._get_samples_from_volume(data_img, label_img)
-        return samples, labels
+        load_labels = self.n_label_images > 0
+        data_img, label_img = self._load_file(
+            file_name=file_name_queue, load_labels=load_labels
+        )
+        sample_np = self._get_samples_from_volume(data_img, label_img)
+        sample_class_reg = self._get_class_reg(file_name_queue)
+        return sample_np + sample_class_reg
 
-    def _get_samples_from_volume(self, data_img: sitk.Image, label_img: sitk.Image):
+    def _get_samples_from_volume(
+        self, data_img: sitk.Image, label_img: Optional[sitk.Image] = None
+    ):
         """This is where the sampling actually takes place. The images are first
         augmented using sitk functions and the augmented using numpy functions.
         Then they are converted to numpy array and sampled as described in the
@@ -275,29 +324,39 @@ class SegBasisLoader(DataLoader):
         ----------
         data_img : sitk.Image
             The sample image
-        label_img : sitk.Image
+        label_img : sitk.Image, optional
             The labels as integers
 
         Returns
         -------
-        np.array, np.array
-            The image samples and the lables as one hot labels
+        np.ndarray, np.ndarray
+            The image samples and the lables as one hot labels, if no label_image
+            is provided, the output is (np.ndarray,)
         """
+        # TODO: change this function, so that an arbitrary number of images can be used
 
         # augment whole images
         assert isinstance(data_img, sitk.Image), "data should be an SimpleITK image"
-        assert isinstance(label_img, sitk.Image), "labels should be an SimpleITK image"
+        assert (
+            isinstance(label_img, sitk.Image) or label_img is None
+        ), "labels should be an SimpleITK image or None"
         # augment only in training
         if self.mode == self.MODES.TRAIN:
             data_img, label_img = self._augment_images(data_img, label_img)
+
+        if label_img is None and self.frac_obj > 0:
+            raise ValueError("Ratio Sampling only works if a label image is provided")
 
         # convert samples to numpy arrays
         data = sitk.GetArrayFromImage(data_img)
         # add 4th dimension if it is not there
         if data.ndim == 3:
             data = np.expand_dims(data, axis=-1)
-        lbl = sitk.GetArrayFromImage(label_img)
-        assert np.any(lbl != 0), "no labels found after sITK augmentation"
+        if label_img is None:
+            lbl = None
+        else:
+            lbl = sitk.GetArrayFromImage(label_img)
+            assert np.any(lbl != 0), "no labels found after sITK augmentation"
 
         # augment the numpy arrays
         if self.mode == self.MODES.TRAIN:
@@ -307,8 +366,9 @@ class SegBasisLoader(DataLoader):
         assert np.any(lbl != 0), "no labels found after numpy augmentation"
         # check shape
         assert len(data.shape) == 4, "data should be 4d"
-        assert len(lbl.shape) == 3, "labels should be 3d"
-        assert np.all(data.shape[:-1] == lbl.shape), f"{data.shape} - {lbl.shape}"
+        if lbl is not None:
+            assert len(lbl.shape) == 3, "labels should be 3d"
+            assert np.all(data.shape[:-1] == lbl.shape), f"{data.shape} - {lbl.shape}"
 
         # determine the number of background and foreground samples
         n_foreground = int(self.samples_per_volume * self.frac_obj)
@@ -318,7 +378,7 @@ class SegBasisLoader(DataLoader):
         # each dimension is inside the image
         # sample shape is without the number of channels
         if self.data_rank == 4:
-            sample_shape = self.dshapes[0][:-1]
+            sample_shape = np.array(self.dshapes[0][:-1])
         # if the rank is three, add a dimension for the z-extent
         elif self.data_rank == 3:
             sample_shape = np.array(
@@ -346,7 +406,8 @@ class SegBasisLoader(DataLoader):
         # pad the data (using 0s)
         pad_with = ((max_padding[0],) * 2, (max_padding[1],) * 2, (max_padding[2],) * 2)
         data_padded = np.pad(data, pad_with + ((0, 0),))
-        label_padded = np.pad(lbl, pad_with)
+        if lbl is not None:
+            label_padded = np.pad(lbl, pad_with)
 
         # calculate the allowed indices
         # the indices are applied to the padded data, so the minimum is 0
@@ -362,7 +423,8 @@ class SegBasisLoader(DataLoader):
         # create the arrays to store the samples
         batch_shape = (n_foreground + n_background,) + tuple(sample_shape)
         samples = np.zeros(batch_shape + (self.n_channels,), dtype=cfg.dtype_np)
-        labels = np.zeros(batch_shape, dtype=np.uint8)
+        if lbl is not None:
+            labels = np.zeros(batch_shape, dtype=np.uint8)
 
         # get the background origins (get twice as many, in case they contain labels)
         # This is faster than drawing again each time
@@ -373,11 +435,16 @@ class SegBasisLoader(DataLoader):
 
         # get the foreground center
         valid_centers = np.argwhere(lbl)
-        indices = np.random.randint(low=0, high=valid_centers.shape[0], size=n_foreground)
-        origins_foreground = valid_centers[indices] + max_padding - sample_shape // 2
-        # check that they are below the maximum amount of padding
-        for i, m_index in enumerate(max_index):
-            origins_foreground[:, i] = np.clip(origins_foreground[:, i], 0, m_index)
+        if n_foreground > 0:
+            indices = np.random.randint(
+                low=0, high=valid_centers.shape[0], size=n_foreground
+            )
+            origins_foreground = valid_centers[indices] + max_padding - sample_shape // 2
+            # check that they are below the maximum amount of padding
+            for i, m_index in enumerate(max_index):
+                origins_foreground[:, i] = np.clip(origins_foreground[:, i], 0, m_index)
+        else:
+            origins_foreground = np.array([], dtype=int).reshape((0, 3))
 
         # extract patches (pad if necessary), in separate function, do augmentation beforehand or with patches
         origins = list(np.concatenate([origins_foreground, origins_background]))
@@ -388,12 +455,18 @@ class SegBasisLoader(DataLoader):
             sample_patch = data_padded[
                 i : i + sample_shape[0], j : j + sample_shape[1], k : k + sample_shape[2]
             ]
-            label_patch = label_padded[
-                i : i + sample_shape[0], j : j + sample_shape[1], k : k + sample_shape[2]
-            ]
+            if lbl is not None:
+                label_patch = label_padded[
+                    i : i + sample_shape[0],
+                    j : j + sample_shape[1],
+                    k : k + sample_shape[2],
+                ]
             if num < n_foreground:
                 samples[num] = sample_patch
                 labels[num] = label_patch
+                num += 1
+            elif lbl is None:
+                samples[num] = sample_patch
                 num += 1
             # only use patches with not too many labels
             elif label_patch.mean() < cfg.background_label_percentage:
@@ -419,20 +492,28 @@ class SegBasisLoader(DataLoader):
         # if rank is 3, squash the z-axes
         if self.data_rank == 3:
             samples = samples.squeeze(axis=1)
-            labels = labels.squeeze(axis=1)
+            if lbl is not None:
+                labels = labels.squeeze(axis=1)
 
         # convert to one_hot_label
-        labels_onehot = np.squeeze(np.eye(self.n_seg)[labels.flat]).reshape(
-            labels.shape + (-1,)
-        )
+        if lbl is not None:
+            labels_onehot = np.squeeze(np.eye(self.n_seg)[labels.flat]).reshape(
+                labels.shape + (-1,)
+            )
 
-        logger.debug(
-            "Sample shape: %s, Label_shape: %s",
-            str(samples.shape),
-            str(labels_onehot.shape),
-        )
-
-        return samples, labels_onehot
+        if lbl is not None:
+            logger.debug(
+                "Sample shape: %s, Label_shape: %s",
+                str(samples.shape),
+                str(labels_onehot.shape),
+            )
+            return samples, labels_onehot
+        else:
+            logger.debug(
+                "Sample shape: %s",
+                str(samples.shape),
+            )
+            return (samples,)
 
     def _augment_numpy(self, img: np.ndarray, lbl: np.ndarray):
         """!
@@ -550,3 +631,24 @@ class SegBasisLoader(DataLoader):
             new_label = None
 
         return new_image, new_label
+
+    def _get_class_reg(self, file_name):
+        # convert to string if necessary
+        if isinstance(file_name, bytes):
+            file_id = str(file_name, "utf-8")
+        else:
+            file_id = str(file_name)
+
+        if self.n_classification > 0 or self.n_regression > 0:
+            class_samples = self.file_dict[file_id].get("classification", [])
+            reg_samples = self.file_dict[file_id].get("regression", [])
+            # make sure the regression samples have a shape
+            reg_samples = [np.array(s).reshape((1,)) for s in reg_samples]
+            file_samples = tuple(class_samples + reg_samples)
+            # duplicate the samples self.samples_per_volume times
+            file_samples_expanded = tuple(
+                np.tile(s, (self.samples_per_volume,) + (1,) * s.ndim) for s in file_samples
+            )
+            return file_samples_expanded
+        else:
+            return tuple()

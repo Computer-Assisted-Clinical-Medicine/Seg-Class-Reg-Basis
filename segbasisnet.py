@@ -3,19 +3,18 @@
 import logging
 import os
 from pathlib import Path
-from typing import Callable, List, Union
+from typing import Callable, Collection, Dict, List, Optional, Union
 
 import numpy as np
 import SimpleITK as sitk
 import tensorflow as tf
 from tensorboard.plugins.hparams import api as hp
 
+from . import config as cfg
 from . import tf_utils
 from .NetworkBasis import loss
 from .NetworkBasis.metric import Dice
 from .NetworkBasis.network import Network
-
-from . import config as cfg
 
 # configure logger
 logger = logging.getLogger(__name__)
@@ -25,11 +24,21 @@ logger = logging.getLogger(__name__)
 
 
 class SegBasisNet(Network):
-    """Basic network to perform segmentation."""
+    """Basic network to perform segmentation.
+
+    Parameters
+    ----------
+    loss_name : str
+        The name of the loss to use. If multiple tasks are performed, it can also
+        be a dict with the task name as keys and a list of losses as values
+    tasks : Collection[str], optional
+        The tasks that should be performed, loss and metrics will be selected accordingly
+    """
 
     def __init__(
         self,
         loss_name: str,
+        tasks=("segmentation",),
         is_training=True,
         do_finetune=False,
         model_path="",
@@ -45,6 +54,7 @@ class SegBasisNet(Network):
         # tf.keras.mixed_precision.experimental.set_policy(policy)
 
         self.custom_objects = {"Dice": Dice}
+        self.tasks = tasks
 
         super().__init__(
             loss=loss_name,
@@ -107,10 +117,10 @@ class SegBasisNet(Network):
             return loss.equalized_dice_loss
 
         if loss_name == "CEL":
-            if self.options["out_channels"] > 2:
-                return loss.categorical_cross_entropy_loss
-            else:
-                return loss.binary_cross_entropy_loss
+            return loss.categorical_cross_entropy_loss
+
+        if loss_name == "BCEL":
+            return loss.binary_cross_entropy_loss
 
         if loss_name == "ECEL":
             return loss.equalized_categorical_cross_entropy
@@ -132,6 +142,9 @@ class SegBasisNet(Network):
 
         if loss_name == "CEL+DICE":
             return loss.categorical_cross_entropy_and_dice_loss
+
+        if loss_name == "MSE":
+            return loss.mean_squared_error_loss
 
         raise ValueError(loss_name, "is not a supported loss function.")
 
@@ -171,7 +184,7 @@ class SegBasisNet(Network):
         epochs: int = 10,
         l_r=0.001,
         optimizer="Adam",
-        metrics=("dice", "acc", "meanIoU"),
+        metrics: Optional[Dict[str, Collection[Union[str, Callable]]]] = None,
         monitor="val_loss",
         monitor_mode="min",
         best_model_decay=0.7,
@@ -207,7 +220,8 @@ class SegBasisNet(Network):
             The learning rate, by default 0.001
         optimizer : str, optional
             The name of the optimizer, by default 'Adam'
-        metrics : Collection[Union[str, Callable]], optional
+        metrics : Dict[str, Collection[Union[str, Callable]]], optional
+            The metrics are a dict with the task as key and then the metrics as values.
             The metrics that should be used a strings or Callables, by default ("dice", "acc", "meanIoU")
         monitor : str, optional
             The metric to monitor, used for early stopping and keeping the best model and lr reduction.
@@ -250,35 +264,30 @@ class SegBasisNet(Network):
         # set path
         output_path = Path(logs_path) / folder_name
 
+        # to save the model
+        model_dir = output_path / "models"
+        if not model_dir.exists():
+            model_dir.mkdir()
+
         # do summary
         self.model.summary(print_fn=logger.info)
 
-        # set metrics
-        metric_objects: List[Union[str, Callable]] = []
-        for met in metrics:
-            if met == "dice":
-                metric_objects.append(Dice(name="dice", num_classes=cfg.num_classes_seg))
-            elif met == "meanIoU":
-                metric_objects.append(
-                    tf.keras.metrics.MeanIoU(num_classes=cfg.num_classes_seg)
-                )
-            elif met == "fp":
-                metric_objects.append(tf.keras.metrics.FalsePositives())
-            elif met == "fn":
-                metric_objects.append(tf.keras.metrics.FalseNegatives())
-            elif met == "tn":
-                metric_objects.append(tf.keras.metrics.TrueNegatives())
-            elif met == "tp":
-                metric_objects.append(tf.keras.metrics.TruePositives())
-            elif met == "precision":
-                metric_objects.append(tf.keras.metrics.Precision())
-            elif met == "recall":
-                metric_objects.append(tf.keras.metrics.Recall())
-            elif met == "auc":
-                metric_objects.append(tf.keras.metrics.AUC())
-            # if nothing else is specified, just add it
-            elif isinstance(met, str):
-                metric_objects.append(met)
+        tf.keras.utils.plot_model(
+            self.model,
+            to_file=model_dir / "model.png",
+        )
+        tf.keras.utils.plot_model(
+            self.model, to_file=model_dir / "model_with_shapes.png", show_shapes=True
+        )
+
+        if metrics is None:
+            metrics = {
+                "segmentation": ("dice", "acc", "meanIoU"),
+                "classification": ("precision", "recall", "auc", "fp", "fn", "tn", "tp"),
+                "regression": ("rmse",),
+            }
+
+        metric_objects = self._get_metrics(metrics, self.tasks)
 
         # compile model
         self.model.compile(
@@ -304,11 +313,6 @@ class SegBasisNet(Network):
 
         # define callbacks
         callbacks = []
-
-        # to save the model
-        model_dir = output_path / "models"
-        if not model_dir.exists():
-            model_dir.mkdir()
 
         # to save the best model
         cp_best_callback = tf_utils.KeepBestModel(
@@ -411,6 +415,36 @@ class SegBasisNet(Network):
         self.model.save(model_dir / "model-best", save_format="tf")
         print("Saving finished.")
 
+    def _get_metrics(
+        self, metrics: List[Union[str, Callable, Collection]], tasks: List[str]
+    ):
+        # set metrics
+        metric_objects: List[List[Union[str, Callable]]] = []
+        for t_name in tasks:
+            metric_objects.append(tuple(self._convert_metric(m) for m in metrics[t_name]))
+        return metric_objects
+
+    def _convert_metric(self, metric):
+        metrics = {
+            "dice": lambda: Dice(name="dice", num_classes=cfg.num_classes_seg),
+            "meanIoU": lambda: tf.keras.metrics.MeanIoU(num_classes=cfg.num_classes_seg),
+            "fp": tf.keras.metrics.FalsePositives,
+            "fn": tf.keras.metrics.FalseNegatives,
+            "tn": tf.keras.metrics.TrueNegatives,
+            "tp": tf.keras.metrics.TruePositives,
+            "precision": tf.keras.metrics.Precision,
+            "recall": tf.keras.metrics.Recall,
+            "auc": tf.keras.metrics.AUC,
+            "rmse": tf.keras.metrics.RootMeanSquaredError,
+        }
+        if metric in metrics:
+            return metrics[metric]()
+        # if nothing else is specified, just add it
+        elif isinstance(metric, str):
+            return metric
+        else:
+            raise ValueError(f"Metric {metric} cannot be processed.")
+
     def get_hyperparameter_dict(self):
         """This function reads the hyperparameters from options and writes them to a dict of
         hyperparameters, which can then be read using tensorboard.
@@ -422,7 +456,7 @@ class SegBasisNet(Network):
         """
         # TODO: move into the individual networks
         hyperparameters = {
-            "dimension": self.options["rank"],
+            "dimension": self.options.get("rank"),
             "drop_out_rate": self.options["drop_out"][1],
             "regularize": self.options["regularize"][0],
             "regularizer": self.options["regularize"][1],
@@ -459,9 +493,14 @@ class SegBasisNet(Network):
             if opt in self.options:
                 hyperparameters[opt] = self.options[opt]
         # check the types
+        to_delete = []
         for key, value in hyperparameters.items():
             if type(value) in [list, tuple]:
                 hyperparameters[key] = str(value)
+            if value is None:
+                to_delete.append(key)
+        for key in to_delete:
+            del hyperparameters[key]
         return hyperparameters
 
     def _run_apply(self, version, model_path, application_dataset, filename, apply_path):

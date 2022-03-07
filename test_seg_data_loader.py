@@ -50,13 +50,18 @@ def get_loader(name, file_dict, precent_obj=0.33):
     return data_loader
 
 
-def load_dataset(test_dir):
+def load_dataset(test_dir, n_classification=0, n_regression=0, load_labels=True):
     """
     Load the dataset from the test directory and convert the file lists to the
-    right types
+    right types. Some classification and regression labels can also be added,
+    the classification labels will be a random one-hot encoded vector between 2
+    and 20 entries and the regression values will be random between 0 and 1
     """
     # add data path
     file_list = create_test_files.create_test_files(test_dir)
+
+    if n_classification > 0:
+        class_shapes = [np.random.randint(2, 20) for _ in range(n_classification)]
 
     file_dict = {}
     for f in file_list:
@@ -64,10 +69,17 @@ def load_dataset(test_dir):
         name = f_path.name
         image_name = f_path.parent / (cfg.sample_file_name_prefix + name + cfg.file_suffix)
         labels_name = f_path.parent / (cfg.label_file_name_prefix + name + cfg.file_suffix)
-        file_dict[name] = {
-            "image": image_name.relative_to(test_dir),
-            "labels": labels_name.relative_to(test_dir),
-        }
+        file_dict[name] = {"image": image_name.relative_to(test_dir)}
+        if load_labels:
+            file_dict[name]["labels"] = labels_name.relative_to(test_dir)
+        if n_classification > 0:
+            file_dict[name]["classification"] = [
+                np.eye(c)[np.random.randint(c)] for c in class_shapes
+            ]
+        if n_regression > 0:
+            file_dict[name]["regression"] = [
+                np.random.uniform() for _ in range(n_regression)
+            ]
 
     # only use names for the file list
     file_list = list(file_dict.keys())
@@ -205,12 +217,18 @@ names = [
     # "vald"
 ]
 frac_objects = [0, 0.3, 1]
+n_class = [0, 1, 5, 10]
+n_reg = [0, 1, 5, 10]
+load_labels = [True, False]
 
 
 @pytest.mark.parametrize("dimension", dimensions)
 @pytest.mark.parametrize("name", names)
 @pytest.mark.parametrize("frac_obj", frac_objects)
-def test_functions(dimension, name, frac_obj):
+@pytest.mark.parametrize("n_classification", n_class)
+@pytest.mark.parametrize("n_regression", n_reg)
+@pytest.mark.parametrize("load_labels", load_labels)
+def test_functions(dimension, name, frac_obj, n_classification, n_regression, load_labels):
     """Test the individual functions contained in the wrapper.
 
     Parameters
@@ -228,7 +246,12 @@ def test_functions(dimension, name, frac_obj):
     set_seeds()
 
     # get names from csv
-    file_list, files_list_b, file_dict = load_dataset(test_dir)
+    file_list, files_list_b, file_dict = load_dataset(
+        test_dir=test_dir,
+        n_classification=n_classification,
+        n_regression=n_regression,
+        load_labels=load_labels,
+    )
 
     # generate loader
     data_loader = get_loader(name, file_dict, frac_obj)
@@ -246,22 +269,46 @@ def test_functions(dimension, name, frac_obj):
     assert (
         data_read[0].shape[0] == cfg.samples_per_volume
     ), "Wrong number of samples per volume"
-    assert data_read[1].shape[1:] == tuple(cfg.train_label_shape), "Wrong label shape"
+    if load_labels:
+        assert data_read[1].shape[1:] == tuple(cfg.train_label_shape), "Wrong label shape"
 
     if name == "test":
         samples = data_read[0]
     else:
-        samples, labels = data_read
+        if n_classification == 0 and n_regression == 0 and load_labels:
+            samples, labels = data_read
+            class_reg = None
+        if n_classification == 0 and n_regression == 0 and not load_labels:
+            samples = data_read[0]
+            class_reg = None
+        elif load_labels:
+            samples, labels, class_reg = data_read[0], data_read[1], data_read[2:]
+        else:
+            samples, class_reg = data_read[0], data_read[1:]
+
         print(f"\tSamples from foreground shape: {samples.shape}")
-        print(f"\tLabels from foreground shape: {labels.shape}")
+        if load_labels:
+            print(f"\tLabels from foreground shape: {labels.shape}")
 
-        assert samples.shape[:-1] == labels.shape[:-1]
+            assert samples.shape[:-1] == labels.shape[:-1]
 
-        nan_slices = np.all(np.isnan(samples), axis=(1, 2, 3))
-        assert not np.any(nan_slices), f"{nan_slices.sum()} sample slices contain NANs"
+            nan_slices = np.all(np.isnan(labels), axis=(1, 2, 3))
+            assert not np.any(nan_slices), f"{nan_slices.sum()} label slices contain NANs"
 
-        nan_slices = np.all(np.isnan(labels), axis=(1, 2, 3))
-        assert not np.any(nan_slices), f"{nan_slices.sum()} label slices contain NANs"
+        if class_reg is not None:
+            # check the shapes of the samples
+            assert len(class_reg) == n_classification + n_regression
+            if n_classification > 0:
+                first = file_dict[file_list[0]]["classification"]
+                required_shape = [(cfg.samples_per_volume,) + f.shape for f in first]
+                sample_shape = [s.shape for s in class_reg[:n_classification]]
+                assert np.all([r == s for r, s in zip(required_shape, sample_shape)])
+            if n_regression > 0:
+                reg_shape = (cfg.samples_per_volume, 1)
+                assert np.all([r.shape == reg_shape for r in class_reg[-n_regression:]])
+
+    nan_slices = np.all(np.isnan(samples), axis=(1, 2, 3))
+    assert not np.any(nan_slices), f"{nan_slices.sum()} sample slices contain NANs"
 
     # call the wrapper function
     data_loader._read_wrapper(
@@ -272,7 +319,9 @@ def test_functions(dimension, name, frac_obj):
 @pytest.mark.parametrize("dimension", dimensions)
 @pytest.mark.parametrize("name", names)
 @pytest.mark.parametrize("frac_obj", frac_objects)
-def test_wrapper(dimension, name, frac_obj):
+@pytest.mark.parametrize("n_classification", n_class)
+@pytest.mark.parametrize("n_regression", n_reg)
+def test_wrapper(dimension, name, frac_obj, n_classification, n_regression):
     """Test the complete wrapper and check shapes
 
     Parameters
@@ -296,7 +345,11 @@ def test_wrapper(dimension, name, frac_obj):
     set_seeds()
 
     # get names from csv
-    file_list, _, file_dict = load_dataset(test_dir)
+    file_list, _, file_dict = load_dataset(
+        test_dir=test_dir,
+        n_classification=n_classification,
+        n_regression=n_regression,
+    )
 
     # generate loader
     data_loader = get_loader(name, file_dict, frac_obj)
@@ -339,13 +392,27 @@ def test_wrapper(dimension, name, frac_obj):
         if name == "test":
             x_t = sample
         else:
-            x_t, y_t = sample
+            if n_classification == 0 and n_regression == 0:
+                x_t, y_t = sample
+                cr_t = None
+            else:
+                x_t, y_t, cr_t = sample[0], sample[1][0], sample[1][1:]
 
         # check shape
         if name != "test":
             assert cfg.batch_size_train == x_t.shape[0]
             assert cfg.num_channels == x_t.shape[-1]
             assert cfg.batch_size_train == y_t.shape[0]
+            if cr_t is not None:
+                assert len(cr_t) == n_classification + n_regression
+                if n_classification > 0:
+                    first = file_dict[file_list[0]]["classification"]
+                    required_shape = [(cfg.batch_size_train,) + f.shape for f in first]
+                    sample_shape = [s.shape for s in cr_t[:n_classification]]
+                    assert np.all([r == s for r, s in zip(required_shape, sample_shape)])
+                if n_regression > 0:
+                    reg_shape = (cfg.batch_size_train, 1)
+                    assert np.all([r.shape == reg_shape for r in cr_t[-n_regression:]])
         else:
             if dimension == 2:
                 assert first_image.shape[0] == x_t.numpy().shape[0]
@@ -442,5 +509,25 @@ if __name__ == "__main__":
     # run functions for better debugging
     for dim in dimensions:
         for mod_name in names:
-            test_functions(dim, mod_name, frac_obj=0.4)
-            test_wrapper(dim, mod_name, frac_obj=0.4)
+            for n_c in n_class:
+                for n_r in n_reg:
+                    for ll in load_labels:
+                        if ll:
+                            fr_obj = 0.4
+                        else:
+                            fr_obj = 0
+                        test_functions(
+                            dim,
+                            mod_name,
+                            frac_obj=fr_obj,
+                            n_classification=n_c,
+                            n_regression=n_r,
+                            load_labels=ll,
+                        )
+                        test_wrapper(
+                            dim,
+                            mod_name,
+                            frac_obj=fr_obj,
+                            n_classification=n_c,
+                            n_regression=n_r,
+                        )

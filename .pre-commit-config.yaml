@@ -1,24 +1,24 @@
 repos:
   - repo: https://github.com/ambv/black
-    rev: 21.6b0
+    rev: 22.1.0
     hooks:
     - id: black
-      language_version: python3.8
+      language_version: python3.9
       args: [
         "-l", "92",
-        "--target-version", "py38"
+        "--target-version", "py39"
       ]
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.0.1
+    rev: v4.1.0
     hooks:
     - id: requirements-txt-fixer
     - id: mixed-line-ending
   - repo: https://github.com/pycqa/pylint
-    rev: v2.9.3
+    rev: v2.12.2
     hooks:
     - id: pylint
       args: [
         "--disable=import-error,too-many-locals,too-many-locals,too-many-branches,too-many-statements",
-        "--disable=too-many-arguments,too-many-instance-attributes"
+        "--disable=too-many-arguments,too-many-instance-attributes,duplicate-code"
       ]
       exclude: (?x)^(test_(.+)|time_(.+))$
