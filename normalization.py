@@ -119,7 +119,7 @@ class Normalization:
             "class": str(self.__class__),
             "enum": self.enum,
         }
-        with open(file_path, "w") as f:
+        with open(file_path, "w", encoding="utf8") as f:
             yaml.dump(data, f)
 
     @classmethod
@@ -132,7 +132,7 @@ class Normalization:
         file_path : os.pathlike
             The file to load
         """
-        with open(file_path, "r") as f:
+        with open(file_path, "r", encoding="utf8") as f:
             data = yaml.load(f, Loader=yaml.Loader)
         normalization = cls(**data["parameters"])
         # set all properties from the dict
