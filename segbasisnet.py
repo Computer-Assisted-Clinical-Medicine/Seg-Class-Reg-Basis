@@ -3,7 +3,7 @@
 import logging
 import os
 from pathlib import Path
-from typing import Callable, Collection, Dict, List, Optional, Union
+from typing import Any, Callable, Collection, Dict, Iterable, List, Optional, Union
 
 import numpy as np
 import SimpleITK as sitk
@@ -12,19 +12,19 @@ from tensorboard.plugins.hparams import api as hp
 
 from . import config as cfg
 from . import tf_utils
-from .NetworkBasis import loss
-from .NetworkBasis.metric import Dice
-from .NetworkBasis.network import Network
+from . import loss
+from .metric import Dice
 
 # configure logger
 logger = logging.getLogger(__name__)
 
-# it inherits the public methods
-# pylint: disable=too-few-public-methods
 
-
-class SegBasisNet(Network):
+class SegBasisNet:
     """Basic network to perform segmentation.
+
+    Inheriting classes should set:
+    - name : the name of the model
+    - _build_model : This function will actually build the model
 
     Parameters
     ----------
@@ -35,6 +35,8 @@ class SegBasisNet(Network):
         The tasks that should be performed, loss and metrics will be selected accordingly
     """
 
+    name: str
+
     def __init__(
         self,
         loss_name: str,
@@ -42,10 +44,7 @@ class SegBasisNet(Network):
         is_training=True,
         do_finetune=False,
         model_path="",
-        drop_out=(False, 0.2),
         regularize=(True, "L2", 0.00001),
-        activation="relu",
-        debug=False,
         **kwargs,
     ):
 
@@ -56,17 +55,58 @@ class SegBasisNet(Network):
         self.custom_objects = {"Dice": Dice}
         self.tasks = tasks
 
-        super().__init__(
-            loss=loss_name,
-            is_training=is_training,
-            do_finetune=do_finetune,
-            model_path=model_path,
-            regularize=regularize,
-            drop_out=drop_out,
-            activation=activation,
-            debug=debug,
-            **kwargs,
-        )
+        self.inputs: Dict[str, tf.keras.Input] = {}
+        self.outputs = {}
+        # output is a dictionary containing logits, probabilities, loss and predictions
+        self.variables: Dict[str, Any] = {}
+        self.options: Dict[str, Any] = {}
+        self.options["is_training"] = is_training
+        self.options["do_finetune"] = do_finetune
+        self.options["regularize"] = regularize
+
+        # custom objects will be used during the _load_net
+        if not hasattr(self, "custom_objects"):
+            self.custom_objects: Dict[str, object] = {}
+
+        if not self.options["is_training"] or (
+            self.options["is_training"] and self.options["do_finetune"]
+        ):
+            if model_path == "":
+                raise ValueError("Model Path cannot be empty for Finetuning or Inference!")
+        else:
+            if model_path != "":
+                logger.warning("Caution: argument model_path is ignored in training!")
+
+        self.options["model_path"] = model_path
+        if not hasattr(self, "tasks"):
+            self.tasks = ("segmentation",)
+
+        # write other kwargs to options
+        for key, value in kwargs.items():
+            self.options[key] = value
+
+        if self.options["is_training"] and not self.options["do_finetune"]:
+            self._set_up_inputs()
+            self.options["regularizer"] = self._get_reg()
+            # if training build everything according to parameters
+            if isinstance(self.inputs["x"], tf.Tensor):
+                self.options["in_channels"] = self.inputs["x"].shape.as_list()[-1]
+                # self.options['out_channels'] is set elsewhere, but required
+                # input number of dimensions (without channels and batch size)
+                self.options["rank"] = len(self.inputs["x"].shape) - 2
+
+            # tf.summary.trace_on(graph=True, profiler=False)
+            self.outputs["loss"], self.options["loss_name"] = self._get_task_losses(
+                loss_name
+            )
+            self.model = self._build_model()
+        else:
+            # for finetuning load net from file
+            # tf.summary.trace_on(graph=True, profiler=False)
+            self._load_net()
+            self.outputs["loss"], self.options["loss_name"] = self._get_task_losses(
+                loss_name
+            )
 
         # window size when applying the network
         self.window_size = None
@@ -80,73 +120,6 @@ class SegBasisNet(Network):
             shape=cfg.train_input_shape, batch_size=cfg.batch_size_train, dtype=cfg.dtype
         )
         self.options["out_channels"] = cfg.num_classes_seg
-
-    def _get_loss(self, loss_name) -> Callable:
-        """
-        Returns loss depending on loss.
-
-        loss should be in {'DICE', 'TVE', 'GDL', 'CEL', 'WCEL'}.
-
-        Returns
-        -------
-        Callable
-            The loss as tensorflow function
-        """
-        # many returns do not affect the readability
-        # pylint: disable=too-many-return-statements
-
-        if loss_name == "DICE":
-            return loss.dice_loss
-
-        if loss_name == "DICE-FNR":
-            return loss.dice_with_fnr_loss
-
-        if loss_name == "TVE":
-            return loss.tversky_loss
-
-        if loss_name == "GDL":
-            return loss.generalized_dice_loss
-
-        if loss_name == "GDL-FPNR":
-            return loss.generalized_dice_with_fpr_fnr_loss
-
-        if loss_name == "NDL":
-            return loss.normalized_dice_loss
-
-        if loss_name == "EDL":
-            return loss.equalized_dice_loss
-
-        if loss_name == "CEL":
-            return loss.categorical_cross_entropy_loss
-
-        if loss_name == "BCEL":
-            return loss.binary_cross_entropy_loss
-
-        if loss_name == "ECEL":
-            return loss.equalized_categorical_cross_entropy
-
-        if loss_name == "NCEL":
-            return loss.normalized_categorical_cross_entropy
-
-        if loss_name == "WCEL":
-            return loss.weighted_categorical_cross_entropy
-
-        if loss_name == "ECEL-FNR":
-            return loss.equalized_categorical_cross_entropy_with_fnr
-
-        if loss_name == "WCEL-FPR":
-            return loss.weighted_categorical_crossentropy_with_fpr_loss
-
-        if loss_name == "GCEL":
-            return loss.generalized_categorical_cross_entropy
-
-        if loss_name == "CEL+DICE":
-            return loss.categorical_cross_entropy_and_dice_loss
-
-        if loss_name == "MSE":
-            return loss.mean_squared_error_loss
-
-        raise ValueError(loss_name, "is not a supported loss function.")
 
     def _select_final_activation(self):
         # http://dataaspirant.com/2017/03/07/difference-between-softmax-function-and-sigmoid-function/
@@ -174,8 +147,84 @@ class SegBasisNet(Network):
     def _build_model(self) -> tf.keras.Model:
         raise NotImplementedError("not implemented")
 
+    def _load_net(self):
+        # This loads the keras network and the first checkpoint file
+        self.model: tf.keras.Model = tf.keras.models.load_model(
+            self.options["model_path"], compile=False, custom_objects=self.custom_objects
+        )
+
+        epoch = Path(self.options["model_path"]).name.split("-")[-1]
+        self.variables["epoch"] = epoch
+
+        if self.options["is_training"] is False:
+            self.model.trainable = False
+        self.options["rank"] = len(self.model.inputs[0].shape) - 2
+        self.options["in_channels"] = self.model.inputs[0].shape.as_list()[-1]
+        self.options["out_channels"] = self.model.outputs[0].shape.as_list()[-1]
+        logger.info("Model was loaded")
+
+    def _get_reg(self) -> tf.keras.regularizers.Regularizer:
+        if self.options["regularize"][0]:
+            if self.options["regularize"][1] == "L1":
+                regularizer = tf.keras.regularizers.l1(self.options["regularize"][2])
+            elif self.options["regularize"][1] == "L2":
+                regularizer = tf.keras.regularizers.l2(self.options["regularize"][2])
+            else:
+                raise ValueError(
+                    self.options["regularize"][1], "is not a supported regularizer ."
+                )
+        else:
+            regularizer = None
+
+        return regularizer
+
+    def _get_task_losses(self, loss_input: Union[str, dict, object, Iterable]):
+        if isinstance(loss_input, str):
+            loss_obj = loss.get_loss(loss_input)
+        elif hasattr(loss_input, "__call__"):
+            if hasattr(loss_input, "__name__"):
+                loss_name = loss_input.__name__
+            else:
+                loss_name = type(loss_input).__name__
+            loss_obj = loss_input
+        elif isinstance(loss_input, dict):
+            loss_name = "Multitask"
+            loss_obj = tuple(loss.get_loss(loss_input[t]) for t in self.tasks)
+        elif isinstance(loss_input, Iterable):
+            loss_name = "-".join(str(l) for l in loss_input)
+            loss_obj = tuple(loss.get_loss(l) for l in loss_input)
+        else:
+            raise ValueError(
+                "Incompatible loss, it should be a Callable, string, dict or Iterable."
+            )
+        return loss_obj, loss_name
+
+    @staticmethod
+    def _get_optimizer(optimizer, l_r, global_step=0, clipvalue=None):
+        if optimizer == "Adam":
+            return tf.optimizers.Adam(learning_rate=l_r, epsilon=1e-3, clipvalue=clipvalue)
+        elif optimizer == "Momentum":
+            mom = 0.9
+            learning_rate = tf.optimizers.schedules.ExponentialDecay(
+                l_r, 6000, 0.96, staircase=True
+            )
+            return tf.optimizers.SGD(learning_rate, momentum=mom, clipvalue=clipvalue)
+        elif optimizer == "Adadelta":
+            return tf.optimizers.Adadelta(learning_rate=l_r, clipvalue=clipvalue)
+        elif optimizer == "SGD":
+            return tf.optimizers.SGD(learning_rate=l_r, clipvalue=None)
+        elif optimizer == "RMSprop":
+            return tf.optimizers.RMSprop(learning_rate=l_r, clipvalue=None)
+        elif optimizer == "Adamax":
+            return tf.optimizers.Adamax(learning_rate=l_r, epsilon=1e-3, clipvalue=None)
+        else:
+            raise ValueError(f"Optimizer {optimizer} unknown.")
+
+    def plot_model(self, save_path):
+        tf.keras.utils.plot_model(self.model, to_file=save_path)
+
     # pylint: disable=arguments-differ
-    def _run_train(
+    def train(
         self,
         logs_path: os.PathLike,
         folder_name: str,
@@ -503,7 +552,7 @@ class SegBasisNet(Network):
             del hyperparameters[key]
         return hyperparameters
 
-    def _run_apply(self, version, model_path, application_dataset, filename, apply_path):
+    def apply(self, version, model_path, application_dataset, filename, apply_path):
         """Apply the network to test data. If the network is 2D, it is applied
         slice by slice. If it is 3D, it is applied to the whole images. If that
         runs out of memory, it is applied in patches in z-direction with the same
