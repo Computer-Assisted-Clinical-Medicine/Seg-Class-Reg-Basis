@@ -90,8 +90,6 @@ min_resolution_augment = 1
 max_resolution_augment = 1
 sample_target_spacing = [1, 1, 3]
 
-# TODO: implement with random spline field
-
 ##### Testing #####
 write_probabilities = False
 write_intermediaries = False

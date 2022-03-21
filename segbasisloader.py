@@ -116,7 +116,7 @@ class SegBasisLoader:
         self.n_seg = cfg.num_classes_seg
 
         # set the number of label images, classification and regression
-        self.n_label_images = None
+        self.n_label_images = 0
         self.n_classification = None
         self.n_regression = None
 

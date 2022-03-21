@@ -112,7 +112,7 @@ class SegBasisNet:
         self.window_size = None
         # number each input dimension (besides rank) should be divisible by (to avoid problems in maxpool layer)
         # this number should be determined by the network
-        self.divisible_by = None
+        self.divisible_by = 16
 
     def _set_up_inputs(self):
         """setup the inputs. Inputs are taken from the config file."""
@@ -348,9 +348,6 @@ class SegBasisNet:
             run_eagerly=debug,
         )
 
-        if self.options["debug"]:
-            self.model.run_eagerly = True
-
         # check the iterator sizes
         assert cfg.num_files is not None, "Number of files should be set"
         iter_per_epoch = cfg.samples_per_volume * cfg.num_files // cfg.batch_size_train
@@ -506,11 +503,12 @@ class SegBasisNet:
         # TODO: move into the individual networks
         hyperparameters = {
             "dimension": self.options.get("rank"),
-            "drop_out_rate": self.options["drop_out"][1],
             "regularize": self.options["regularize"][0],
             "regularizer": self.options["regularize"][1],
             "regularizer_param": self.options["regularize"][2],
         }
+        if "dropout" in self.options:
+            hyperparameters["dropout"] = self.options["drop_out"][1]
         if "kernel_dim" in self.options:
             if isinstance(self.options["kernel_dims"], list):
                 hyperparameters["kernel_dim"] = self.options["kernel_dims"][0]
@@ -552,7 +550,7 @@ class SegBasisNet:
             del hyperparameters[key]
         return hyperparameters
 
-    def apply(self, version, model_path, application_dataset, filename, apply_path):
+    def apply(self, version, application_dataset, filename, apply_path):
         """Apply the network to test data. If the network is 2D, it is applied
         slice by slice. If it is 3D, it is applied to the whole images. If that
         runs out of memory, it is applied in patches in z-direction with the same
@@ -562,8 +560,6 @@ class SegBasisNet:
         ----------
         version : int or str
             The epoch, can be int or identifier (final for example)
-        model_path : str
-            Not used
         application_dataset : ApplyBasisLoader
             The dataset
         filename : str

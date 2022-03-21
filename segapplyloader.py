@@ -65,6 +65,7 @@ class ApplyBasisLoader(SegBasisLoader):
         # have all sizes except the channel divisible by a certain number (needed for downsampling)
         self.divisible_by = divisible_by
         assert self.divisible_by % 2 == 0
+        assert isinstance(self.divisible_by, int)
 
         # remember the last file
         self.last_file = None
@@ -134,7 +135,7 @@ class ApplyBasisLoader(SegBasisLoader):
 
         return [data, None]
 
-    def _load_file(self, file_name, load_labels=True):
+    def _load_file(self, file_name, load_labels=True, **kwargs):
         # convert to string if necessary
         if isinstance(file_name, bytes):
             file_name = str(file_name, "utf-8")
