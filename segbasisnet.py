@@ -1,9 +1,20 @@
 """This module just contains the SegBasisNet.
 """
+import collections
 import logging
 import os
 from pathlib import Path
-from typing import Any, Callable, Collection, Dict, Iterable, List, Optional, Union
+from typing import (
+    Any,
+    Callable,
+    Collection,
+    Dict,
+    Iterable,
+    List,
+    Optional,
+    OrderedDict,
+    Union,
+)
 
 import numpy as np
 import SimpleITK as sitk
@@ -11,8 +22,7 @@ import tensorflow as tf
 from tensorboard.plugins.hparams import api as hp
 
 from . import config as cfg
-from . import tf_utils
-from . import loss
+from . import loss, tf_utils, utils
 from .metric import Dice
 
 # configure logger
@@ -25,13 +35,16 @@ class SegBasisNet:
     Inheriting classes should set:
     - name : the name of the model
     - _build_model : This function will actually build the model
+    - get_hyperparameter_dict : all relevant hyperparameters for the model
+    - self.divisible_by should be set somewhere (some models need to have the input be
+      divisible by a certain number, for example because of maxpool layers)
 
     Parameters
     ----------
     loss_name : str
         The name of the loss to use. If multiple tasks are performed, it can also
         be a dict with the task name as keys and a list of losses as values
-    tasks : Collection[str], optional
+    tasks : OrderedDict[str, str], optional
         The tasks that should be performed, loss and metrics will be selected accordingly
     """
 
@@ -40,7 +53,7 @@ class SegBasisNet:
     def __init__(
         self,
         loss_name: str,
-        tasks=("segmentation",),
+        tasks: Optional[OrderedDict[str, str]] = None,
         is_training=True,
         do_finetune=False,
         model_path="",
@@ -53,7 +66,12 @@ class SegBasisNet:
         # tf.keras.mixed_precision.experimental.set_policy(policy)
 
         self.custom_objects = {"Dice": Dice}
-        self.tasks = tasks
+        if tasks is None:
+            tasks = collections.OrderedDict({"seg": "segmentation"})
+        if not isinstance(tasks, collections.OrderedDict):
+            raise ValueError("tasks should be an ordered dict")
+        self.tasks = tuple(tasks.values())
+        self.task_names = tuple(tasks.keys())
 
         self.inputs: Dict[str, tf.keras.Input] = {}
         self.outputs = {}
@@ -89,11 +107,13 @@ class SegBasisNet:
             self._set_up_inputs()
             self.options["regularizer"] = self._get_reg()
             # if training build everything according to parameters
-            if isinstance(self.inputs["x"], tf.Tensor):
+            if hasattr(self.inputs["x"], "shape"):
                 self.options["in_channels"] = self.inputs["x"].shape.as_list()[-1]
                 # self.options['out_channels'] is set elsewhere, but required
                 # input number of dimensions (without channels and batch size)
                 self.options["rank"] = len(self.inputs["x"].shape) - 2
+            else:
+                raise AttributeError("Input has no shape")
 
             # tf.summary.trace_on(graph=True, profiler=False)
             self.outputs["loss"], self.options["loss_name"] = self._get_task_losses(
@@ -112,7 +132,7 @@ class SegBasisNet:
         self.window_size = None
         # number each input dimension (besides rank) should be divisible by (to avoid problems in maxpool layer)
         # this number should be determined by the network
-        self.divisible_by = 16
+        self.divisible_by = 1
 
     def _set_up_inputs(self):
         """setup the inputs. Inputs are taken from the config file."""
@@ -180,7 +200,7 @@ class SegBasisNet:
 
     def _get_task_losses(self, loss_input: Union[str, dict, object, Iterable]):
         if isinstance(loss_input, str):
-            loss_obj = loss.get_loss(loss_input)
+            loss_obj = self.get_loss(loss_input)
         elif hasattr(loss_input, "__call__"):
             if hasattr(loss_input, "__name__"):
                 loss_name = loss_input.__name__
@@ -189,15 +209,18 @@ class SegBasisNet:
             loss_obj = loss_input
         elif isinstance(loss_input, dict):
             loss_name = "Multitask"
-            loss_obj = tuple(loss.get_loss(loss_input[t]) for t in self.tasks)
+            loss_obj = tuple(self.get_loss(loss_input[t], t) for t in self.tasks)
         elif isinstance(loss_input, Iterable):
             loss_name = "-".join(str(l) for l in loss_input)
-            loss_obj = tuple(loss.get_loss(l) for l in loss_input)
+            loss_obj = tuple(self.get_loss(l) for l in loss_input)
         else:
             raise ValueError(
                 "Incompatible loss, it should be a Callable, string, dict or Iterable."
             )
         return loss_obj, loss_name
+
+    def get_loss(self, loss_name: str, task="segmentation") -> Callable:
+        return loss.get_loss(loss_name)
 
     @staticmethod
     def _get_optimizer(optimizer, l_r, global_step=0, clipvalue=None):
@@ -332,11 +355,11 @@ class SegBasisNet:
         if metrics is None:
             metrics = {
                 "segmentation": ("dice", "acc", "meanIoU"),
-                "classification": ("precision", "recall", "auc", "fp", "fn", "tn", "tp"),
+                "classification": ("precision", "recall", "auc"),
                 "regression": ("rmse",),
             }
 
-        metric_objects = self._get_metrics(metrics, self.tasks)
+        metric_objects = self._get_task_metrics(metrics, self.tasks)
 
         # compile model
         self.model.compile(
@@ -412,6 +435,7 @@ class SegBasisNet:
         hparams = self.get_hyperparameter_dict()
         # set additional paramters
         hparams["folder_name"] = folder_name
+        hparams["folder_parent_name"] = output_path.parent.name
         hp_callback = hp.KerasCallback(str(output_path / "logs" / "train"), hparams)
         callbacks.append(hp_callback)
 
@@ -461,16 +485,33 @@ class SegBasisNet:
         self.model.save(model_dir / "model-best", save_format="tf")
         print("Saving finished.")
 
-    def _get_metrics(
+    def _get_task_metrics(
         self, metrics: List[Union[str, Callable, Collection]], tasks: List[str]
     ):
         # set metrics
         metric_objects: List[List[Union[str, Callable]]] = []
         for t_name in tasks:
-            metric_objects.append(tuple(self._convert_metric(m) for m in metrics[t_name]))
+            metric_objects.append(
+                tuple(self.get_metric(m, t_name) for m in metrics[t_name])
+            )
         return metric_objects
 
-    def _convert_metric(self, metric):
+    def get_metric(self, metric, task="segmentation") -> Callable:
+        """Get the metric as callable object from the name
+
+        Parameters
+        ----------
+        metric : str
+            The name of the metric
+        task : str, optional
+            The task, depending on the metric, it might be necessary to adjust
+            it depending on the task, by default "segmentation"
+
+        Returns
+        -------
+        Callable
+            The metric
+        """
         metrics = {
             "dice": lambda: Dice(name="dice", num_classes=cfg.num_classes_seg),
             "meanIoU": lambda: tf.keras.metrics.MeanIoU(num_classes=cfg.num_classes_seg),
@@ -500,54 +541,14 @@ class SegBasisNet:
         dict
             the hyperparameters as a dictionary
         """
-        # TODO: move into the individual networks
-        hyperparameters = {
+        hyp = {
             "dimension": self.options.get("rank"),
             "regularize": self.options["regularize"][0],
             "regularizer": self.options["regularize"][1],
             "regularizer_param": self.options["regularize"][2],
+            "loss": self.options["loss_name"],
         }
-        if "dropout" in self.options:
-            hyperparameters["dropout"] = self.options["drop_out"][1]
-        if "kernel_dim" in self.options:
-            if isinstance(self.options["kernel_dims"], list):
-                hyperparameters["kernel_dim"] = self.options["kernel_dims"][0]
-            else:
-                hyperparameters["kernel_dim"] = self.options["kernel_dims"]
-        if "dilation_rate" in self.options:
-            hyperparameters["dilation_rate_first"] = self.options["dilation_rate"][0]
-        if self.options["regularize"]:
-            if isinstance(self.options["regularizer"], tf.keras.regularizers.L2):
-                hyperparameters["L2"] = self.options["regularizer"].get_config()["l2"]
-        # add filters
-        if "n_filters" in self.options:
-            for i, f in enumerate(self.options["n_filters"]):
-                hyperparameters[f"n_filters_{i}"] = f
-        for opt in [
-            "use_bias",
-            "loss",
-            "name",
-            "batch_normalization",
-            "activation",
-            "use_cross_hair",
-            "res_connect",
-            "regularize",
-            "use_bias",
-            "skip_connect",
-            "n_blocks",
-            "backbone",
-        ]:
-            if opt in self.options:
-                hyperparameters[opt] = self.options[opt]
-        # check the types
-        to_delete = []
-        for key, value in hyperparameters.items():
-            if type(value) in [list, tuple]:
-                hyperparameters[key] = str(value)
-            if value is None:
-                to_delete.append(key)
-        for key in to_delete:
-            del hyperparameters[key]
+        hyperparameters = {key: str(value) for key, value in hyp.items()}
         return hyperparameters
 
     def apply(self, version, application_dataset, filename, apply_path):
@@ -568,181 +569,61 @@ class SegBasisNet:
             Where the files are written
         """
 
-        if not os.path.exists(apply_path):
-            os.makedirs(apply_path)
+        output = self.get_network_output(application_dataset, filename)
+        apply_path = Path(apply_path)
+
+        name = Path(filename).name
+        res_name = f"prediction-{name}-{version}"
+
+        # export the images
+        for out, tsk, task_name in zip(output, self.tasks, self.task_names):
+            pred_img = utils.output_to_image(
+                output=out,
+                task=tsk,
+                processed_image=application_dataset.get_processed_image(filename),
+                original_image=application_dataset.get_original_image(filename),
+            )
+            new_image_path = apply_path / f"{res_name}_{task_name}{cfg.file_suffix}"
+            sitk.WriteImage(pred_img, str(new_image_path.resolve()))
+
+        # save the output as npz with task names as arguments
+        output_path_npz = Path(apply_path) / f"{res_name}.npz"
+        assert len(output) == len(self.task_names)
+        np.savez_compressed(output_path_npz, dict(zip(self.task_names, output)))
+
+    def get_network_output(self, application_dataset, filename: str) -> List[np.ndarray]:
+        """Get the output of the network for a given example
+
+        Parameters
+        ----------
+        application_dataset : Callable
+            The dataset for the application, when called with the filename, it
+            should produce slices in 2D and the whole image in 3D
+        filename : str
+            The filenames used as ID for the dataset
+
+        Returns
+        -------
+        List[np.ndarray]
+            List of results as numpy arrays. The length is the number of model outputs
+        """
+        n_outputs = len(self.model.outputs)
 
         # set the divisible by parameter
         application_dataset.divisible_by = self.divisible_by
 
-        logger.debug("Load the image.")
-
-        image_data = application_dataset(filename)
-
-        # clear session
-        tf.keras.backend.clear_session()
-
-        logger.debug("Starting to apply the image.")
-
-        # if 2D, run each layer as a batch, this should probably not run out of memory
         if self.options["rank"] == 2:
-            predictions = []
-            window_shape = [1] + cfg.train_input_shape[:2]
-            overlap = [0, 15, 15]
-            image_data_patches = application_dataset.get_windowed_test_sample(
-                image_data, window_shape, overlap
-            )
-            # remove z-dimension
-            image_data_patches = image_data_patches.reshape([-1] + cfg.train_input_shape)
-            # turn into batches with last batch being not a full one
-            batch_rest = image_data_patches.shape[0] % cfg.batch_size_train
-            batch_shape = (-1, cfg.batch_size_train) + image_data_patches.shape[-3:]
-            if batch_rest != 0:
-                image_data_batched = image_data_patches[:-batch_rest].reshape(batch_shape)
-                last_batch_shape = (batch_rest,) + image_data_patches.shape[-3:]
-                last_batch = image_data_patches[-batch_rest:].reshape(last_batch_shape)
-            else:
-                image_data_batched = image_data_patches.reshape(batch_shape)
-            for x in image_data_batched:
-                pred = self.model(x, training=False)
-                predictions.append(pred)
-            if batch_rest != 0:
-                pred = self.model(last_batch, training=False)
-                predictions.append(pred)
-            # concatenate
-            probability_patches = np.concatenate(predictions)
-            probability_map = application_dataset.stitch_patches(probability_patches)
-            logger.debug("Applied in 2D using the original size of each slice.")
-        # otherwise, just run it
-        else:
-            try:
-                # if the window size exists, trigger the exception
-                if self.window_size is not None:
-                    raise tf.errors.ResourceExhaustedError(None, None, "trigger exception")
-                probability_map = self.model(image_data, training=False)
-            except tf.errors.ResourceExhaustedError:
-                # try to reduce the patch size to a size that works
-                if self.window_size is None:
-                    # initial size is the image size
-                    self.window_size = np.array(image_data.shape[1:4])
-                    # try to find the best patch size (do not use more than 10 steps)
-                    for i in range(10):
-                        # reduce the window size
-                        # reduce z if it is larger than the training shape
-                        if self.window_size[0] > cfg.train_input_shape[0]:
-                            red = 0
-                        # otherwise, lower the larger of the two other dimensions
-                        elif self.window_size[1] >= self.window_size[2]:
-                            red = 1
-                        else:
-                            red = 2
-                        # reduce the size
-                        self.window_size[red] = self.window_size[red] // 2
-                        # make it divisible by 16
-                        self.window_size[red] = (
-                            int(np.ceil(self.window_size[red] / 16)) * 16
-                        )
-                        try:
-                            test_data_shape = (
-                                (1,) + tuple(self.window_size) + (image_data.shape[-1],)
-                            )
-                            test_data = np.random.rand(*test_data_shape)
-                            self.model(test_data, training=False)
-                            self.model.predict(x=test_data, batch_size=1)
-                        except tf.errors.ResourceExhaustedError:
-                            logger.debug(
-                                "Applying failed for window size %s in step %i.",
-                                self.window_size,
-                                i,
-                            )
-                        else:
-                            # if it works, break the cycle and reduce once more to be sure
-                            # reduce the window size
-                            # reduce z if it is larger than the training shape
-                            if self.window_size[0] > cfg.train_input_shape[0]:
-                                red = 0
-                            # otherwise, lower the larger of the two other dimensions
-                            elif self.window_size[1] >= self.window_size[2]:
-                                red = 1
-                            else:
-                                red = 2
-                            # reduce the size
-                            self.window_size[red] = self.window_size[red] // 2
-                            # make it divisible by 16
-                            self.window_size[red] = (
-                                int(np.ceil(self.window_size[red] / 16)) * 16
-                            )
-                            break
-                # get windowed samples
-                image_data_patches = application_dataset.get_windowed_test_sample(
-                    image_data, self.window_size, overlap=[5, 15, 15]
-                )
-                probability_patches = []
-                # apply
-                for x in image_data_patches:
-                    result = self.model.predict(x=x, batch_size=1)
-                    probability_patches.append(result)
-                probability_map = application_dataset.stitch_patches(probability_patches)
-            else:
-                logger.debug("Applied using the original size of the image.")
+            results = []
+            for sample in application_dataset(filename):
+                # add batch dimension
+                sample_batch = sample.reshape((1,) + sample.shape)
+                res = self.model(sample_batch)
+                # convert to numpy
+                res_np = tuple(r.numpy() for r in res)
+                results.append(res_np)
 
-        # remove padding
-        probability_map = application_dataset.remove_padding(probability_map)
-
-        # remove the batch dimension
-        if self.options["rank"] == 3:
-            probability_map = probability_map[0]
-
-        # get the labels
-        predicted_labels = np.argmax(probability_map, -1)
-
-        # get the processed image
-        orig_processed = application_dataset.get_processed_image(filename)
-
-        predicted_label_img = sitk.GetImageFromArray(predicted_labels)
-        # copy info
-        predicted_label_img.CopyInformation(orig_processed)
-
-        logger.debug("Predicted labels were calculated.")
-
-        # get the original image
-        original_image = application_dataset.get_original_image(filename)
-
-        # resample to the original file
-        predicted_label_orig = sitk.Resample(
-            image1=predicted_label_img,
-            referenceImage=original_image,
-            interpolator=sitk.sitkNearestNeighbor,
-            outputPixelType=sitk.sitkUInt8,
-            useNearestNeighborExtrapolator=False,
-        )
-
-        # write resampled file
-        name = Path(filename).name
-        pred_path = Path(apply_path) / f"prediction-{name}-{version}{cfg.file_suffix}"
-        sitk.WriteImage(predicted_label_orig, str(pred_path.resolve()))
-
-        if cfg.write_probabilities:
-            # turn probabilities into an image
-            probability_map_img = sitk.GetImageFromArray(probability_map)
-            probability_map_img.CopyInformation(orig_processed)
-            f_name = (
-                Path(apply_path)
-                / f"prediction-{name}-{version}_probabilities{cfg.file_suffix}"
-            )
-            sitk.WriteImage(probability_map_img, str(f_name.resolve()))
-
-        if cfg.write_intermediaries:
-            # write the preprocessed image
-            proc_path = Path(apply_path) / f"sample-{name}-preprocessed{cfg.file_suffix}"
-            sitk.WriteImage(orig_processed, str(proc_path.resolve()))
-
-            # write the labels for the preprocessed image
-            pred_res_path = (
-                Path(apply_path)
-                / f"prediction-{name}-{version}-preprocessed{cfg.file_suffix}"
-            )
-            sitk.WriteImage(
-                sitk.Cast(predicted_label_img, sitk.sitkUInt8), str(pred_res_path.resolve())
-            )
-
-        logger.debug("Images were exported.")
+            # separate into multiple lists
+            output = [[row[out] for row in results] for out in range(n_outputs)]
+            # and concatenate them
+            output = [np.concatenate(out, axis=0).squeeze() for out in output]
+        return output

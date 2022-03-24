@@ -191,7 +191,7 @@ class ApplyBasisLoader(SegBasisLoader):
         filename : str
             The name of the file to load
         min_padding : int, optional
-            The minimum amount of padding to use, if None, 15 will be used or the
+            The minimum amount of padding to use, if None, 0 will be used or the
             amount needed to pad up to the training shape, by default None
 
         Returns
@@ -208,12 +208,10 @@ class ApplyBasisLoader(SegBasisLoader):
 
         if min_padding is None:
             # make sure to round up
-            min_p = 15
+            min_p = 0
             # see if data is smaller than the training shape
             min_index = 4 - self.data_rank
-            max_diff = (
-                self.training_shape[min_index:3] - data.shape[min_index + 1 : 4]
-            ).max()
+            max_diff = (self.training_shape[min_index:3] - data.shape[min_index:3]).max()
             min_p = np.maximum(max_diff, min_p)
         else:
             min_p = min_padding
@@ -223,10 +221,18 @@ class ApplyBasisLoader(SegBasisLoader):
         for num, size in zip(range(min_dim, 4), data.shape[min_dim:-1]):
             if size % 2 == 0:
                 # and make sure have of the final size is divisible by divisible_by
-                pad_with[num] = min_p + div_h - ((size // 2 + min_p) % div_h)
+                if div_h == 0:
+                    pad_div = 0
+                else:
+                    pad_div = div_h - ((size // 2 + min_p) % div_h)
+                pad_with[num] = min_p + pad_div
             else:
                 # and make sure have of the final size is divisible by divisible_by
-                pad = min_p + div_h - (((size + 1) // 2 + min_p) % div_h)
+                if div_h == 0:
+                    pad_div = 0
+                else:
+                    pad_div = div_h - (((size + 1) // 2 + min_p) % div_h)
+                pad = min_p + pad_div
                 # pad asymmetrical
                 pad_with[num, 0] = pad + 1
                 pad_with[num, 1] = pad
