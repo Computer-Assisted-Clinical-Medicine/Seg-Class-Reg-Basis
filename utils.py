@@ -130,3 +130,27 @@ def output_to_image(
         )
 
     return pred_img
+
+
+def compress_output(output: np.ndarray, task: str) -> np.ndarray:
+    """Compress the output. For regression, it is converted to float16, probabilites are converted to 1 / int8
+
+    Parameters
+    ----------
+    output : np.ndarray
+        The output of the network
+    task : str
+        The task that was performed
+
+    Returns
+    -------
+    np.ndarray
+        The resulting array
+    """
+    # for regression, use float16
+    if task == "regression":
+        output_red = output.astype(np.float16)
+    # for classification, just save 8 bit
+    else:
+        output_red = (1 / output).astype(np.uint8)
+    return output_red

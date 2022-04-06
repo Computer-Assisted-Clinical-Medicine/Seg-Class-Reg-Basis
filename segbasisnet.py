@@ -589,7 +589,10 @@ class SegBasisNet:
         # save the output as npz with task names as arguments
         output_path_npz = Path(apply_path) / f"{res_name}.npz"
         assert len(output) == len(self.task_names)
-        np.savez_compressed(output_path_npz, dict(zip(self.task_names, output)))
+        # compress the output to reduce file size
+        output_npz = [utils.compress_output(o, tsk) for o, tsk in zip(output, self.tasks)]
+        npz_dict = dict(zip(self.task_names, output_npz))
+        np.savez_compressed(output_path_npz, npz_dict)
 
     def get_network_output(self, application_dataset, filename: str) -> List[np.ndarray]:
         """Get the output of the network for a given example
