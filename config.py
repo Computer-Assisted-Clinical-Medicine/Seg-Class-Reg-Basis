@@ -30,21 +30,18 @@ data_base_dir: Any = None
 ##### Shapes and Capacities #####
 if socket.gethostname() == "ckm4cad":
     ONSERVER = True
-    op_parallelism_threads = 6
     batch_size_train = 16
     batch_capacity_train = 4000
     train_reader_instances = 2
 
 else:
     ONSERVER = False
-    op_parallelism_threads = 3
     batch_size_train = 4
     batch_capacity_train = 400
     train_reader_instances = 1
 
 batch_size_valid = batch_size_train
 vald_reader_instances = 1
-file_name_capacity = 140
 
 
 ##### Data #####
@@ -89,19 +86,6 @@ max_rotation = 0.0  # the maximum amount of rotation that is allowed (between 0 
 min_resolution_augment = 1
 max_resolution_augment = 1
 sample_target_spacing = [1, 1, 3]
-
-##### Testing #####
-write_probabilities = False
-write_intermediaries = False
-
-##### Loss Setting #####
-
-# Weighted CE
-basis_factor = 5
-tissue_factor = 5
-contour_factor = 2
-max_weight = 1.2
-tissue_threshold = -0.9
 
 ##### Other variables #####
 num_files: Optional[int] = None  # TODO: remove from config
