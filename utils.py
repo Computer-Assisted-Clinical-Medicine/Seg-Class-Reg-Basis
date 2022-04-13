@@ -1,8 +1,10 @@
 """Different utilities to help with training"""
 import os
+from pathlib import Path
 import subprocess
 import sys
 from io import StringIO
+from typing import List
 
 import numpy as np
 import pandas as pd
@@ -132,25 +134,34 @@ def output_to_image(
     return pred_img
 
 
-def compress_output(output: np.ndarray, task: str) -> np.ndarray:
-    """Compress the output. For regression, it is converted to float16, probabilites are converted to 1 / int8
+def export_npz(
+    output: List[np.ndarray], tasks: List[str], task_names: List[str], file_path: Path
+):
+    """Export the output of the network as npz file
 
     Parameters
     ----------
-    output : np.ndarray
+    output : List[np.ndarray]
         The output of the network
-    task : str
-        The task that was performed
-
-    Returns
-    -------
-    np.ndarray
-        The resulting array
+    tasks : List[str]
+        The list of tasks to performed
+    task_names : List[str]
+       The task names to be used as keys in the file
+    file_path : Path
+        The path where the file should be saved
     """
-    # for regression, use float16
-    if task == "regression":
-        output_red = output.astype(np.float16)
-    # for classification, just save 8 bit
-    else:
-        output_red = (1 / output).astype(np.uint8)
-    return output_red
+    assert len(task_names) == len(output)
+    output_dict = {}
+    for out, tsk, name in zip(output, tasks, task_names):
+        # for regression, just save the whole thing, it is not that big
+        if tsk == "regression":
+            output_dict[name] = out.astype(np.float16)
+        # average over the output
+        elif tsk == "classification":
+            output_dict[name] = out.mean(axis=tuple(range(out.ndim - 1)))
+            output_dict[name + "_std"] = out.std(axis=tuple(range(out.ndim - 1)))
+            output_dict[name + "_median"] = np.median(out, axis=tuple(range(out.ndim - 1)))
+        # for now, just use less data for segmentation
+        elif tsk == "segmentation":
+            output_dict[name] = out.astype(np.float16)
+    np.savez_compressed(file_path, **output_dict)
