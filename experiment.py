@@ -58,7 +58,7 @@ class Experiment:
                 changed in between experiments, it is a hyperparameter)
             data_set : Dict[str, Dict[str, str]]
                 Dict containing the dataset, for each entry, the key is used to
-                reference that datapoint, the labels the labels file and the image
+                reference that data point, the labels the labels file and the image
                 key the images (all relative to the experiment dir)
             crossvalidation_set : List
                 The list of images which should be used for training, validation and test
@@ -80,8 +80,8 @@ class Experiment:
             reinitialize_folds : bool, optional
                 If set to true, the split for the folds will be redone, by default False
             folds_dir_rel : str, optional
-                Where the fold descripions should be saved (relative to the experiment_dir env. variable).
-                All experiments sharing the same folds should have the same directory here, by default outputdir/folds
+                Where the fold descriptions should be saved (relative to the experiment_dir env. variable).
+                All experiments sharing the same folds should have the same directory here, by default output_path/folds
             tensorboard_images : bool, optional
                 Wether to write images to tensorboard, takes a bit, so only for debugging, by default False
             tasks: tuple, optional
@@ -201,11 +201,11 @@ class Experiment:
             self.output_path.mkdir(parents=True)
         logger.info("Set %s as output folder, all output will be there", self.output_path)
 
-        # check for finetuning
+        # check for fine tuning
         if not hasattr(self.hyper_parameters, "evaluate_on_finetuned"):
             self.hyper_parameters["evaluate_on_finetuned"] = False
 
-        # set hyperparameterfile to store all hyperparameters
+        # set hyperparameter file to store all hyperparameters
         self.experiment_file = self.output_path / "parameters.yaml"
 
         # set directory for folds
@@ -584,7 +584,7 @@ class Experiment:
             **(self.hyper_parameters["network_parameters"]),
         )
 
-        logger.info("Started applying %s to test datset.", folder_name)
+        logger.info("Started applying %s to test dataset.", folder_name)
 
         apply_path = self.output_path / folder_name / apply_name
         if not apply_path.exists():
@@ -664,10 +664,18 @@ class Experiment:
             eval_name = f"evaluation-{folder_name}-{version}_{name}-{task}.csv"
             eval_file_path = self.output_path / folder_name / eval_name
 
+            if eval_file_path.exists():
+                continue
+
             # remember the results
             results = []
 
-            for file in test_files:
+            for file in tqdm(
+                test_files,
+                unit="image",
+                smoothing=0.1,
+                desc=f"evaluate {version} {name} {task}",
+            ):
                 prediction_path = apply_path / f"prediction-{file}-{version}.npz"
                 if not prediction_path.exists():
                     raise FileNotFoundError(f"{prediction_path} was not found.")
@@ -696,7 +704,7 @@ class Experiment:
         Parameters
         ----------
         file : str
-            The file identifier to analyse
+            The file identifier to analyze
         prediction_path : Path
             The path of the prediction
 
@@ -729,7 +737,7 @@ class Experiment:
         Parameters
         ----------
         file : str
-            The file identifier to analyse
+            The file identifier to analyze
         prediction_path : Path
             The path of the prediction
 
@@ -747,9 +755,9 @@ class Experiment:
         for col_name, map_dict in mapping.items():
             results_col = results[col_name]
             std_col = results[col_name + "_std"]
-            ground_truth = map_dict[class_dict[col_name]]
+            ground_truth = class_dict[col_name]
             col_metrics = evaluation.evaluate_classification(
-                results_col, std_col, ground_truth
+                results_col, std_col, ground_truth, map_dict
             )
             for key, value in col_metrics.items():
                 result_metrics[f"{col_name}_{key}"] = value
@@ -761,7 +769,7 @@ class Experiment:
         Parameters
         ----------
         file : str
-            The file identifier to analyse
+            The file identifier to analyze
         prediction_path : Path
             The path of the prediction
 
@@ -779,12 +787,10 @@ class Experiment:
         # do the evaluation
         for col_name, map_dict in mapping.items():
             results_col = results[col_name]
-            ground_truth = float(
-                scipy.interpolate.interp1d(list(map_dict.values()), list(map_dict.keys()))(
-                    class_dict[col_name]
-                )
+            ground_truth = float(class_dict[col_name])
+            col_metrics = evaluation.evaluate_regression(
+                results_col, ground_truth, map_dict
             )
-            col_metrics = evaluation.evaluate_regression(results_col, ground_truth)
             for key, value in col_metrics.items():
                 result_metrics[f"{col_name}_{key}"] = value
         return result_metrics
@@ -809,7 +815,7 @@ class Experiment:
 
         def get_gpu(gpu):
             if gpu is None:
-                gpu = tf.device(utils.get_gpu(memory_limit=4000))
+                gpu = tf.device(utils.get_gpu(memory_limit=0))  # TODO: change back
             return gpu
 
         folder_name = self.fold_dir_names[fold]

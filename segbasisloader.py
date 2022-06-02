@@ -17,7 +17,7 @@ from . import config as cfg
 logger = logging.getLogger(__name__)
 
 # define enums
-class NOISETYP(Enum):
+class NOISETYPE(Enum):
     """The different noise types"""
 
     GAUSSIAN = 0
@@ -215,7 +215,7 @@ class SegBasisLoader:
             - dataset is shuffled
             - dataset is batched with batch_size
             - 1 element of dataset is prefetched
-            - datset is returned
+            - dataset is returned
 
         - Else if loader is in validation mode (self.mode == 'validation'),
             - file_list_ds is mapped with _read_wrapper() to obtain dataset (mapping is same as train mode)
@@ -425,7 +425,7 @@ class SegBasisLoader:
         return tensors
 
     def get_filenames(self, file_id):
-        """For compability reasons, get filenames without the preprocessed ones
+        """For compatibility reasons, get filenames without the preprocessed ones
 
         Parameters
         ----------
@@ -454,7 +454,7 @@ class SegBasisLoader:
 
         Preprocessed files are saved as images, this increases the load time
         from 20 ms to 50 ms per image but is not really relevant compared to
-        the sampleing time. The advantage is that SimpleITK can be used for
+        the sampling time. The advantage is that SimpleITK can be used for
         augmentation, which does not work when storing numpy arrays.
 
         Parameters
@@ -544,7 +544,7 @@ class SegBasisLoader:
         Returns
         -------
         np.ndarray, np.ndarray
-            The image samples and the lables as one hot labels, if no label_image
+            The image samples and the labels as one hot labels, if no label_image
             is provided, the output is (np.ndarray,)
         """
         # TODO: change this function, so that an arbitrary number of images can be used
@@ -741,13 +741,13 @@ class SegBasisLoader:
         """
 
         if cfg.add_noise and self.mode is self.MODES.TRAIN:
-            if cfg.noise_typ == NOISETYP.GAUSSIAN:
+            if cfg.noise_typ == NOISETYPE.GAUSSIAN:
                 gaussian = np.random.normal(0, cfg.standard_deviation, img.shape)
                 logger.debug("Minimum Gauss %.3f:", gaussian.min())
                 logger.debug("Maximum Gauss %.3f:", gaussian.max())
                 img = img + gaussian
 
-            elif cfg.noise_typ == NOISETYP.POISSON:
+            elif cfg.noise_typ == NOISETYPE.POISSON:
                 poisson = np.random.poisson(cfg.mean_poisson, img.shape)
                 # scale according to the values
                 poisson = poisson * -cfg.mean_poisson

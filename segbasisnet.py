@@ -312,7 +312,7 @@ class SegBasisNet:
         patience_lr_plat : int, optional
             The patience before reducing the learning rate, by default 5
         factor_lr_plat : float, optional
-            The factor by which the learing rate is multiplied at a plateau, by default 0.5
+            The factor by which the learning rate is multiplied at a plateau, by default 0.5
         visualization_dataset: SegBasisLoader, optional
             If provided, this dataset will be used to visualize the training results for debugging.
             Writing the images can take a bit, so only use this for debugging purposes.
@@ -433,7 +433,7 @@ class SegBasisNet:
 
         # callback for hyperparameters
         hparams = self.get_hyperparameter_dict()
-        # set additional paramters
+        # set additional parameters
         hparams["folder_name"] = folder_name
         hparams["folder_parent_name"] = output_path.parent.name
         hp_callback = hp.KerasCallback(str(output_path / "logs" / "train"), hparams)

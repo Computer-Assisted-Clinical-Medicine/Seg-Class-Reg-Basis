@@ -1,4 +1,4 @@
-"""Collection of architecures that can be used for segmentation
+"""Collection of architectures that can be used for segmentation
 this can be uncommented to customize the model
 class Model(tf.keras.models.Model):
     '''

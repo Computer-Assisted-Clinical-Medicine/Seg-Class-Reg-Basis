@@ -158,7 +158,7 @@ class ApplyBasisLoader(SegBasisLoader):
 
         # if it does not exist, dataset conversion will be tried
         else:
-            # attemp to convert it
+            # attempt to convert it
             file_name_converted, _ = self.get_filenames(file_name)
             # if that also does not work, raise error
             if not os.path.exists(file_name_converted):

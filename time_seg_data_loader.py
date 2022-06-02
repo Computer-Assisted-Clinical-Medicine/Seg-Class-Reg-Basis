@@ -30,7 +30,7 @@ from .test_seg_data_loader import (
     set_seeds,
 )
 
-# surpress tensorflow output
+# suppress tensorflow output
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 import tensorflow as tf  # pylint: disable=unused-import, wrong-import-order, wrong-import-position
 

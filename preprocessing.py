@@ -283,7 +283,7 @@ def preprocess_dataset(
     -------
     dict
         A new dictionary containing the processed images. All keys in the dict
-        for each individual patient are added to the new dict aswell. The keys are
+        for each individual patient are added to the new dict as well. The keys are
         kept the same also.
     """
     if not preprocessed_dir.exists():

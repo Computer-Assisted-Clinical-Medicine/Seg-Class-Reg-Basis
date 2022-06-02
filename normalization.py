@@ -46,7 +46,7 @@ class Normalization:
         pass
 
     def normalize(self, image: sitk.Image) -> sitk.Image:
-        """Normalize an image. If normalize_channelwise is True, the normaliaztion
+        """Normalize an image. If normalize_channelwise is True, the normalization
         will be done channelwise, otherwise, it will be applied to the whole image.
 
         Parameters
@@ -66,10 +66,10 @@ class Normalization:
                     # normalize each channel separately
                     image_np[:, :, :, i] = self.normalization_func(image_np[:, :, :, i])
             else:
-                # otherwise, normalie the whole image
+                # otherwise, normalize the whole image
                 image_np = self.normalization_func(image_np)
         else:
-            # otherwise, normalie the whole image
+            # otherwise, normalize the whole image
             image_np = self.normalization_func(image_np)
 
         self.check_image(image_np)
@@ -154,7 +154,7 @@ class NORMALIZING(Enum):
     HM_QUANTILE = 5
 
     def get_class(self) -> Normalization:
-        """Get the corresponding normaliaztion class for an enum, it has to be a subclass
+        """Get the corresponding normalization class for an enum, it has to be a subclass
         of the Normalization class.
 
         Parameters
@@ -432,7 +432,7 @@ class HistogramMatching(Normalization):
         Returns
         -------
         np.ndarray
-            intensity values corresponding to percs in img
+            intensity values corresponding to percentiles in img
         np.ndarray
             mean of the image
         np.ndarray

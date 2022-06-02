@@ -264,7 +264,7 @@ class CustomTBCallback(tf.keras.callbacks.TensorBoard):
 def write_images(sample, y, probabilities, step: int, write_labels=True):
     """Write images for the summary. If 3D data is provided, the central slice
     is used. All channels are written, the labels are written and the
-    probabilites.
+    probabilities.
 
     Parameters
     ----------
@@ -273,7 +273,7 @@ def write_images(sample, y, probabilities, step: int, write_labels=True):
     y : tf.Tensor
         The input labels
     probabilities : tf.Tensor
-        The output of the network as probabilites (one per class)
+        The output of the network as probabilities (one per class)
     step : int
         Step number used for slider in tensorboard
     write_labels : bool
@@ -286,7 +286,7 @@ def write_images(sample, y, probabilities, step: int, write_labels=True):
     if write_labels:
         predictions = tf.argmax(probabilities, -1)
 
-    dimension = len(sample[0].shape) - 2  # substract one dimension for batches and channels
+    dimension = len(sample[0].shape) - 2  # subtract one dimension for batches and channels
     with tf.name_scope("01_Input_and_Predictions"):
         for num, x in enumerate(sample):
             in_channels = x.shape[-1]
@@ -364,7 +364,7 @@ def write_images(sample, y, probabilities, step: int, write_labels=True):
 
 
 def convert_float_to_image(image: tf.Tensor) -> tf.Tensor:
-    """Convert a float tensor to a greyscale image with values between 0 and 255.
+    """Convert a float tensor to a grayscale image with values between 0 and 255.
     This is done by setting the minimum to 0 and the maximum to 255. It is assumed
     that outliers were already removed.
 
