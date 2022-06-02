@@ -117,8 +117,8 @@ class SegBasisLoader:
 
         # set the number of label images, classification and regression
         self.n_label_images = 0
-        self.n_classification = None
-        self.n_regression = None
+        self.n_classification = 0
+        self.n_regression = 0
 
         self.dshapes = None
         self.dtypes = None
