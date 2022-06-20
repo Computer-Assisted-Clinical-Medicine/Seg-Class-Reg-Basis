@@ -44,7 +44,7 @@ class Experiment:
         reinitialize_folds=False,
         folds_dir_rel=None,
         tensorboard_images=False,
-        tasks=("segmentation",),
+        tasks="segmentation",
         mapping=None,
     ):
         """Run experiments using a fixed set of hyperparameters
@@ -84,8 +84,8 @@ class Experiment:
                 All experiments sharing the same folds should have the same directory here, by default output_path/folds
             tensorboard_images : bool, optional
                 Wether to write images to tensorboard, takes a bit, so only for debugging, by default False
-            tasks: tuple, optional
-                Which tasks to perform, the choices are segmentation, classification, regression,
+            tasks: tuple|str, optional
+                Which tasks to perform, the choices are segmentation, classification, regression, autoencoder
                 by default ("segmentation",)
             mapping: dict, optional
                 For classification and regression tasks, the mapping between the real values and
@@ -114,6 +114,16 @@ class Experiment:
             raise ValueError(f"Version should be final or best, not {versions}.")
 
         # save the tasks
+        if isinstance(tasks, str):
+            tasks = (tasks,)
+        if not isinstance(tasks, tuple) or isinstance(tasks, list):
+            raise TypeError("The tasks should be a tuple or list")
+        possible_tasks = ("segmentation", "classification", "regression", "autoencoder")
+        for tsk in tasks:
+            if tsk not in possible_tasks:
+                raise ValueError(
+                    f"Task {tsk} unknown. It should be one of {possible_tasks}."
+                )
         self.tasks = tasks
 
         # get the environmental variables
@@ -139,6 +149,8 @@ class Experiment:
                 lbl_path = self.experiment_dir / self.data_set[d_name]["labels"]
                 if not lbl_path.exists():
                     raise FileNotFoundError(f"The labels file for {d_name} does not exist.")
+            if "autoencoder" not in self.data_set[d_name] and "autoencoder" in self.tasks:
+                raise ValueError(f"{d_name} does not have an autoencoder setting")
 
         if self.external_test_set is not None:
             for d_name in self.external_test_set:
@@ -173,6 +185,8 @@ class Experiment:
         if "regression" in self.tasks:
             for field in self.mapping["regression"].keys():
                 self.expanded_tasks[field] = "regression"
+        if "autoencoder" in self.tasks:
+            self.expanded_tasks["autoencoder"] = "autoencoder"
         self.hyper_parameters["network_parameters"]["tasks"] = self.expanded_tasks
 
         # get the label shapes, if the task is regression or segmentation
@@ -445,16 +459,18 @@ class Experiment:
             and regression will be changed to a list of numpy arrays.
         """
         # generate the classification mapping
-        class_map = OrderedDict()
-        for feature, values in self.mapping["classification"].items():
-            matrix = np.eye(max(values.values()) + 1)
-            class_map[feature] = {k: matrix[v] for k, v in values.items()}
+        if "segmentation" in self.tasks:
+            class_map = OrderedDict()
+            for feature, values in self.mapping["classification"].items():
+                matrix = np.eye(max(values.values()) + 1)
+                class_map[feature] = {k: matrix[v] for k, v in values.items()}
         # and the regression mapping
-        reg_map = OrderedDict()
-        for feature, values in self.mapping["regression"].items():
-            reg_map[feature] = scipy.interpolate.interp1d(
-                list(values.values()), list(values.keys())
-            )
+        if "regression" in self.tasks:
+            reg_map = OrderedDict()
+            for feature, values in self.mapping["regression"].items():
+                reg_map[feature] = scipy.interpolate.interp1d(
+                    list(values.values()), list(values.keys())
+                )
 
         train_dataset = {}
         for patient, data in dataset.items():
@@ -463,15 +479,17 @@ class Experiment:
                 train_dataset[patient]["image"] = data["image"]
             if "labels" in data:
                 train_dataset[patient]["labels"] = data["labels"]
-            if "classification" in data:
+            if "classification" in data and "classification" in self.tasks:
                 train_dataset[patient]["classification"] = [
                     f_map[data["classification"][f_name]]
                     for f_name, f_map in class_map.items()
                 ]
-            if "regression" in data:
+            if "regression" in data and "regression" in self.tasks:
                 train_dataset[patient]["regression"] = [
                     f_map(data["regression"][f_name]) for f_name, f_map in reg_map.items()
                 ]
+            if "autoencoder" in data and "autoencoder" in self.tasks:
+                train_dataset[patient]["autoencoder"] = data["autoencoder"]
         return train_dataset
 
     def training(self, folder_name: str, train_files: List, vald_files: List):
@@ -496,6 +514,7 @@ class Experiment:
             name="training_loader",
             file_dict=self.train_dataset,
             frac_obj=self.hyper_parameters["train_parameters"]["percent_of_object_samples"],
+            tasks=self.tasks,
         )(
             train_files,
             batch_size=cfg.batch_size_train,
@@ -506,6 +525,7 @@ class Experiment:
             name="validation_loader",
             file_dict=self.train_dataset,
             frac_obj=self.hyper_parameters["train_parameters"]["percent_of_object_samples"],
+            tasks=self.tasks,
         )(
             vald_files,
             batch_size=cfg.batch_size_valid,
@@ -524,6 +544,7 @@ class Experiment:
                 frac_obj=frac_obj_val,
                 samples_per_volume=5,
                 shuffle=False,
+                tasks=self.tasks,
             )(
                 vald_files,
                 batch_size=cfg.batch_size_train,
@@ -657,7 +678,7 @@ class Experiment:
         for task in self.tasks:
 
             # only evaluate postprocessed files for segmentation
-            if task in ("classification", "regression"):
+            if task != "segmentation":
                 if "postprocessed" in version:
                     continue
 
@@ -676,15 +697,19 @@ class Experiment:
                 smoothing=0.1,
                 desc=f"evaluate {version} {name} {task}",
             ):
-                prediction_path = apply_path / f"prediction-{file}-{version}.npz"
-                if not prediction_path.exists():
-                    raise FileNotFoundError(f"{prediction_path} was not found.")
+                base_name = f"prediction-{file}-{version}"
+                prediction_path_seg = apply_path / f"{base_name}_segmentation.nii.gz"
+                prediction_path_np = apply_path / f"{base_name}.npz"
+                prediction_path_auto = apply_path / f"{base_name}_autoencoder.nii.gz"
+
                 if task == "segmentation":
-                    file_metrics = self.evaluate_segmentation(file, prediction_path)
+                    file_metrics = self.evaluate_segmentation(file, prediction_path_seg)
                 elif task == "classification":
-                    file_metrics = self.evaluate_classification(file, prediction_path)
+                    file_metrics = self.evaluate_classification(file, prediction_path_np)
                 elif task == "regression":
-                    file_metrics = self.evaluate_regression(file, prediction_path)
+                    file_metrics = self.evaluate_regression(file, prediction_path_np)
+                elif task == "autoencoder":
+                    file_metrics = self.evaluate_autoencoder(file, prediction_path_auto)
                 else:
                     raise ValueError(f"Task {task} unknown")
                 if file_metrics is not None:
@@ -793,6 +818,34 @@ class Experiment:
             )
             for key, value in col_metrics.items():
                 result_metrics[f"{col_name}_{key}"] = value
+        return result_metrics
+
+    def evaluate_autoencoder(self, file: str, prediction_path: Path) -> Dict[str, Any]:
+        """Evaluate the autoencoder of a single image
+
+        Parameters
+        ----------
+        file : str
+            The file identifier to analyze
+        prediction_path : Path
+            The path of the prediction
+
+        Returns
+        -------
+        Dict[str, Any]
+            The resulting metrics as a dictionary with each metric as one entry
+        """
+        image_path = self.experiment_dir / self.data_set[file]["image"]
+        if not image_path.exists():
+            raise FileNotFoundError(f"Labels {image_path} not found.")
+        # do the evaluation
+        try:
+            result_metrics = evaluation.evaluate_autoencoder_prediction(
+                str(prediction_path), str(image_path)
+            )
+            logger.info("        Finished Evaluation for %s", file)
+        except RuntimeError as err:
+            logger.exception("Evaluation failed for %s, %s", file, err)
         return result_metrics
 
     def run_all_folds(self):

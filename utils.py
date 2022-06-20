@@ -103,11 +103,18 @@ def output_to_image(
     if task in ("segmentation", "classification"):
         output = np.argmax(output, axis=-1)
 
+    # remove unneeded dimensions for autoencoder
+    if task == "autoencoder" and output.ndim == 4:
+        if output.shape[3] == 1:
+            output = output[:, :, :, 0]
+
     # turn the output into an image
     pred_img = sitk.GetImageFromArray(output)
     # cast to the right type
-    if task == "regression":
+    if task in ("regression", "autoencoder") and output.ndim < 4:
         pred_img = sitk.Cast(pred_img, sitk.sitkFloat32)
+    elif task in ("regression", "autoencoder") and output.ndim == 4:
+        pred_img = sitk.Cast(pred_img, sitk.sitkVectorFloat32)
     else:
         pred_img = sitk.Cast(pred_img, sitk.sitkUInt8)
     image_size = np.array(processed_image.GetSize()[:3])  # image could be 4D

@@ -51,6 +51,14 @@ class SegBasisLoader:
         will be completely random, by default None
     samples_per_volume : int, optional:
         The number of samples that should be taken from one volume per epoch.
+    shuffle : bool, optional:
+        If the dataset should be shuffled. If None, it will be set to true when
+        training and false for application, by default None
+    sample_buffer_size : int, optional
+        How big the buffer should be for shuffling, by default 4000.
+    tasks : Tuple[str], optional
+        Which tasks to perform, available are segmentation, classification, regression,
+        autoencoder, by default ("segmentation",).
     """
 
     class MODES(Enum):
@@ -75,6 +83,7 @@ class SegBasisLoader:
         samples_per_volume=64,
         shuffle=None,
         sample_buffer_size=4000,
+        tasks=("segmentation",),
         **kwargs,
     ):
 
@@ -110,6 +119,8 @@ class SegBasisLoader:
             raise ValueError("For applying, shuffle should be turned off.")
 
         self.sample_buffer_size = sample_buffer_size
+
+        self.tasks = tasks
 
         # set channel and class parameters
         self.n_channels = cfg.num_channels
@@ -156,21 +167,19 @@ class SegBasisLoader:
         self.dshapes = []
         self.dtypes = []
 
-        # get the first entry to derive the shapes
         first = list(self.file_dict.values())[0]
         if not "image" in first:
             raise ValueError("This loader is made for images and expects one.")
         if isinstance(first["image"], (list, tuple)):
-            self.dshapes += [image_shape] * len(first["image"])
-            self.dtypes += [cfg.dtype] * len(first["image"])
-            self.n_inputs = len(first["image"])
+            n_images = len(first["image"])
         else:
-            self.dshapes.append(image_shape)
-            self.dtypes.append(cfg.dtype)
-            self.n_inputs = 1
+            n_images = 1
+        self.dshapes += [image_shape] * n_images
+        self.dtypes += [cfg.dtype] * n_images
+        self.n_inputs = n_images
 
         self.n_labels = 0
-        if "labels" in first:
+        if "segmentation" in self.tasks:
             labels_shape = tuple(cfg.train_label_shape)
             assert np.all(
                 np.array(image_shape[:2]) == labels_shape[:2]
@@ -185,16 +194,21 @@ class SegBasisLoader:
                 self.dtypes.append(cfg.dtype)
                 self.n_labels += 1
                 self.n_label_images = 1
-        if "classification" in first:
+        if "classification" in self.tasks:
             self.dshapes += [i.shape for i in first["classification"]]
             self.dtypes += [cfg.dtype] * len(first["classification"])
             self.n_labels += len(first["classification"])
             self.n_classification = len(first["classification"])
-        if "regression" in first:
+        if "regression" in self.tasks:
             self.dshapes += [(1,)] * len(first["regression"])
             self.dtypes += [cfg.dtype] * len(first["regression"])
             self.n_labels += len(first["regression"])
             self.n_regression = len(first["regression"])
+        if "autoencoder" in self.tasks:
+            # use the image shape and type again
+            self.dshapes += [image_shape] * n_images
+            self.dtypes += [cfg.dtype] * n_images
+            self.n_labels += n_images
 
         assert len(self.dshapes) == len(self.dtypes)
         assert np.all([isinstance(i, tuple) for i in self.dshapes])
@@ -524,7 +538,9 @@ class SegBasisLoader:
         )
         sample_np = self._get_samples_from_volume(data_img, label_img)
         sample_class_reg = self._get_class_reg(file_name_queue)
-        return sample_np + sample_class_reg
+        # pass the sample to the autoencoder
+        sample_autoencoder = self._get_autoencoder(file_name_queue, sample_np[0])
+        return sample_np + sample_class_reg + sample_autoencoder
 
     def _get_samples_from_volume(
         self, data_img: sitk.Image, label_img: Optional[sitk.Image] = None
@@ -864,5 +880,20 @@ class SegBasisLoader:
                 np.tile(s, (self.samples_per_volume,) + (1,) * s.ndim) for s in file_samples
             )
             return file_samples_expanded
+        else:
+            return tuple()
+
+    def _get_autoencoder(self, file_name, sample_np):
+        # convert to string if necessary
+        if isinstance(file_name, bytes):
+            file_id = str(file_name, "utf-8")
+        else:
+            file_id = str(file_name)
+        if "autoencoder" in self.tasks:
+            output_type = self.file_dict[file_id]["autoencoder"]
+            if output_type == "image":
+                return (sample_np,)
+            else:
+                raise ValueError(f"Output type {output_type} unknown.")
         else:
             return tuple()

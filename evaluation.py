@@ -11,8 +11,8 @@ import numpy as np
 import pandas as pd
 import scipy
 import SimpleITK as sitk
-from sklearn import metrics
-
+import skimage
+import sklearn
 from . import metric as Metric
 
 # configure logger
@@ -40,7 +40,7 @@ def evaluate_segmentation_prediction(prediction_path: str, label_path: str) -> d
     """
     pred_img = sitk.ReadImage(prediction_path)
     result_metrics = {}
-    result_metrics["Slices"] = pred_img.getSize()[2]
+    result_metrics["Slices"] = pred_img.GetSize()[2]
 
     # load label for evaluation
     label_img = sitk.ReadImage(label_path)
@@ -211,7 +211,7 @@ def calculate_classification_metrics(
 
     metrics_dict["accuracy"] = np.mean(prediction == ground_truth)
 
-    confusion_matrix = metrics.confusion_matrix(ground_truth, prediction)
+    confusion_matrix = sklearn.metrics.confusion_matrix(ground_truth, prediction)
     metrics_dict["confusion_matrix"] = confusion_matrix
     precision = np.diag(confusion_matrix) / np.sum(confusion_matrix, axis=0)
     recall = np.diag(confusion_matrix) / np.sum(confusion_matrix, axis=1)
@@ -220,10 +220,10 @@ def calculate_classification_metrics(
     recall[np.isnan(recall)] = 0
     metrics_dict["precision"] = precision
     metrics_dict["recall"] = recall
-    metrics_dict["precision_mean"] = metrics.precision_score(
+    metrics_dict["precision_mean"] = sklearn.metrics.precision_score(
         ground_truth, prediction, average="micro"
     )
-    metrics_dict["recall_mean"] = metrics.recall_score(
+    metrics_dict["recall_mean"] = sklearn.metrics.recall_score(
         ground_truth, prediction, average="micro"
     )
 
@@ -233,16 +233,16 @@ def calculate_classification_metrics(
     assert np.allclose(prob_sum, 1, atol=0.2)
     probabilities = (probabilities.T / prob_sum).T
 
-    metrics_dict["auc_ovo"] = metrics.roc_auc_score(
+    metrics_dict["auc_ovo"] = sklearn.metrics.roc_auc_score(
         y_true=ground_truth, y_score=probabilities, labels=labels, multi_class="ovo"
     )
-    metrics_dict["auc_ovr"] = metrics.roc_auc_score(
+    metrics_dict["auc_ovr"] = sklearn.metrics.roc_auc_score(
         y_true=ground_truth, y_score=probabilities, labels=labels, multi_class="ovr"
     )
 
     for k in [2, 3, 5]:
         if len(labels) > k:
-            metrics_dict[f"top_{k}_accuracy"] = metrics.top_k_accuracy_score(
+            metrics_dict[f"top_{k}_accuracy"] = sklearn.metrics.top_k_accuracy_score(
                 k=k,
                 y_true=ground_truth,
                 y_score=probabilities,
@@ -294,6 +294,70 @@ def evaluate_regression(
     metrics_dict["mean_ground_truth"] = np.mean(ground_truth)
     metrics_dict["std"] = pred.std()
     return metrics_dict
+
+
+def evaluate_autoencoder_prediction(prediction_path: str, orig_path: str) -> dict:
+    """Evaluate autoencoder metrics for one image
+
+    Parameters
+    ----------
+    result_metrics : dict
+        The dict were the metrics will be written
+    prediction_path : str
+        The path of the predicted image
+    orig_path : str
+        The path of the original image
+
+    Returns
+    -------
+    dict
+        The dict with the resulting metrics
+    """
+    pred_img = sitk.ReadImage(prediction_path)
+    result_metrics = {}
+    result_metrics["Slices"] = pred_img.GetSize()[2]
+
+    # load label for evaluation
+    orig_img = sitk.ReadImage(orig_path)
+
+    # This is necessary as in some data sets this is incorrect.
+    orig_img.SetDirection(pred_img.GetDirection())
+    orig_img.SetOrigin(pred_img.GetOrigin())
+    orig_img.SetSpacing(pred_img.GetSpacing())
+
+    # check types and if not equal, convert output to target
+    if pred_img.GetPixelID() != orig_img.GetPixelID():
+        cast = sitk.CastImageFilter()
+        cast.SetOutputPixelType(orig_img.GetPixelID())
+        pred_img = cast.Execute(pred_img)
+
+    pred_img_np = sitk.GetArrayFromImage(pred_img)
+    orig_img_np = sitk.GetArrayFromImage(orig_img)
+
+    error = pred_img_np - orig_img_np
+    error_abs = np.abs(error)
+    rmse = np.sqrt(np.mean(np.square(error)))
+    data_range = orig_img_np.max() - orig_img_np.min()
+
+    result_metrics["rmse"] = rmse
+    result_metrics["rmse_rel"] = rmse / data_range
+    result_metrics["mean_absolute_error"] = np.mean(error_abs)
+    result_metrics["max_absolute_error"] = np.max(error_abs)
+    result_metrics["min_absolute_error"] = np.min(error_abs)
+    result_metrics["norm_mutual_inf"] = skimage.metrics.normalized_mutual_information(
+        orig_img_np, pred_img_np, bins=100
+    )
+    result_metrics["structured_similarity_index"] = skimage.metrics.structural_similarity(
+        orig_img_np,
+        pred_img_np,
+        data_range=data_range,
+        channel_axis=2 if pred_img_np.ndim == 4 else None,
+    )
+    result_metrics["peak_signal_to_noise"] = skimage.metrics.peak_signal_noise_ratio(
+        orig_img_np, pred_img_np, data_range=data_range
+    )
+
+    return result_metrics
 
 
 def calculate_regression_metrics(prediction: np.ndarray, ground_truth: np.ndarray) -> Dict:

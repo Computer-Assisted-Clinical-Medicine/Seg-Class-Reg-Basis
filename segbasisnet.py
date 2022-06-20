@@ -357,6 +357,7 @@ class SegBasisNet:
                 "segmentation": ("dice", "acc", "meanIoU"),
                 "classification": ("precision", "recall", "auc"),
                 "regression": ("rmse",),
+                "autoencoder": ("rmse",),
             }
 
         metric_objects = self._get_task_metrics(metrics, self.tasks)
@@ -575,8 +576,18 @@ class SegBasisNet:
         name = Path(filename).name
         res_name = f"prediction-{name}-{version}"
 
+        for num, (out, task_name) in enumerate(zip(output, self.task_names)):
+            if task_name in ("regression", "classification"):
+                output[num] = out.squeeze()
+
         # export the images
         for out, tsk, task_name in zip(output, self.tasks, self.task_names):
+            # remove padding
+            if task_name in ("segmentation", "autoencoder"):
+                if self.options["rank"] == 2:
+                    out = application_dataset.remove_padding(out)
+                else:
+                    raise NotImplementedError()
             pred_img = utils.output_to_image(
                 output=out,
                 task=tsk,
@@ -619,6 +630,9 @@ class SegBasisNet:
                 # add batch dimension
                 sample_batch = sample.reshape((1,) + sample.shape)
                 res = self.model(sample_batch)
+                # make sure the result is a tuple
+                if len(res) == 1:
+                    res = (res,)
                 # convert to numpy
                 res_np = tuple(r.numpy() for r in res)
                 results.append(res_np)
@@ -626,5 +640,5 @@ class SegBasisNet:
             # separate into multiple lists
             output = [[row[out] for row in results] for out in range(n_outputs)]
             # and concatenate them
-            output = [np.concatenate(out, axis=0).squeeze() for out in output]
+            output = [np.concatenate(out, axis=0) for out in output]
         return output
