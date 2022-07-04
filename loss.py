@@ -2,18 +2,29 @@
 """
 from typing import Callable
 
+import numpy as np
 import tensorflow as tf
+import tensorflow.keras.backend as K
+from tensorflow.keras.losses import Loss
 
 from . import metric as Metric
 
 # pylint: disable=missing-function-docstring
 
 
-def get_loss(loss_name: str) -> Callable:
+def get_loss(loss_name: str, loss_parameters: dict = None) -> Callable:
     """
     Returns loss depending on loss.
 
-    loss should be in {'DICE', 'TVE', 'GDL', 'CEL', 'WCEL'}.
+    just look at the function to see the allowed losses
+
+    Parameters
+    ----------
+    loss_name : str
+        The name of the loss
+    loss_parameters : dict, optional
+        Additional parameters to be passed on, if None, no parameters will be
+        passed, by default None.
 
     Returns
     -------
@@ -22,6 +33,9 @@ def get_loss(loss_name: str) -> Callable:
     """
     # many returns do not affect the readability
     # pylint: disable=too-many-return-statements
+
+    if loss_parameters is None:
+        loss_parameters = {}
 
     if loss_name == "DICE":
         return dice_loss
@@ -73,6 +87,9 @@ def get_loss(loss_name: str) -> Callable:
 
     if loss_name == "MSE":
         return mean_squared_error_loss
+
+    if loss_name == "NMI":
+        return MutualInformation(**loss_parameters)
 
     raise ValueError(loss_name, "is not a supported loss function.")
 
@@ -438,3 +455,163 @@ def pearson_correlation_coefficient_loss(x, y):
     r = r_num / r_den
     r = tf.maximum(tf.minimum(r, 1.0), -1.0)
     return 1 - tf.square(r)
+
+
+class MutualInformation(Loss):
+    """
+    Global Mutual information loss for image-image pairs.
+
+    Original Author: Courtney Guo
+    If you use this loss function, please cite the following:
+    Guo, Courtney K. Multi-modal image registration with unsupervised deep learning. MEng. Thesis
+    Unsupervised Learning of Probabilistic Diffeomorphic Registration for Images and Surfaces
+    Adrian V. Dalca, Guha Balakrishnan, John Guttag, Mert R. Sabuncu
+    MedIA: Medial Image Analysis. 2019. eprint arXiv:1903.03545
+
+    Parameters
+    ----------
+    reduction : auto, optional
+        Set by tensorflow, options are 'auto', 'none', 'sum', 'sum_over_batch_size', by default auto
+    name : str, optional
+        The name of the loss, by default "MI"
+    n_bins : int, optional
+        The number of bins, by default 150
+    min_val : int, optional
+        The minimum value of the data range (used to define the bins), by default -1
+    max_val : int, optional
+        The maximum data value, by default 1
+    normalize : bool, optional
+        If the loss should be normalized, it will be divided by the entropy of the
+        ground truth image, by default False
+    sigma_ratio : float, optional
+        Scales how much the contribution is to other bins, by default 0.5
+    clip : bool, optional
+        Clip the images to the range defined by min_val and max_val, otherwise, there
+        can be numerical errors, if a value is not in any of the bins
+    include_endpoints : bool, optional
+        If the endpoints should be included in the bin centers. This should be used
+        for discrete values. By default False.
+    """
+
+    def __init__(
+        self,
+        reduction="auto",
+        name="MI",
+        n_bins=150,
+        min_val=-1,
+        max_val=1,
+        normalize=False,
+        sigma_ratio=0.5,
+        clip=True,
+        include_endpoints=False,
+        debug=False,
+    ):
+        super().__init__(reduction, name)
+        self.n_bins = n_bins
+        self.min_val = min_val
+        self.max_val = max_val
+        self.normalize = normalize
+        if sigma_ratio < 1e-6:
+            raise ValueError("Sigma ration cannot be too close to 0")
+        self.sigma_ration = sigma_ratio
+        self.clip = clip
+        self.include_endpoints = include_endpoints
+        if self.include_endpoints:
+            bin_centers = np.linspace(min_val, max_val, n_bins, endpoint=True)
+        else:
+            bin_centers = np.linspace(min_val, max_val, n_bins, endpoint=False)
+            bin_centers = bin_centers + (bin_centers[1] - bin_centers[0]) / 2
+        self.bin_centers = tf.constant(bin_centers, dtype=tf.float32)
+        self.sigma = np.mean(np.diff(bin_centers)) * sigma_ratio
+        self.preterm = tf.constant(1 / (2 * np.square(self.sigma)), dtype=tf.float32)
+        self.debug = debug
+
+    def entropy(self, prob: tf.Tensor):
+        # entropy is - sum_i p_i log p_i
+        product = -prob * K.log(prob + K.epsilon())
+        return K.sum(K.sum(product, 1), 1)
+
+    def call(self, y_true, y_pred):
+        if self.clip:
+            y_true = tf.clip_by_value(
+                y_true, clip_value_min=self.min_val, clip_value_max=self.max_val
+            )
+            y_pred = tf.clip_by_value(
+                y_pred, clip_value_min=self.min_val, clip_value_max=self.max_val
+            )
+
+        # reshape: flatten images into shape (batch_size, height x width x depth x chan, 1)
+        y_true = tf.reshape(y_true, (-1, tf.math.reduce_prod(y_true.shape[1:])))
+        y_true = tf.expand_dims(y_true, 2)
+        y_pred = tf.reshape(y_pred, (-1, tf.math.reduce_prod(y_pred.shape[1:])))
+        y_pred = tf.expand_dims(y_pred, 2)
+
+        if self.debug:
+            tf.debugging.assert_all_finite(y_true, message="NaNs in y_true")
+            tf.debugging.assert_all_finite(y_pred, message="NaNs in y_pred")
+
+        number_voxels = tf.cast(K.shape(y_pred)[1], tf.float32)
+
+        # reshape bin centers to be (1, 1, B)
+        bin_shape = [1, 1, np.prod(self.bin_centers.get_shape().as_list())]
+        bin_centers = tf.reshape(self.bin_centers, bin_shape)
+
+        # calculate how much each voxel contributes to each intensity using
+        # a gaussian weighting function
+        matrix_a = tf.exp(-self.preterm * tf.square(y_true - bin_centers))
+        # and normalize along bin dimension
+        matrix_a_norm = K.sum(matrix_a, -1, keepdims=True)
+        matrix_a /= matrix_a_norm
+
+        matrix_b_dist = tf.exp(-self.preterm * tf.square(y_pred - bin_centers))
+        matrix_b_norm = K.sum(matrix_b_dist, -1, keepdims=True)
+        matrix_b = matrix_b_dist / matrix_b_norm
+
+        if self.debug:
+            tf.debugging.assert_all_finite(matrix_a, message="NaNs in matrix_a")
+            tf.debugging.assert_all_finite(matrix_a_norm, message="NaNs in matrix_a_norm")
+            tf.debugging.assert_all_finite(matrix_b_dist, message="NaNs in matrix_b_dist")
+            tf.debugging.assert_all_finite(matrix_b, message="NaNs in matrix_b")
+            tf.debugging.assert_all_finite(matrix_b_norm, message="NaNs in matrix_b_norm")
+
+        # compute probabilities
+        matrix_a_permuted = K.permute_dimensions(matrix_a, (0, 2, 1))
+        prob_ab = K.batch_dot(
+            matrix_a_permuted, matrix_b
+        )  # should be the right size now, nb_labels x nb_bins
+        prob_ab /= number_voxels
+        prob_a = tf.reduce_mean(matrix_a, 1, keepdims=True)
+        prob_b = tf.reduce_mean(matrix_b, 1, keepdims=True)
+
+        if self.debug:
+            tf.debugging.assert_all_finite(prob_a, message="NaNs in prob_a")
+            tf.debugging.assert_all_finite(prob_b, message="NaNs in prob_b")
+            tf.debugging.assert_all_finite(prob_ab, message="NaNs in prob_ab")
+
+        prob_prod = (
+            K.batch_dot(K.permute_dimensions(prob_a, (0, 2, 1)), prob_b) + K.epsilon()
+        )
+        nmi_loss = prob_ab * K.log(prob_ab / prob_prod + K.epsilon())
+
+        if self.debug:
+            tf.debugging.assert_all_finite(prob_prod, message="NaNs in prob_prod")
+            tf.debugging.assert_all_finite(nmi_loss, message="NaNs in nmi_loss")
+
+        mutual_info = K.sum(K.sum(nmi_loss, 1), 1)
+
+        if self.normalize and mutual_info > K.epsilon():
+            mutual_info = mutual_info / self.entropy(prob_a)
+        return tf.clip_by_value(mutual_info, 0, np.inf)
+
+    def get_config(self):
+        return {
+            "n_bins": self.n_bins,
+            "min_val": self.min_val,
+            "max_val": self.max_val,
+            "normalize": self.normalize,
+            "sigma_ratio": self.sigma_ration,
+            "clip": self.clip,
+            "include_endpoints": self.include_endpoints,
+            "reduction": self.reduction,
+            "name": self.name,
+        }

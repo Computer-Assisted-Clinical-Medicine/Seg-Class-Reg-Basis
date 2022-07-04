@@ -564,7 +564,7 @@ class Experiment:
         # Train the network with the dataset iterators
         logger.info("Started training of %s", folder_name)
         net.train(
-            logs_path=str(self.output_path),
+            base_output_path=str(self.output_path),
             folder_name=folder_name,
             training_dataset=training_dataset,
             validation_dataset=validation_dataset,
@@ -868,7 +868,7 @@ class Experiment:
 
         def get_gpu(gpu):
             if gpu is None:
-                gpu = tf.device(utils.get_gpu(memory_limit=0))  # TODO: change back
+                gpu = tf.device(utils.get_gpu(memory_limit=2000))
             return gpu
 
         folder_name = self.fold_dir_names[fold]

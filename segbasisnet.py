@@ -103,6 +103,14 @@ class SegBasisNet:
         for key, value in kwargs.items():
             self.options[key] = value
 
+        # window size when applying the network
+        self.window_size = None
+        # number each input dimension (besides rank) should be divisible by (to avoid problems in maxpool layer)
+        # this number should be determined by the network
+        self.divisible_by = 1
+        # extra compile options, which can be changed in subclasses
+        self._compile_options = {}
+
         if self.options["is_training"] and not self.options["do_finetune"]:
             self._set_up_inputs()
             self.options["regularizer"] = self._get_reg()
@@ -127,12 +135,6 @@ class SegBasisNet:
             self.outputs["loss"], self.options["loss_name"] = self._get_task_losses(
                 loss_name
             )
-
-        # window size when applying the network
-        self.window_size = None
-        # number each input dimension (besides rank) should be divisible by (to avoid problems in maxpool layer)
-        # this number should be determined by the network
-        self.divisible_by = 1
 
     def _set_up_inputs(self):
         """setup the inputs. Inputs are taken from the config file."""
@@ -220,7 +222,28 @@ class SegBasisNet:
         return loss_obj, loss_name
 
     def get_loss(self, loss_name: str, task="segmentation") -> Callable:
-        return loss.get_loss(loss_name)
+        """
+        Returns loss depending on loss.
+
+        just look at the function to see the allowed losses
+
+        Parameters
+        ----------
+        loss_name : str
+            The name of the loss
+        task : str, optional
+            The task being performed, by default segmentation.
+
+        Returns
+        -------
+        Callable
+            The loss as tensorflow function
+        """
+        if "loss_parameters" in self.options:
+            loss_parameters = self.options["loss_parameters"].get(loss_name, None)
+        else:
+            loss_parameters = None
+        return loss.get_loss(loss_name, loss_parameters)
 
     @staticmethod
     def _get_optimizer(optimizer, l_r, global_step=0, clipvalue=None):
@@ -243,13 +266,26 @@ class SegBasisNet:
         else:
             raise ValueError(f"Optimizer {optimizer} unknown.")
 
-    def plot_model(self, save_path):
-        tf.keras.utils.plot_model(self.model, to_file=save_path)
+    def plot_model(self, save_dir: Path):
+        """Plot the model to the save dir
+
+        Parameters
+        ----------
+        save_dir : Path
+            Where to save the model
+        """
+        tf.keras.utils.plot_model(
+            self.model,
+            to_file=save_dir / "model.png",
+        )
+        tf.keras.utils.plot_model(
+            self.model, to_file=save_dir / "model_with_shapes.png", show_shapes=True
+        )
 
     # pylint: disable=arguments-differ
     def train(
         self,
-        logs_path: os.PathLike,
+        base_output_path: os.PathLike,
         folder_name: str,
         training_dataset: tf.data.Dataset,
         validation_dataset: tf.data.Dataset,
@@ -266,6 +302,7 @@ class SegBasisNet:
         patience_lr_plat=5,
         factor_lr_plat=0.5,
         visualization_dataset=None,
+        write_grads=False,
         visualize_labels=True,
         write_graph=True,
         debug=False,
@@ -278,10 +315,10 @@ class SegBasisNet:
 
         Parameters
         ----------
-        logs_path : str
+        base_output_path : str
             The path for the output of the different networks
         folder_name : str
-            This is used as the folder name, so the output is logs_path / folder_name
+            This is used as the folder name, so the output is base_output_path / folder_name
         training_dataset : Tensorflow dataset
             The dataset for training, you can use the SegBasisLoader ofr this (call it)
         validation_dataset : Tensorflow dataset
@@ -314,8 +351,11 @@ class SegBasisNet:
         factor_lr_plat : float, optional
             The factor by which the learning rate is multiplied at a plateau, by default 0.5
         visualization_dataset: SegBasisLoader, optional
-            If provided, this dataset will be used to visualize the training results for debugging.
-            Writing the images can take a bit, so only use this for debugging purposes.
+            If provided, this dataset will be used to visualize the training results and input images.
+            Writing the images can take a bit, so it is only done every 5 epochs.
+        write_grads: bool, optional
+            If true, gradient histograms will be written, by default False. Can take a while,
+            so best for debugging
         visualize_labels: bool, optional
             If the labels should be visualized as images, by default True
         write_graph : bool, optional
@@ -330,11 +370,10 @@ class SegBasisNet:
             which enables training on all layers besides batchnorm layers, by default None
         finetune_lr : float, optional
             If not None, this rate will be set after enabling the finetuning, by default None
-
         """
 
         # set path
-        output_path = Path(logs_path) / folder_name
+        output_path = Path(base_output_path) / folder_name
 
         # to save the model
         model_dir = output_path / "models"
@@ -344,13 +383,7 @@ class SegBasisNet:
         # do summary
         self.model.summary(print_fn=logger.info)
 
-        tf.keras.utils.plot_model(
-            self.model,
-            to_file=model_dir / "model.png",
-        )
-        tf.keras.utils.plot_model(
-            self.model, to_file=model_dir / "model_with_shapes.png", show_shapes=True
-        )
+        self.plot_model(model_dir)
 
         if metrics is None:
             metrics = {
@@ -370,6 +403,7 @@ class SegBasisNet:
             loss=self.outputs["loss"],
             metrics=metric_objects,
             run_eagerly=debug,
+            **self._compile_options,
         )
 
         # check the iterator sizes
@@ -386,7 +420,7 @@ class SegBasisNet:
 
         # to save the best model
         cp_best_callback = tf_utils.KeepBestModel(
-            filepath=model_dir / f"weights_best_{{epoch:03d}}-best{{{monitor}:1.3f}}.hdf5",
+            filepath=model_dir / f"weights_best_{{epoch:03d}}-best{{{monitor}:1.5f}}.hdf5",
             save_weights_only=True,
             verbose=0,
             save_freq="epoch",
@@ -399,7 +433,7 @@ class SegBasisNet:
         # early stopping
         if early_stopping:
             es_callback = tf.keras.callbacks.EarlyStopping(
-                monitor=monitor, patience=patience_es, mode=monitor_mode, min_delta=0.005
+                monitor=monitor, patience=patience_es, mode=monitor_mode, min_delta=1e-5
             )
             callbacks.append(es_callback)
 
@@ -411,13 +445,11 @@ class SegBasisNet:
                 mode=monitor_mode,
                 factor=factor_lr_plat,
                 verbose=1,
-                cooldown=5,
+                min_lr=1e-6,
             )
             callbacks.append(lr_reduce_callback)
 
         # for tensorboard
-        # only write gradients if there is a visualization dataset
-        write_grads = visualization_dataset is not None
         tb_callback = tf_utils.CustomTBCallback(
             output_path / "logs",
             update_freq="epoch",
