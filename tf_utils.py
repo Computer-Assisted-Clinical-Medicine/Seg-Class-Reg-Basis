@@ -257,6 +257,8 @@ class CustomTBCallback(tf.keras.callbacks.TensorBoard):
                     return
                 # write gradients
                 for weights, grads in zip(self.model.trainable_weights, gradients):
+                    if grads is None:
+                        continue
                     tf.summary.histogram(
                         weights.name.replace(":", "_") + "_grads", data=grads, step=epoch
                     )

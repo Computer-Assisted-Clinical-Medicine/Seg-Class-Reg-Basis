@@ -42,8 +42,11 @@ def get_gpu(memory_limit=4000) -> str:
     tf_gpus = [device.name for device in tf.config.list_physical_devices("GPU")]
     gpus = pd.read_csv(StringIO(output))
     gpus["tf_name"] = tf_gpus
-    # get the GPU with the most free memory
-    preferred_gpu = gpus.sort_values(" memory.free [MiB]").iloc[-1]
+    if "preferred_gpu" in os.environ:
+        preferred_gpu = gpus.loc[int(os.environ["preferred_gpu"])]
+    else:
+        # get the GPU with the most free memory
+        preferred_gpu = gpus.sort_values(" memory.free [MiB]").iloc[-1]
     free = preferred_gpu[" memory.free [MiB]"]
     if free > memory_limit:
         print(f"Using {preferred_gpu['name']}")

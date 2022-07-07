@@ -433,7 +433,7 @@ class SegBasisNet:
         # early stopping
         if early_stopping:
             es_callback = tf.keras.callbacks.EarlyStopping(
-                monitor=monitor, patience=patience_es, mode=monitor_mode, min_delta=1e-5
+                monitor=monitor, patience=patience_es, mode=monitor_mode, min_delta=5e-5
             )
             callbacks.append(es_callback)
 
