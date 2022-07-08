@@ -1,15 +1,19 @@
 """Different utilities to help with training"""
+import logging
 import os
-from pathlib import Path
 import subprocess
 import sys
 from io import StringIO
+from pathlib import Path
 from typing import List
 
 import numpy as np
 import pandas as pd
 import SimpleITK as sitk
 import tensorflow as tf
+
+# configure logger
+logger = logging.getLogger(__name__)
 
 
 def get_gpu(memory_limit=4000) -> str:
@@ -50,6 +54,7 @@ def get_gpu(memory_limit=4000) -> str:
     free = preferred_gpu[" memory.free [MiB]"]
     if free > memory_limit:
         print(f"Using {preferred_gpu['name']}")
+        logger.info("Using %s", preferred_gpu["name"])
         return preferred_gpu.tf_name.partition("physical_device:")[2]
     else:
         raise SystemError("No free GPU available")
