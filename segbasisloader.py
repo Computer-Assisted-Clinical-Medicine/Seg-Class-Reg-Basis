@@ -451,6 +451,7 @@ class SegBasisLoader:
         str, str
             The location of the image and labels
         """
+        assert cfg.data_base_dir is not None, "cfg.data_base_dir should not be None"
         data = self.file_dict[file_id]
         sample = os.path.join(cfg.data_base_dir, data["image"])
         assert os.path.exists(sample), "image not found."
