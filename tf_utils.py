@@ -4,7 +4,7 @@ logging and to only save the best weights, which does save disk space.
 
 import logging
 from pathlib import Path
-from typing import Iterable, List
+from typing import List
 
 import tensorflow as tf
 
@@ -287,11 +287,11 @@ def write_images(x, y, y_pred, step: int, num_segmentations=0):
     """
 
     # if it is not a Iterable, make it one
-    if not isinstance(x, Iterable):
+    if not isinstance(x, tuple) and not isinstance(x, list):
         x = (x,)
-    if not isinstance(y, Iterable):
+    if not isinstance(y, tuple) and not isinstance(y, list):
         y = (y,)
-    if not isinstance(y_pred, Iterable):
+    if not isinstance(y_pred, tuple) and not isinstance(y_pred, list):
         y_pred = (y_pred,)
 
     dimension = len(x[0].shape) - 2  # subtract one dimension for batches and channels
