@@ -4,7 +4,7 @@ logging and to only save the best weights, which does save disk space.
 
 import logging
 from pathlib import Path
-from typing import List
+from typing import Iterable, List
 
 import tensorflow as tf
 
@@ -44,6 +44,8 @@ class KeepBestModel(tf.keras.callbacks.ModelCheckpoint):
         """On epoch end, save the checkpoint if it was better than max_keep and
         delete the worst one.
         """
+        # remove slashed from the logs
+        logs = {key.replace("/", "-"): val for key, val in logs.items()}
         # get the value
         if self.decay is None:
             val = logs[self.monitor]
@@ -284,12 +286,12 @@ def write_images(x, y, y_pred, step: int, num_segmentations=0):
         The number of segmentation labels in the results, by default 0
     """
 
-    # if it is not a tuple, make it one
-    if not isinstance(x, tuple):
+    # if it is not a Iterable, make it one
+    if not isinstance(x, Iterable):
         x = (x,)
-    if not isinstance(y, tuple):
+    if not isinstance(y, Iterable):
         y = (y,)
-    if not isinstance(y_pred, tuple):
+    if not isinstance(y_pred, Iterable):
         y_pred = (y_pred,)
 
     dimension = len(x[0].shape) - 2  # subtract one dimension for batches and channels

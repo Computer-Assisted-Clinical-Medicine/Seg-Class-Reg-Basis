@@ -389,7 +389,9 @@ class SegBasisNet:
             metrics = {
                 "segmentation": ("dice", "acc", "meanIoU"),
                 "classification": ("precision", "recall", "auc"),
+                "discriminator-classification": (),
                 "regression": ("rmse",),
+                "discriminator-regression": (),
                 "autoencoder": ("rmse",),
             }
 

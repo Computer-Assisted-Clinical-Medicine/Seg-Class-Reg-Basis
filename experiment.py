@@ -5,7 +5,7 @@ import copy
 import logging
 import os
 from pathlib import Path, PurePath
-from typing import Any, Dict, Iterable, List, Optional, OrderedDict
+from typing import Any, Dict, Iterable, List, Optional, OrderedDict, Tuple
 
 import numpy as np
 import pandas as pd
@@ -45,6 +45,7 @@ class Experiment:
         folds_dir_rel=None,
         tensorboard_images=False,
         tasks="segmentation",
+        expanded_tasks=None,
         mapping=None,
     ):
         """Run experiments using a fixed set of hyperparameters
@@ -87,6 +88,10 @@ class Experiment:
             tasks: tuple|str, optional
                 Which tasks to perform, the choices are segmentation, classification, regression, autoencoder
                 by default ("segmentation",)
+            expanded_tasks: dict, optional
+                Which tasks to perform for which input and output, the choices are segmentation,
+                discriminator-classification, discriminator-regression, classification,regression and autoencoder
+                if None, all available fields are used for classification or regression, by default None
             mapping: dict, optional
                 For classification and regression tasks, the mapping between the real values and
                 training values, by default None
@@ -118,7 +123,14 @@ class Experiment:
             tasks = (tasks,)
         if not isinstance(tasks, tuple) or isinstance(tasks, list):
             raise TypeError("The tasks should be a tuple or list")
-        possible_tasks = ("segmentation", "classification", "regression", "autoencoder")
+        possible_tasks = (
+            "segmentation",
+            "classification",
+            "discriminator-classification",
+            "regression",
+            "discriminator-regression",
+            "autoencoder",
+        )
         for tsk in tasks:
             if tsk not in possible_tasks:
                 raise ValueError(
@@ -164,42 +176,52 @@ class Experiment:
 
         # export datasets for classification and regression
         if mapping is None:
-            self.mapping = None
-            if "classification" in self.tasks:
-                self.map_classification()
-            if "regression" in self.tasks:
-                self.map_regression()
+            self.map_classification()
+            self.map_regression()
         else:
             self.mapping = mapping
 
-        self.train_dataset = self.convert_dataset(self.data_set)
-
         # create the expanded task list
         # TODO: support multiple Segmentation tasks
-        self.expanded_tasks = OrderedDict()
-        if "segmentation" in self.tasks:
-            self.expanded_tasks["seg"] = "segmentation"
-        if "classification" in self.tasks:
-            for field in self.mapping["classification"].keys():
-                self.expanded_tasks[field] = "classification"
-        if "regression" in self.tasks:
-            for field in self.mapping["regression"].keys():
-                self.expanded_tasks[field] = "regression"
-        if "autoencoder" in self.tasks:
-            self.expanded_tasks["autoencoder"] = "autoencoder"
-        self.hyper_parameters["network_parameters"]["tasks"] = self.expanded_tasks
+        if expanded_tasks is None:
+            expanded_tasks = OrderedDict()
+            if "segmentation" in self.tasks:
+                expanded_tasks["seg"] = "segmentation"
+            if "classification" in self.tasks:
+                for field in self.mapping["classification"].keys():
+                    expanded_tasks[field] = "classification"
+            if "regression" in self.tasks:
+                for field in self.mapping["regression"].keys():
+                    expanded_tasks[field] = "regression"
+            if "autoencoder" in self.tasks:
+                expanded_tasks["autoencoder"] = "autoencoder"
 
-        # get the label shapes, if the task is regression or segmentation
-        if "classification" in self.tasks or "regression" in self.tasks:
-            # for classification, output has the number of classes as shape
-            class_shapes = tuple(
-                max(val.values()) + 1 for val in self.mapping["classification"].values()
+        # Order expanded tasks by task and alphabetically
+        self.expanded_tasks = OrderedDict(
+            sorted(
+                expanded_tasks.items(),
+                key=lambda item: f"{np.argmax(item[1] == np.array(possible_tasks))}{item[0]}",
             )
-            # for regression, output has shape 1
-            reg_shapes = (1,) * len(self.mapping["regression"])
-            self.hyper_parameters["network_parameters"]["label_shapes"] = (
-                class_shapes + reg_shapes
-            )
+        )
+        self.tasks = tuple(
+            tsk for tsk in possible_tasks if tsk in self.expanded_tasks.values()
+        )
+        self.hyper_parameters["network_parameters"]["tasks"] = copy.copy(
+            self.expanded_tasks
+        )
+        self.hyper_parameters["network_parameters"]["mapping"] = copy.copy(self.mapping)
+
+        # get the label shapes, if the task is classification or regression
+        self.label_shapes = OrderedDict()
+        for field_name, vals in self.mapping["classification"].items():
+            if field_name in self.expanded_tasks:
+                self.label_shapes[field_name] = max(vals.values()) + 1
+        for field_name in self.mapping["regression"]:
+            if field_name in self.expanded_tasks:
+                self.label_shapes[field_name] = 1
+        self.hyper_parameters["network_parameters"]["label_shapes"] = self.label_shapes
+
+        self.train_dataset = self.convert_dataset(self.data_set)
 
         if output_path_rel is None:
             self.output_path_rel = PurePath("Experiments", self.name)
@@ -408,13 +430,16 @@ class Experiment:
         """Map the categorical columns to numerical values, which will be used
         for one-hot encoding
         """
-        classification_df = pd.DataFrame.from_dict(
-            {k: v["classification"] for k, v in self.data_set.items()}, orient="index"
-        )
-        if self.mapping is None:
+        if getattr(self, "mapping", None) is None:
             self.mapping = {}
         self.mapping["classification"] = OrderedDict()
-        for col in classification_df:
+        classification_df = pd.DataFrame.from_dict(
+            {k: v.get("classification", {}) for k, v in self.data_set.items()},
+            orient="index",
+        )
+        if classification_df.size == 0:
+            return
+        for col in sorted(classification_df.columns):
             col_data = pd.Categorical(classification_df[col])
             self.mapping["classification"][col] = {
                 cat: i for i, cat in enumerate(col_data.categories)
@@ -424,14 +449,16 @@ class Experiment:
         """Map the regression columns to numerical values between 0 and 1, which
         will be used as network output
         """
-        classification_df = pd.DataFrame.from_dict(
-            {k: v["regression"] for k, v in self.data_set.items()}, orient="index"
-        )
-        if self.mapping is None:
+        if getattr(self, "mapping", None) is None:
             self.mapping = {}
         self.mapping["regression"] = OrderedDict()
-        for col in classification_df:
-            col_data = classification_df[col]
+        regression_df = pd.DataFrame.from_dict(
+            {k: v.get("regression", {}) for k, v in self.data_set.items()}, orient="index"
+        )
+        if regression_df.size == 0:
+            return
+        for col in sorted(regression_df.columns):
+            col_data = regression_df[col]
             col_min = col_data.min()
             col_max = col_data.max()
             self.mapping["regression"][col] = {
@@ -439,7 +466,7 @@ class Experiment:
                 1: float(col_max),
             }
 
-    def convert_dataset(self, dataset: Dict) -> Dict:
+    def convert_dataset(self, dataset: Dict) -> Tuple[Dict, List[str]]:
         """Convert the dataset to a format that can be used to train the neural
         network. The classification columns will be converted to one-hot encoding
         and the regression columns to a normalized numeric value. The image and
@@ -458,16 +485,17 @@ class Experiment:
             The converted dict with the same keys as the input. Only classification
             and regression will be changed to a list of numpy arrays.
         """
-        # generate the classification mapping
-        if "segmentation" in self.tasks:
-            class_map = OrderedDict()
-            for feature, values in self.mapping["classification"].items():
+        class_map = OrderedDict()
+        reg_map = OrderedDict()
+        for feature, task in self.expanded_tasks.items():
+            # generate the classification mapping
+            if "classification" in task:
+                values = self.mapping["classification"][feature]
                 matrix = np.eye(max(values.values()) + 1)
                 class_map[feature] = {k: matrix[v] for k, v in values.items()}
-        # and the regression mapping
-        if "regression" in self.tasks:
-            reg_map = OrderedDict()
-            for feature, values in self.mapping["regression"].items():
+            # and the regression mapping
+            if "regression" in task:
+                values = self.mapping["regression"][feature]
                 reg_map[feature] = scipy.interpolate.interp1d(
                     list(values.values()), list(values.keys())
                 )
@@ -477,17 +505,23 @@ class Experiment:
             train_dataset[patient] = {}
             if "image" in data:
                 train_dataset[patient]["image"] = data["image"]
-            if "labels" in data:
+            if "labels" in data and "segmentation" in self.tasks:
                 train_dataset[patient]["labels"] = data["labels"]
-            if "classification" in data and "classification" in self.tasks:
-                train_dataset[patient]["classification"] = [
+            if "classification" in data:
+                classification_data = [
                     f_map[data["classification"][f_name]]
                     for f_name, f_map in class_map.items()
                 ]
-            if "regression" in data and "regression" in self.tasks:
-                train_dataset[patient]["regression"] = [
-                    f_map(data["regression"][f_name]) for f_name, f_map in reg_map.items()
+                if len(classification_data):
+                    train_dataset[patient]["classification"] = classification_data
+            if "regression" in data:
+                regression_data = [
+                    f_map(data["regression"][f_name])
+                    for f_name, f_map in reg_map.items()
+                    if f_name in self.expanded_tasks
                 ]
+                if len(classification_data):
+                    train_dataset[patient]["regression"] = regression_data
             if "autoencoder" in data and "autoencoder" in self.tasks:
                 train_dataset[patient]["autoencoder"] = data["autoencoder"]
         return train_dataset
@@ -704,12 +738,12 @@ class Experiment:
 
                 if task == "segmentation":
                     file_metrics = self.evaluate_segmentation(file, prediction_path_seg)
+                elif task == "autoencoder":
+                    file_metrics = self.evaluate_autoencoder(file, prediction_path_auto)
                 elif task == "classification":
                     file_metrics = self.evaluate_classification(file, prediction_path_np)
                 elif task == "regression":
                     file_metrics = self.evaluate_regression(file, prediction_path_np)
-                elif task == "autoencoder":
-                    file_metrics = self.evaluate_autoencoder(file, prediction_path_auto)
                 else:
                     raise ValueError(f"Task {task} unknown")
                 if file_metrics is not None:
@@ -1057,6 +1091,7 @@ class Experiment:
             "data_set": self.data_set,
             "versions": self.versions,
             "tasks": self.tasks,
+            "expanded_tasks": self.expanded_tasks,
             "mapping": self.mapping,
         }
         if hasattr(self, "external_test_set"):

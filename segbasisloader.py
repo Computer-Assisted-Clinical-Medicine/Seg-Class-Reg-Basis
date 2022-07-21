@@ -57,8 +57,8 @@ class SegBasisLoader:
     sample_buffer_size : int, optional
         How big the buffer should be for shuffling, by default 4000.
     tasks : Tuple[str], optional
-        Which tasks to perform, available are segmentation, classification, regression,
-        autoencoder, by default ("segmentation",).
+        Which tasks to perform, available are segmentation, autoencoder,
+        classification and regression by default ("segmentation",).
     """
 
     class MODES(Enum):
@@ -194,12 +194,12 @@ class SegBasisLoader:
                 self.dtypes.append(cfg.dtype)
                 self.n_labels += 1
                 self.n_label_images = 1
-        if "classification" in self.tasks:
+        if "classification" in self.tasks or "discriminator-classification" in self.tasks:
             self.dshapes += [i.shape for i in first["classification"]]
             self.dtypes += [cfg.dtype] * len(first["classification"])
             self.n_labels += len(first["classification"])
             self.n_classification = len(first["classification"])
-        if "regression" in self.tasks:
+        if "regression" in self.tasks or "discriminator-regression" in self.tasks:
             self.dshapes += [(1,)] * len(first["regression"])
             self.dtypes += [cfg.dtype] * len(first["regression"])
             self.n_labels += len(first["regression"])
