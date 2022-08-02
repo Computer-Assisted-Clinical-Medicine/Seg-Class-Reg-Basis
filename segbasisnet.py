@@ -245,27 +245,6 @@ class SegBasisNet:
             loss_parameters = None
         return loss.get_loss(loss_name, loss_parameters)
 
-    @staticmethod
-    def _get_optimizer(optimizer, l_r, global_step=0, clipvalue=None):
-        if optimizer == "Adam":
-            return tf.optimizers.Adam(learning_rate=l_r, epsilon=1e-3, clipvalue=clipvalue)
-        elif optimizer == "Momentum":
-            mom = 0.9
-            learning_rate = tf.optimizers.schedules.ExponentialDecay(
-                l_r, 6000, 0.96, staircase=True
-            )
-            return tf.optimizers.SGD(learning_rate, momentum=mom, clipvalue=clipvalue)
-        elif optimizer == "Adadelta":
-            return tf.optimizers.Adadelta(learning_rate=l_r, clipvalue=clipvalue)
-        elif optimizer == "SGD":
-            return tf.optimizers.SGD(learning_rate=l_r, clipvalue=None)
-        elif optimizer == "RMSprop":
-            return tf.optimizers.RMSprop(learning_rate=l_r, clipvalue=None)
-        elif optimizer == "Adamax":
-            return tf.optimizers.Adamax(learning_rate=l_r, epsilon=1e-3, clipvalue=None)
-        else:
-            raise ValueError(f"Optimizer {optimizer} unknown.")
-
     def plot_model(self, save_dir: Path):
         """Plot the model to the save dir
 
@@ -399,8 +378,8 @@ class SegBasisNet:
 
         # compile model
         self.model.compile(
-            optimizer=self._get_optimizer(
-                optimizer, l_r, 0, clipvalue=self.options["clipping_value"]
+            optimizer=tf_utils.get_optimizer(
+                optimizer, l_r, clipvalue=self.options["clipping_value"]
             ),
             loss=self.outputs["loss"],
             metrics=metric_objects,

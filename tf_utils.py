@@ -4,7 +4,7 @@ logging and to only save the best weights, which does save disk space.
 
 import logging
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import tensorflow as tf
 
@@ -13,6 +13,50 @@ logger = logging.getLogger(__name__)
 
 # some callbacks do only have one public method.
 # pylint: disable=too-few-public-methods
+
+
+def get_optimizer(
+    optimizer: str, l_r: float, clipvalue: Optional[float] = None
+) -> tf.optimizers.Optimizer:
+    """Get the optimizer according to the name
+
+    Parameters
+    ----------
+    optimizer : str
+        The name of the optimizer
+    l_r : float
+        The learning rate
+    clipvalue : float, optional
+        At which value the gradients should be clipped, by default None
+
+    Returns
+    -------
+    tf.optimizers.Optimizer
+        The optimizer
+
+    Raises
+    ------
+    ValueError
+        If the name is unknown
+    """
+    if optimizer == "Adam":
+        return tf.optimizers.Adam(learning_rate=l_r, epsilon=1e-3, clipvalue=clipvalue)
+    elif optimizer == "Momentum":
+        mom = 0.9
+        learning_rate = tf.optimizers.schedules.ExponentialDecay(
+            l_r, 6000, 0.96, staircase=True
+        )
+        return tf.optimizers.SGD(learning_rate, momentum=mom, clipvalue=clipvalue)
+    elif optimizer == "Adadelta":
+        return tf.optimizers.Adadelta(learning_rate=l_r, clipvalue=clipvalue)
+    elif optimizer == "SGD":
+        return tf.optimizers.SGD(learning_rate=l_r, clipvalue=None)
+    elif optimizer == "RMSprop":
+        return tf.optimizers.RMSprop(learning_rate=l_r, clipvalue=None)
+    elif optimizer == "Adamax":
+        return tf.optimizers.Adamax(learning_rate=l_r, epsilon=1e-3, clipvalue=None)
+    else:
+        raise ValueError(f"Optimizer {optimizer} unknown.")
 
 
 class KeepBestModel(tf.keras.callbacks.ModelCheckpoint):
