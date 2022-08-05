@@ -274,6 +274,7 @@ class SegBasisNet:
         metrics: Optional[Dict[str, Collection[Union[str, Callable]]]] = None,
         monitor="val_loss",
         monitor_mode="min",
+        save_best_only=True,
         best_model_decay=0.7,
         early_stopping=False,
         patience_es=10,
@@ -316,6 +317,8 @@ class SegBasisNet:
             Prefix val_ means that the metric from the validation dataset will be used, by default "val_loss"
         monitor_mode : str, optional
             The mode to use for monitoring the metric, min or max, by default min
+        save_best_only : bool, optional
+        If only the best model(s) should be saved, by default True
         best_model_decay : float, optional
             The decay rate used for averaging the metric when saving the best model,
             by default 0.7, None means no moving average
@@ -362,7 +365,10 @@ class SegBasisNet:
         # do summary
         self.model.summary(print_fn=logger.info)
 
-        self.plot_model(model_dir)
+        model_image_dir = model_dir / "images"
+        if not model_image_dir.exists():
+            model_image_dir.mkdir()
+        self.plot_model(model_image_dir)
 
         if metrics is None:
             metrics = {
@@ -400,9 +406,14 @@ class SegBasisNet:
         callbacks = []
 
         # to save the best model
+        if save_best_only:
+            model_save_name = f"weights_best_{{epoch:03d}}-best{{{monitor}:1.5f}}.hdf5"
+        else:
+            model_save_name = "weights_{{epoch:03d}}.hdf5"
         cp_best_callback = tf_utils.KeepBestModel(
-            filepath=model_dir / f"weights_best_{{epoch:03d}}-best{{{monitor}:1.5f}}.hdf5",
+            filepath=model_dir / model_save_name,
             save_weights_only=True,
+            save_best_only=save_best_only,
             verbose=0,
             save_freq="epoch",
             monitor=monitor,

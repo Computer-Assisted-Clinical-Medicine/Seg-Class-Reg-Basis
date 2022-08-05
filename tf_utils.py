@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import List, Optional
 
 import tensorflow as tf
+from tensorflow.keras import callbacks
 
 # configure logger
 logger = logging.getLogger(__name__)
@@ -59,7 +60,7 @@ def get_optimizer(
         raise ValueError(f"Optimizer {optimizer} unknown.")
 
 
-class KeepBestModel(tf.keras.callbacks.ModelCheckpoint):
+class KeepBestModel(callbacks.ModelCheckpoint):
     """This extends the tf.keras.callbacks.ModelCheckpoint class to delete the
     worst model once more than max_keep models are saved. This can help to
     reduce the amount of storage needed for the training.
@@ -70,13 +71,15 @@ class KeepBestModel(tf.keras.callbacks.ModelCheckpoint):
         Where the models should be saved
     max_keep : int, optional
         The maximum amount of models/weights to keep, by default 3
+    save_best_only : bool, optional
+        If only the best model(s) should be saved, by default True
     decay : float, optional
         If there should be an exponential moving average for the value with the
         specified rate.
     """
 
-    def __init__(self, filepath, max_keep=3, decay=None, **kwargs):
-        super().__init__(filepath, save_best_only=False, **kwargs)
+    def __init__(self, filepath, max_keep=3, save_best_only=True, decay=None, **kwargs):
+        super().__init__(filepath, save_best_only=save_best_only, **kwargs)
         # maximum number of checkpoints to keep
         self.max_keep = max_keep
         self.best_checkpoints = {}
@@ -99,8 +102,8 @@ class KeepBestModel(tf.keras.callbacks.ModelCheckpoint):
             self.previous_val = val
             logger.info("Monitored values %s is %5f", self.monitor, logs[self.monitor])
 
-        # see if it was better than any checkpoint
-        save = False
+        # see if it was better than any checkpoint (or all should be saved)
+        save = not self.save_best_only
         for best_val in self.best_checkpoints:
             # see if it is better
             if self.monitor_op(val, best_val):
@@ -115,7 +118,9 @@ class KeepBestModel(tf.keras.callbacks.ModelCheckpoint):
             return
 
         logger.info(
-            "Value %5f for %s did improve and the weights will be saved.", val, self.monitor
+            "Value %5f for %s did improve and the weights will be saved.",
+            val,
+            self.monitor,
         )
 
         # save it
@@ -124,7 +129,7 @@ class KeepBestModel(tf.keras.callbacks.ModelCheckpoint):
         self.best_checkpoints[val] = self._get_file_path(epoch, logs)
 
         # see if there are checkpoints than should be removed
-        if len(self.best_checkpoints) > self.max_keep:
+        if len(self.best_checkpoints) > self.max_keep and self.save_best_only:
             worst_value = None
             worst_checkpoint = None
             # iterate over all checkpoints
@@ -154,7 +159,7 @@ class KeepBestModel(tf.keras.callbacks.ModelCheckpoint):
         return self.filepath.format(epoch=epoch + 1, **logs)
 
 
-class FinetuneLayers(tf.keras.callbacks.Callback):
+class FinetuneLayers(callbacks.Callback):
     """For finetuning, this callback will enable the training of certain layers
     at a selected epoch.
 
@@ -203,7 +208,7 @@ class FinetuneLayers(tf.keras.callbacks.Callback):
         return super().on_epoch_begin(epoch, logs=logs)
 
 
-class CustomTBCallback(tf.keras.callbacks.TensorBoard):
+class CustomTBCallback(callbacks.TensorBoard):
     """Extended TensorBoard callback, it will also always log the learning rate
     and write images of the segmentation if a visualization dataset is provided.
     The visualization takes about 10 seconds, so for a lot of epochs, a frequency
@@ -306,7 +311,9 @@ class CustomTBCallback(tf.keras.callbacks.TensorBoard):
                     if grads is None:
                         continue
                     tf.summary.histogram(
-                        weights.name.replace(":", "_") + "_grads", data=grads, step=epoch
+                        weights.name.replace(":", "_") + "_grads",
+                        data=grads,
+                        step=epoch,
                     )
 
 
