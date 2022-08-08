@@ -239,6 +239,13 @@ class SegBasisNet:
         Callable
             The loss as tensorflow function
         """
+        if isinstance(loss_name, (tuple, list)):
+            losses = tuple(self.get_loss(l) for l in loss_name)
+
+            def custom_loss(y_true, y_pred):
+                return sum(l(y_true, y_pred) for l in losses)
+
+            return custom_loss
         if "loss_parameters" in self.options:
             loss_parameters = self.options["loss_parameters"].get(loss_name, None)
         else:
@@ -409,7 +416,7 @@ class SegBasisNet:
         if save_best_only:
             model_save_name = f"weights_best_{{epoch:03d}}-best{{{monitor}:1.5f}}.hdf5"
         else:
-            model_save_name = "weights_{{epoch:03d}}.hdf5"
+            model_save_name = "weights_{epoch:03d}.hdf5"
         cp_best_callback = tf_utils.KeepBestModel(
             filepath=model_dir / model_save_name,
             save_weights_only=True,

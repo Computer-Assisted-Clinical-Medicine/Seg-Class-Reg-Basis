@@ -601,7 +601,7 @@ class MutualInformation(Loss):
 
         if self.normalize and mutual_info > K.epsilon():
             mutual_info = mutual_info / self.entropy(prob_a)
-        return tf.clip_by_value(mutual_info, 0, np.inf)
+        return tf.clip_by_value(mutual_info, 0, np.inf, name=self.name)
 
     def get_config(self):
         return {
