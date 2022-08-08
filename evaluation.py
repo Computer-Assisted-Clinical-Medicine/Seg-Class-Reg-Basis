@@ -13,7 +13,7 @@ import scipy
 import SimpleITK as sitk
 import skimage
 import sklearn
-from . import metric as Metric
+from . import metric
 
 # configure logger
 logger = logging.getLogger(__name__)
@@ -56,7 +56,7 @@ def evaluate_segmentation_prediction(prediction_path: str, label_path: str) -> d
         cast.SetOutputPixelType(label_img.GetPixelID())
         pred_img = cast.Execute(pred_img)
 
-    result_metrics["Volume (L)"] = Metric.get_ml_sitk(label_img)
+    result_metrics["Volume (L)"] = metric.get_ml_sitk(label_img)
 
     # check if all labels are background
     if np.all(sitk.GetArrayFromImage(pred_img) == 0):
@@ -75,9 +75,9 @@ def evaluate_segmentation_prediction(prediction_path: str, label_path: str) -> d
             result_metrics["Mean Symmetric Surface Distance"] = np.NAN
             return result_metrics
 
-    result_metrics["Volume (P)"] = Metric.get_ml_sitk(pred_img)
+    result_metrics["Volume (P)"] = metric.get_ml_sitk(pred_img)
 
-    orig_dice, orig_vs, orig_fn, orig_fp, orig_iou = Metric.overlap_measures_sitk(
+    orig_dice, orig_vs, orig_fn, orig_fp, orig_iou = metric.overlap_measures_sitk(
         pred_img, label_img
     )
     result_metrics["Dice"] = orig_dice
@@ -89,20 +89,20 @@ def evaluate_segmentation_prediction(prediction_path: str, label_path: str) -> d
         "  Original Overlap Measures: %s %s %s %s", orig_dice, orig_vs, orig_fn, orig_fp
     )
 
-    confusion_rate = Metric.confusion_rate_sitk(pred_img, label_img, 1, 0)
+    confusion_rate = metric.confusion_rate_sitk(pred_img, label_img, 1, 0)
     result_metrics["Confusion Rate"] = confusion_rate
     logger.info("  Confusion Rate: %s", confusion_rate)
 
-    connect = Metric.get_connectivity_sitk(pred_img)
+    connect = metric.get_connectivity_sitk(pred_img)
     result_metrics["Connectivity"] = connect
     logger.info("  Connectivity: %s", connect)
 
-    frag = Metric.get_fragmentation_sitk(pred_img)
+    frag = metric.get_fragmentation_sitk(pred_img)
     result_metrics["Fragmentation"] = frag
     logger.info("  Fragmentation: %s", frag)
 
     try:
-        orig_hdd = Metric.hausdorff_metric_sitk(pred_img, label_img)
+        orig_hdd = metric.hausdorff_metric_sitk(pred_img, label_img)
     except RuntimeError as err:
         logger.exception("Surface evaluation failed! Using infinity: %s", err)
         orig_hdd = np.NAN
@@ -115,7 +115,7 @@ def evaluate_segmentation_prediction(prediction_path: str, label_path: str) -> d
             orig_mdssd,
             orig_stdssd,
             orig_maxssd,
-        ) = Metric.symmetric_surface_measures_sitk(pred_img, label_img)
+        ) = metric.symmetric_surface_measures_sitk(pred_img, label_img)
     except RuntimeError as err:
         logger.exception("Surface evaluation failed! Using infinity: %s", err)
         orig_mnssd = np.NAN

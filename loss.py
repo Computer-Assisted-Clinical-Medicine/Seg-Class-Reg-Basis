@@ -4,10 +4,8 @@ from typing import Callable
 
 import numpy as np
 import tensorflow as tf
-import tensorflow.keras.backend as K
-from tensorflow.keras.losses import Loss
-
-from . import metric as Metric
+from tensorflow.keras import backend as K
+from tensorflow.keras import losses
 
 # pylint: disable=missing-function-docstring
 
@@ -182,9 +180,46 @@ def tversky_loss(y_true, y_pred, alpha=0.3, eps=1e-12):
     return tf.subtract(tf.constant(1, tf.float32), loss, name="tversky")
 
 
+def dice_coefficient(target, output, smooth=1e-5):
+    """Calculate the dice coefficient, a small factor is applied for smoothing to prevent
+    numerical issues."""
+    axis = tf.range(0, tf.rank(output) - 1)
+    output = tf.cast(output, dtype=tf.float32)
+    target = tf.cast(target, dtype=tf.float32)
+    intersection = tf.reduce_sum(output * target, axis=axis)
+    union = tf.reduce_sum(output, axis=axis) + tf.reduce_sum(target, axis=axis)
+    hard_dice = (2.0 * intersection + smooth) / (union + smooth)
+    hard_dice = tf.reduce_mean(hard_dice)
+    return hard_dice
+
+
+def soft_dice_coefficient(target, output, smooth=1e-5):
+    axis = tf.range(0, tf.rank(output) - 1)
+    output = tf.cast(output, dtype=tf.float32)
+    target = tf.cast(target, dtype=tf.float32)
+    intersection = tf.reduce_sum(output * target, axis=axis)
+    union = tf.reduce_sum(tf.square(output), axis=axis) + tf.reduce_sum(
+        tf.square(target), axis=axis
+    )
+    soft_dice = (2.0 * intersection + smooth) / (union + smooth)
+    soft_dice = tf.reduce_mean(soft_dice)
+    return soft_dice
+
+
+def tanimoto_coefficient(output, target, smooth=1e-5):
+    axis = tf.range(0, tf.rank(output) - 1)
+    output = tf.cast(output, dtype=tf.float32)
+    target = tf.cast(target, dtype=tf.float32)
+    intersection = tf.reduce_sum(output * target, axis=axis)
+    union = tf.reduce_sum(output, axis=axis) + tf.reduce_sum(target, axis=axis)
+    hard_dice = (intersection + smooth) / (union + smooth)
+    hard_dice = tf.reduce_mean(hard_dice)
+    return hard_dice
+
+
 def dice_loss(y_true, y_pred, eps=1e-12):
     loss = tf.subtract(
-        tf.constant(1, tf.float32), Metric.dice_coefficient_tf(y_true, y_pred), name="dice"
+        tf.constant(1, tf.float32), dice_coefficient(y_true, y_pred), name="dice"
     )  # 1-dice to have a loss that can be minimized
     return loss
 
@@ -192,7 +227,7 @@ def dice_loss(y_true, y_pred, eps=1e-12):
 def soft_dice_loss(y_true, y_pred, smooth=1e-6):
     loss = tf.subtract(
         tf.constant(1, tf.float32),
-        Metric.soft_dice_coefficient_tf(y_true, y_pred, smooth=smooth),
+        soft_dice_coefficient(y_true, y_pred, smooth=smooth),
         name="dice",
     )  # 1-dice to have a loss that can be minimized
     return loss
@@ -200,7 +235,7 @@ def soft_dice_loss(y_true, y_pred, smooth=1e-6):
 
 def dice_with_fnr_loss(y_true, y_pred, eps=1e-12):
     loss = tf.subtract(
-        tf.constant(1, tf.float32), Metric.dice_coefficient_tf(y_true, y_pred), name="dice"
+        tf.constant(1, tf.float32), dice_coefficient(y_true, y_pred), name="dice"
     )  # 1-dice to have a loss that can be minimized
     classes = y_pred.shape[-1]
     y_true_channels = tf.split(y_true, classes, axis=-1)
@@ -457,7 +492,110 @@ def pearson_correlation_coefficient_loss(x, y):
     return 1 - tf.square(r)
 
 
-class MutualInformation(Loss):
+def entropy(prob: tf.Tensor):
+    # entropy is - sum_i p_i log p_i
+    product = -prob * K.log(prob + K.epsilon())
+    return K.sum(K.sum(product, 1), 1)
+
+
+def calculate_nmi(
+    y_true: tf.Tensor,
+    y_pred: tf.Tensor,
+    bin_centers: tf.Tensor,
+    preterm: tf.Tensor,
+    normalize=True,
+    name=None,
+    clip=False,
+    min_val=-1,
+    max_val=1,
+) -> tf.Tensor:
+    """Calculate the (normalized) mutual information
+
+    Original Author: Courtney Guo
+    If you use this loss function, please cite the following:
+    Guo, Courtney K. Multi-modal image registration with unsupervised deep learning. MEng. Thesis
+    Unsupervised Learning of Probabilistic Diffeomorphic Registration for Images and Surfaces
+    Adrian V. Dalca, Guha Balakrishnan, John Guttag, Mert R. Sabuncu
+    MedIA: Medial Image Analysis. 2019. eprint arXiv:1903.03545
+
+    Parameters
+    ----------
+    y_true : tf.Tensor
+        The true image
+    y_pred : tf.Tensor
+        The predicted
+    bin_centers : tf.Tensor
+        The centers of the bins used for nmi calculation
+    preterm : tf.Tensor
+        The preterm for the distance calculation (sigma * constants)
+    normalize : bool, optional
+        If the MI should be normalized, by default True
+    name : str, optional
+        The name, if none it will be nmi or mi depending on the norm, by default None
+    clip : bool, optional
+        If the input should be clipped (too far away from bin center creates Nans), by default False
+    min_val : int, optional
+        The minimum clip value (should be lowest end of the bins), by default -1
+    max_val : int, optional
+        The maximum clip value (should be the highest end of the bins), by default 1
+
+    Returns
+    -------
+    tf.tensor
+        The calculated (N)MI loss
+    """
+    if name is None:
+        if normalize:
+            name = "nmi"
+        else:
+            name = "mi"
+    if clip:
+        y_true = tf.clip_by_value(y_true, clip_value_min=min_val, clip_value_max=max_val)
+        y_pred = tf.clip_by_value(y_pred, clip_value_min=min_val, clip_value_max=max_val)
+
+    # reshape: flatten images into shape (batch_size, height x width x depth x chan, 1)
+    y_true = tf.reshape(y_true, (-1, tf.math.reduce_prod(y_true.shape[1:])))
+    y_true = tf.expand_dims(y_true, 2)
+    y_pred = tf.reshape(y_pred, (-1, tf.math.reduce_prod(y_pred.shape[1:])))
+    y_pred = tf.expand_dims(y_pred, 2)
+
+    number_voxels = tf.cast(K.shape(y_pred)[1], tf.float32)
+
+    # reshape bin centers to be (1, 1, B)
+    bin_shape = [1, 1, np.prod(bin_centers.get_shape().as_list())]
+    bin_centers = tf.reshape(bin_centers, bin_shape)
+
+    # calculate how much each voxel contributes to each intensity using
+    # a gaussian weighting function
+    matrix_a = tf.exp(-preterm * tf.square(y_true - bin_centers))
+    # and normalize along bin dimension
+    matrix_a_norm = K.sum(matrix_a, -1, keepdims=True)
+    matrix_a /= matrix_a_norm
+
+    matrix_b_dist = tf.exp(-preterm * tf.square(y_pred - bin_centers))
+    matrix_b_norm = K.sum(matrix_b_dist, -1, keepdims=True)
+    matrix_b = matrix_b_dist / matrix_b_norm
+
+    # compute probabilities
+    matrix_a_permuted = K.permute_dimensions(matrix_a, (0, 2, 1))
+    prob_ab = K.batch_dot(
+        matrix_a_permuted, matrix_b
+    )  # should be the right size now, nb_labels x nb_bins
+    prob_ab /= number_voxels
+    prob_a = tf.reduce_mean(matrix_a, 1, keepdims=True)
+    prob_b = tf.reduce_mean(matrix_b, 1, keepdims=True)
+
+    prob_prod = K.batch_dot(K.permute_dimensions(prob_a, (0, 2, 1)), prob_b) + K.epsilon()
+    nmi_loss = prob_ab * K.log(prob_ab / prob_prod + K.epsilon())
+
+    mutual_info = K.sum(K.sum(nmi_loss, 1), 1)
+
+    if normalize and mutual_info > K.epsilon():
+        mutual_info = mutual_info / entropy(prob_a)
+    return tf.clip_by_value(mutual_info, 0, np.inf, name=name)
+
+
+class MutualInformation(losses.Loss):
     """
     Global Mutual information loss for image-image pairs.
 
@@ -526,82 +664,18 @@ class MutualInformation(Loss):
         self.preterm = tf.constant(1 / (2 * np.square(self.sigma)), dtype=tf.float32)
         self.debug = debug
 
-    def entropy(self, prob: tf.Tensor):
-        # entropy is - sum_i p_i log p_i
-        product = -prob * K.log(prob + K.epsilon())
-        return K.sum(K.sum(product, 1), 1)
-
     def call(self, y_true, y_pred):
-        if self.clip:
-            y_true = tf.clip_by_value(
-                y_true, clip_value_min=self.min_val, clip_value_max=self.max_val
-            )
-            y_pred = tf.clip_by_value(
-                y_pred, clip_value_min=self.min_val, clip_value_max=self.max_val
-            )
-
-        # reshape: flatten images into shape (batch_size, height x width x depth x chan, 1)
-        y_true = tf.reshape(y_true, (-1, tf.math.reduce_prod(y_true.shape[1:])))
-        y_true = tf.expand_dims(y_true, 2)
-        y_pred = tf.reshape(y_pred, (-1, tf.math.reduce_prod(y_pred.shape[1:])))
-        y_pred = tf.expand_dims(y_pred, 2)
-
-        if self.debug:
-            tf.debugging.assert_all_finite(y_true, message="NaNs in y_true")
-            tf.debugging.assert_all_finite(y_pred, message="NaNs in y_pred")
-
-        number_voxels = tf.cast(K.shape(y_pred)[1], tf.float32)
-
-        # reshape bin centers to be (1, 1, B)
-        bin_shape = [1, 1, np.prod(self.bin_centers.get_shape().as_list())]
-        bin_centers = tf.reshape(self.bin_centers, bin_shape)
-
-        # calculate how much each voxel contributes to each intensity using
-        # a gaussian weighting function
-        matrix_a = tf.exp(-self.preterm * tf.square(y_true - bin_centers))
-        # and normalize along bin dimension
-        matrix_a_norm = K.sum(matrix_a, -1, keepdims=True)
-        matrix_a /= matrix_a_norm
-
-        matrix_b_dist = tf.exp(-self.preterm * tf.square(y_pred - bin_centers))
-        matrix_b_norm = K.sum(matrix_b_dist, -1, keepdims=True)
-        matrix_b = matrix_b_dist / matrix_b_norm
-
-        if self.debug:
-            tf.debugging.assert_all_finite(matrix_a, message="NaNs in matrix_a")
-            tf.debugging.assert_all_finite(matrix_a_norm, message="NaNs in matrix_a_norm")
-            tf.debugging.assert_all_finite(matrix_b_dist, message="NaNs in matrix_b_dist")
-            tf.debugging.assert_all_finite(matrix_b, message="NaNs in matrix_b")
-            tf.debugging.assert_all_finite(matrix_b_norm, message="NaNs in matrix_b_norm")
-
-        # compute probabilities
-        matrix_a_permuted = K.permute_dimensions(matrix_a, (0, 2, 1))
-        prob_ab = K.batch_dot(
-            matrix_a_permuted, matrix_b
-        )  # should be the right size now, nb_labels x nb_bins
-        prob_ab /= number_voxels
-        prob_a = tf.reduce_mean(matrix_a, 1, keepdims=True)
-        prob_b = tf.reduce_mean(matrix_b, 1, keepdims=True)
-
-        if self.debug:
-            tf.debugging.assert_all_finite(prob_a, message="NaNs in prob_a")
-            tf.debugging.assert_all_finite(prob_b, message="NaNs in prob_b")
-            tf.debugging.assert_all_finite(prob_ab, message="NaNs in prob_ab")
-
-        prob_prod = (
-            K.batch_dot(K.permute_dimensions(prob_a, (0, 2, 1)), prob_b) + K.epsilon()
+        return calculate_nmi(
+            y_true=y_true,
+            y_pred=y_pred,
+            bin_centers=self.bin_centers,
+            preterm=self.preterm,
+            normalize=self.normalize,
+            name=self.name,
+            clip=self.clip,
+            min_val=self.min_val,
+            max_val=self.max_val,
         )
-        nmi_loss = prob_ab * K.log(prob_ab / prob_prod + K.epsilon())
-
-        if self.debug:
-            tf.debugging.assert_all_finite(prob_prod, message="NaNs in prob_prod")
-            tf.debugging.assert_all_finite(nmi_loss, message="NaNs in nmi_loss")
-
-        mutual_info = K.sum(K.sum(nmi_loss, 1), 1)
-
-        if self.normalize and mutual_info > K.epsilon():
-            mutual_info = mutual_info / self.entropy(prob_a)
-        return tf.clip_by_value(mutual_info, 0, np.inf, name=self.name)
 
     def get_config(self):
         return {

@@ -6,19 +6,21 @@ import math
 import numpy as np
 import SimpleITK as sitk
 import tensorflow as tf
+from tensorflow.keras.metrics import Metric
+from .loss import calculate_nmi, dice_coefficient
 
 # pylint: disable=missing-function-docstring
 
 ### Metric classes
 
 
-class Dice(tf.keras.metrics.Metric):  # adapted from tensorflow example implementation
+class Dice(Metric):  # adapted from tensorflow example implementation
     """This class implements the dice coefficient as a tensorflow metric"""
 
     def __init__(self, name="dice", num_classes=2, **kwargs):
         super().__init__(name=name, **kwargs)
         self.dice = self.add_weight(name="dice", initializer="zeros")
-        self.count = self.add_weight("count", initializer="zeros")
+        self.count = self.add_weight(name="count", initializer="zeros")
 
         self.num_classes = num_classes
 
@@ -35,7 +37,7 @@ class Dice(tf.keras.metrics.Metric):  # adapted from tensorflow example implemen
             sample weights, not implemented at the moment, by default None
         """
         # call dice coefficient
-        dice = dice_coefficient_tf(y_true, y_pred)
+        dice = dice_coefficient(y_true, y_pred)
         if sample_weight is not None:
             raise NotImplementedError("Different sample weights not implemented")
         # update dice
@@ -50,51 +52,118 @@ class Dice(tf.keras.metrics.Metric):  # adapted from tensorflow example implemen
         return {"name": self.name, "dtype": self.dtype, "num_classes": self.num_classes}
 
 
-### Tensorflow
+class NMI(Metric):
+    """This class implements the normalized mutual information metric
 
+    Global Mutual information loss for image-image pairs.
 
-def dice_coefficient_tf(target, output, smooth=1e-5):
-    """Calculate the dice coefficient, a small factor is applied for smoothing to prevent
-    numerical issues."""
-    axis = tf.range(0, tf.rank(output) - 1)
-    output = tf.cast(output, dtype=tf.float32)
-    target = tf.cast(target, dtype=tf.float32)
-    intersection = tf.reduce_sum(output * target, axis=axis)
-    union = tf.reduce_sum(output, axis=axis) + tf.reduce_sum(target, axis=axis)
-    hard_dice = (2.0 * intersection + smooth) / (union + smooth)
-    hard_dice = tf.reduce_mean(hard_dice)
-    return hard_dice
+    Original Author: Courtney Guo
+    If you use this loss function, please cite the following:
+    Guo, Courtney K. Multi-modal image registration with unsupervised deep learning. MEng. Thesis
+    Unsupervised Learning of Probabilistic Diffeomorphic Registration for Images and Surfaces
+    Adrian V. Dalca, Guha Balakrishnan, John Guttag, Mert R. Sabuncu
+    MedIA: Medial Image Analysis. 2019. eprint arXiv:1903.03545
 
+    Parameters
+    ----------
+    n_bins : int, optional
+        The number of bins, by default 150
+    min_val : int, optional
+        The minimum value of the data range (used to define the bins), by default -1
+    max_val : int, optional
+        The maximum data value, by default 1
+    normalize : bool, optional
+        If the loss should be normalized, it will be divided by the entropy of the
+        ground truth image, by default False
+    sigma_ratio : float, optional
+        Scales how much the contribution is to other bins, by default 0.5
+    clip : bool, optional
+        Clip the images to the range defined by min_val and max_val, otherwise, there
+        can be numerical errors, if a value is not in any of the bins
+    include_endpoints : bool, optional
+        If the endpoints should be included in the bin centers. This should be used
+        for discrete values. By default False.
+    """
 
-def soft_dice_coefficient_tf(target, output, smooth=1e-5):
-    axis = tf.range(0, tf.rank(output) - 1)
-    output = tf.cast(output, dtype=tf.float32)
-    target = tf.cast(target, dtype=tf.float32)
-    intersection = tf.reduce_sum(output * target, axis=axis)
-    union = tf.reduce_sum(tf.square(output), axis=axis) + tf.reduce_sum(
-        tf.square(target), axis=axis
-    )
-    soft_dice = (2.0 * intersection + smooth) / (union + smooth)
-    soft_dice = tf.reduce_mean(soft_dice)
-    return soft_dice
+    def __init__(
+        self,
+        name=None,
+        dtype=None,
+        n_bins=150,
+        min_val=-1,
+        max_val=1,
+        normalize=False,
+        sigma_ratio=0.5,
+        clip=True,
+        include_endpoints=False,
+        **kwargs,
+    ):
+        super().__init__(name, dtype, **kwargs)
+        self.n_bins = n_bins
+        self.min_val = min_val
+        self.max_val = max_val
+        self.normalize = normalize
+        if sigma_ratio < 1e-6:
+            raise ValueError("Sigma ration cannot be too close to 0")
+        self.sigma_ration = sigma_ratio
+        self.clip = clip
+        self.include_endpoints = include_endpoints
+        if self.include_endpoints:
+            bin_centers = np.linspace(min_val, max_val, n_bins, endpoint=True)
+        else:
+            bin_centers = np.linspace(min_val, max_val, n_bins, endpoint=False)
+            bin_centers = bin_centers + (bin_centers[1] - bin_centers[0]) / 2
+        self.bin_centers = tf.constant(bin_centers, dtype=tf.float32)
+        self.sigma = np.mean(np.diff(bin_centers)) * sigma_ratio
+        self.preterm = tf.constant(1 / (2 * np.square(self.sigma)), dtype=tf.float32)
 
+        self.nmi = self.add_weight(name="nmi", initializer="zeros")
+        self.count = self.add_weight(name="count", initializer="zeros")
 
-def tanimoto_coefficient_tf(output, target, smooth=1e-5):
-    axis = tf.range(0, tf.rank(output) - 1)
-    output = tf.cast(output, dtype=tf.float32)
-    target = tf.cast(target, dtype=tf.float32)
-    intersection = tf.reduce_sum(output * target, axis=axis)
-    union = tf.reduce_sum(output, axis=axis) + tf.reduce_sum(target, axis=axis)
-    hard_dice = (intersection + smooth) / (union + smooth)
-    hard_dice = tf.reduce_mean(hard_dice)
-    return hard_dice
+    def get_config(self):
+        return {
+            "n_bins": self.n_bins,
+            "min_val": self.min_val,
+            "max_val": self.max_val,
+            "normalize": self.normalize,
+            "sigma_ratio": self.sigma_ration,
+            "clip": self.clip,
+            "include_endpoints": self.include_endpoints,
+        }
 
+    def update_state(self, y_true: tf.Tensor, y_pred: tf.Tensor, sample_weight=None):
+        """Do the actual calculations
 
-def mean_squared_error_metric_tf(target, output):
-    error = tf.subtract(output, target)
-    squared_error = tf.multiply(error, error)
-    mean_squared_error = tf.reduce_mean(squared_error)
-    return mean_squared_error
+        Parameters
+        ----------
+        y_true : tf.Tensor
+            The ground truth
+        y_pred : tf.Tensor
+            The predicted tensor
+        sample_weight : tf.Tensor, optional
+            sample weights, not implemented at the moment, by default None
+        """
+        # call dice coefficient
+        nmi = calculate_nmi(
+            y_true=y_true,
+            y_pred=y_pred,
+            bin_centers=self.bin_centers,
+            preterm=self.preterm,
+            normalize=self.normalize,
+            name=self.name,
+            clip=self.clip,
+            min_val=self.min_val,
+            max_val=self.max_val,
+        )
+        if sample_weight is not None:
+            raise NotImplementedError("Different sample weights not implemented")
+        # update count
+        self.count.assign_add(nmi.shape[0])
+        # update dice
+        self.nmi.assign_add(tf.reduce_sum(nmi))
+
+    def result(self):
+        return self.nmi / self.count
 
 
 ### SITK
@@ -153,12 +222,12 @@ def hausdorff_metric_sitk(output, target):
 def overlap_measures_sitk(output, target):
     overlap_measures_filter = sitk.LabelOverlapMeasuresImageFilter()
     overlap_measures_filter.Execute(target, output)
-    dice_coefficient = overlap_measures_filter.GetDiceCoefficient()
+    dice_coefficient_sitk = overlap_measures_filter.GetDiceCoefficient()
     volume_similarity = overlap_measures_filter.GetVolumeSimilarity()
     false_negative = overlap_measures_filter.GetFalseNegativeError()
     false_positive = overlap_measures_filter.GetFalsePositiveError()
     iou = overlap_measures_filter.GetJaccardCoefficient()
-    return dice_coefficient, volume_similarity, false_negative, false_positive, iou
+    return dice_coefficient_sitk, volume_similarity, false_negative, false_positive, iou
 
 
 def symmetric_surface_measures_sitk(output, target):

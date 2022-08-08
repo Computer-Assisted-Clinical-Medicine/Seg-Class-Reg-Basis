@@ -23,7 +23,7 @@ from tensorboard.plugins.hparams import api as hp
 
 from . import config as cfg
 from . import loss, tf_utils, utils
-from .metric import Dice
+from .metric import Dice, NMI
 
 # configure logger
 logger = logging.getLogger(__name__)
@@ -65,7 +65,7 @@ class SegBasisNet:
         # policy = tf.keras.mixed_precision.experimental.Policy('mixed_float16')
         # tf.keras.mixed_precision.experimental.set_policy(policy)
 
-        self.custom_objects = {"Dice": Dice}
+        self.custom_objects = {"Dice": Dice, "NMI": NMI}
         if tasks is None:
             tasks = collections.OrderedDict({"seg": "segmentation"})
         if not isinstance(tasks, collections.OrderedDict):
@@ -384,7 +384,7 @@ class SegBasisNet:
                 "discriminator-classification": (),
                 "regression": ("rmse",),
                 "discriminator-regression": (),
-                "autoencoder": ("rmse",),
+                "autoencoder": ("rmse", "nmi"),
             }
 
         metric_objects = self._get_task_metrics(metrics, self.tasks)
@@ -544,8 +544,12 @@ class SegBasisNet:
         Callable
             The metric
         """
+        nmi_params = {}
+        if "loss_parameters" in self.options:
+            nmi_params = self.options["loss_parameters"].get("NMI", {})
         metrics = {
             "dice": lambda: Dice(name="dice", num_classes=cfg.num_classes_seg),
+            "nmi": lambda: NMI(name="nmi", **nmi_params),
             "meanIoU": lambda: tf.keras.metrics.MeanIoU(num_classes=cfg.num_classes_seg),
             "fp": tf.keras.metrics.FalsePositives,
             "fn": tf.keras.metrics.FalseNegatives,
