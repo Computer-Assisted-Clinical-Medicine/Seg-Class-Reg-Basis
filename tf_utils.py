@@ -91,8 +91,6 @@ class KeepBestModel(callbacks.ModelCheckpoint):
         """On epoch end, save the checkpoint if it was better than max_keep and
         delete the worst one.
         """
-        # remove slashed from the logs
-        logs = {key.replace("/", "-"): val for key, val in logs.items()}
         # get the value
         if self.decay is None:
             val = logs[self.monitor]
@@ -227,6 +225,8 @@ class CustomTBCallback(callbacks.TensorBoard):
         If gradients should be written as images, by default False
     write_labels : bool
         If labels should be written as images, by default False
+    ignore : List
+        The indices of the output, that should be ignored
     **kwargs
         All other arguments will be passed on to tf.keras.callbacks.TensorBoard.
     """
@@ -238,6 +238,7 @@ class CustomTBCallback(callbacks.TensorBoard):
         visualization_frequency=5,
         write_grads=False,
         write_labels=False,
+        ignore=None,
         **kwargs,
     ):
         super().__init__(log_dir=log_dir, **kwargs)
@@ -245,6 +246,9 @@ class CustomTBCallback(callbacks.TensorBoard):
         self.visualization_frequency = visualization_frequency
         self.write_grads = write_grads
         self.write_labels = write_labels
+        if ignore is None:
+            ignore = []
+        self.ignore = ignore
 
     @tf.function
     def get_gradients(self, dataset: tf.data.Dataset) -> List[tf.Tensor]:
@@ -291,7 +295,12 @@ class CustomTBCallback(callbacks.TensorBoard):
                     x, y = sample
                     y_pred = self.model(x)
                     write_images(
-                        x, y, y_pred, step=epoch, num_segmentations=self.write_labels
+                        x=x,
+                        y=y,
+                        y_pred=y_pred,
+                        step=epoch,
+                        num_segmentations=self.write_labels,
+                        ignore=self.ignore,
                     )
             # write gradients
             if self.write_grads:
@@ -317,7 +326,7 @@ class CustomTBCallback(callbacks.TensorBoard):
                     )
 
 
-def write_images(x, y, y_pred, step: int, num_segmentations=0):
+def write_images(x, y, y_pred, step: int, num_segmentations=0, ignore=None):
     """Write images for the summary. If 3D data is provided, the central slice
     is used. All channels are written, the labels are written and the
     probabilities. If additional images are provided after the labels, they will
@@ -335,6 +344,8 @@ def write_images(x, y, y_pred, step: int, num_segmentations=0):
         Step number used for slider in tensorboard
     num_segmentations : int, optional
         The number of segmentation labels in the results, by default 0
+    ignore : List, optional
+        Which fields should be ignored in y_pred, by default None
     """
 
     # if it is not a Iterable, make it one
@@ -344,6 +355,8 @@ def write_images(x, y, y_pred, step: int, num_segmentations=0):
         y = (y,)
     if not isinstance(y_pred, tuple) and not isinstance(y_pred, list):
         y_pred = (y_pred,)
+    if ignore is not None:
+        y_pred = tuple(y_p for n, y_p in enumerate(y_pred) if n not in ignore)
 
     dimension = len(x[0].shape) - 2  # subtract one dimension for batches and channels
     with tf.name_scope("Input"):

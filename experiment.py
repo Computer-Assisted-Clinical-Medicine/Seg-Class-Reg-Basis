@@ -645,14 +645,21 @@ class Experiment:
         if not apply_path.exists():
             apply_path.mkdir()
         for file in tqdm(
-            test_files, desc=f'{folder_name} ({apply_name.replace("_", " ")})', unit="file"
+            test_files,
+            desc=f'{folder_name} ({apply_name.replace("_", " ")})',
+            unit="file",
         ):
             f_name = Path(file).name
 
             # do inference
             result_npz = apply_path / f"prediction-{f_name}-{version}.npz"
-            result_image = apply_path / f"prediction-{f_name}-{version}{cfg.file_suffix}"
-            if not result_npz.exists():
+            res_img = apply_path / f"prediction-{f_name}-{version}{cfg.file_suffix}"
+            task_files = [
+                apply_path / f"prediction-{f_name}-{version}_{tsk}{cfg.file_suffix}"
+                for tsk in self.tasks
+                if "discriminator" not in tsk
+            ]
+            if not (result_npz.exists() or np.all([t.exists() for t in task_files])):
                 net.apply(
                     version=version,
                     application_dataset=testloader,
@@ -667,7 +674,7 @@ class Experiment:
                     / f"prediction-{f_name}-{version}-postprocessed{cfg.file_suffix}"
                 )
                 if not postprocessed_image.exists():
-                    self.postprocess(result_image, postprocessed_image)
+                    self.postprocess(res_img, postprocessed_image)
 
         tf.keras.backend.clear_session()
 
@@ -710,6 +717,9 @@ class Experiment:
             raise FileNotFoundError(f"The apply path {apply_path} does not exist.")
 
         for task in self.tasks:
+            if "discriminator" in task:
+                print(f"Discriminator tasks only relevant in training, {task} skipped.")
+                continue
 
             # only evaluate postprocessed files for segmentation
             if task != "segmentation":
@@ -880,6 +890,7 @@ class Experiment:
             logger.info("        Finished Evaluation for %s", file)
         except RuntimeError as err:
             logger.exception("Evaluation failed for %s, %s", file, err)
+            raise err
         return result_metrics
 
     def run_all_folds(self):
@@ -955,7 +966,11 @@ class Experiment:
         for version in self.versions:
             eval_base = f"evaluation-{folder_name}-{version}"
             # do the application and evaluation
-            eval_files = (folddir / f"{eval_base}_test-{tsk}.csv" for tsk in self.tasks)
+            eval_files = (
+                folddir / f"{eval_base}_test-{tsk}.csv"
+                for tsk in self.tasks
+                if "discriminator" not in tsk
+            )
             eval_files_exist = np.all([eval_f.exists() for eval_f in eval_files])
             if eval_files_exist:
                 tqdm.write(f"Already evaluated {version}, skip evaluation.")
@@ -968,7 +983,9 @@ class Experiment:
 
             # evaluate the postprocessed files
             eval_files = (
-                folddir / f"{eval_base}_postprocessed_test-{tsk}.csv" for tsk in self.tasks
+                folddir / f"{eval_base}_postprocessed_test-{tsk}.csv"
+                for tsk in self.tasks
+                if "discriminator" not in tsk
             )
             eval_files_exist = np.all([eval_f.exists() for eval_f in eval_files])
             if not eval_files_exist:
@@ -1039,6 +1056,8 @@ class Experiment:
             for task in self.tasks:
                 # skip postprocessed for classification and regression
                 if "postprocessed" in version and task != "segmentation":
+                    continue
+                if "discriminator" in task:
                     continue
                 # set eval files
                 eval_files = []

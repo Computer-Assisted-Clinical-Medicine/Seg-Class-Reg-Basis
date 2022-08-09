@@ -392,7 +392,7 @@ class SegBasisNet:
         # compile model
         self.model.compile(
             optimizer=tf_utils.get_optimizer(
-                optimizer, l_r, clipvalue=self.options["clipping_value"]
+                optimizer, l_r, clipvalue=self.options["clip_value"]
             ),
             loss=self.outputs["loss"],
             metrics=metric_objects,
@@ -448,6 +448,11 @@ class SegBasisNet:
             )
             callbacks.append(lr_reduce_callback)
 
+        # ignore the latent dimension for the autoencoder
+        if "autoencoder" in self.tasks and len(self.model.outputs) == 2:
+            ignore = [1]
+        else:
+            ignore = None
         # for tensorboard
         tb_callback = tf_utils.CustomTBCallback(
             output_path / "logs",
@@ -460,6 +465,7 @@ class SegBasisNet:
             visualization_dataset=visualization_dataset,
             visualization_frequency=1,
             write_labels=visualize_labels,
+            ignore=ignore,
         )
         callbacks.append(tb_callback)
 

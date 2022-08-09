@@ -665,7 +665,8 @@ class MutualInformation(losses.Loss):
         self.debug = debug
 
     def call(self, y_true, y_pred):
-        return calculate_nmi(
+        # make in negative, so that lower values are better
+        return -calculate_nmi(
             y_true=y_true,
             y_pred=y_pred,
             bin_centers=self.bin_centers,
