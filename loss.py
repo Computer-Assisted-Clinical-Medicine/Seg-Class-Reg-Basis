@@ -89,6 +89,9 @@ def get_loss(loss_name: str, loss_parameters: dict = None) -> Callable:
     if loss_name == "NMI":
         return MutualInformation(**loss_parameters)
 
+    if loss_name == "CON-OUT":
+        return ConstrainOutput(**loss_parameters)
+
     raise ValueError(loss_name, "is not a supported loss function.")
 
 
@@ -689,4 +692,55 @@ class MutualInformation(losses.Loss):
             "include_endpoints": self.include_endpoints,
             "reduction": self.reduction,
             "name": self.name,
+        }
+
+
+class ConstrainOutput(losses.Loss):
+    """Constrain the output to be between two values, so the loss will be zero,
+    if it is between the two values, otherwise, it will be scaling * overlap.
+
+    Parameters
+    ----------
+    reduction : auto, optional
+        Set by tensorflow, options are 'auto', 'none', 'sum', 'sum_over_batch_size', by default auto
+    name : str, optional
+        The name of the loss, by default "ConstrainOutput"
+    min_val : float, optional
+        The minimum value, by default 0.0
+    max_val : float, optional
+        The maximum value, by default 1.0
+    scaling : float, optional
+        By which value to scale the loss, by default 1
+    """
+
+    def __init__(
+        self,
+        reduction="auto",
+        name="ConstrainOutput",
+        min_val=0.0,
+        max_val=1.0,
+        scaling=1.0,
+    ):
+        self.min_val = min_val
+        self.min_val_tensor = tf.convert_to_tensor(self.min_val, dtype=tf.float32)
+        self.max_val = max_val
+        self.max_val_tensor = tf.convert_to_tensor(self.max_val, dtype=tf.float32)
+        self.scaling = scaling
+        self.scaling_tensor = tf.convert_to_tensor(self.scaling, dtype=tf.float32)
+        if self.min_val >= self.max_val:
+            raise ValueError("Minimum value should be smaller than the maximum value")
+        super().__init__(reduction, name)
+
+    def call(self, _, y_pred):
+        lower_constraint = tf.nn.relu(self.min_val_tensor - y_pred)
+        upper_constraint = tf.nn.relu(y_pred - self.max_val_tensor)
+        return self.scaling_tensor * (lower_constraint + upper_constraint)
+
+    def get_config(self):
+        return {
+            "reduction": self.reduction,
+            "name": self.name,
+            "min_val": self.min_val,
+            "max_val": self.max_val,
+            "scaling": self.scaling,
         }

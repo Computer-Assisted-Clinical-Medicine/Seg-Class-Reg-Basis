@@ -52,33 +52,29 @@ unsafe-load-any-extension=no
 confidence=
 
 
-disable=bad-continuation,
-        fixme,
+disable=fixme,
         len-as-condition,
         inherit-non-class,
         no-else-return,
         no-method-argument,
         no-self-argument,
-        no-self-use,
-        relative-beyond-top-level,
         too-many-function-args,
         trailing-whitespace,
         unnecessary-lambda,
-        unused-argument
+        unused-argument,
+        invalid-unary-operand-type
 # Rationales:
-#   bad-continuation: Aligned indentation is bad for maintenance and version control
 #   fixme: "Yes, yes, I know! That's why I put it there!"
 #   inherit-non-class: false positives on interface declarations
 #   len-as-condition: I prefer the extra type-checking and documentation resulting from using len
 #   no-else-return: it rejects "if x return y else return z" which is silly
 #   no-method-argument: false positives on interface declarations
 #   no-self-argument: false positives on interface declarations
-#   no-self-use: Doesn't understand that polymorphism means methods
-#   relative-beyond-top-level: Ok in submodule
 #   too-many-function-args: false positives on interface usage (note that this is not "more args than style limit" this is "more args at call than parameters at declaration")
 #   trailing-whitespace: indenting blank lines is more sensible than the opposite, and trailing whitespace is mostly not worth the trouble to keep neat anyway
 #   unnecessary-lambda: false positives (complains about passing functions that happens to be constant)
 #   unused-argument: apparently cannot be prevented when an implementation legitimately does not use an arg
+#   invalid-unary-operand-type: does not understand if not None
 
 
 [REPORTS]
@@ -136,7 +132,7 @@ attr-naming-style=snake_case
 
 # Bad variable names which should always be refused, separated by a comma.
 bad-names=foo,
-          bar,
+          # bar, bar is ok when using to name (graph bars)
           baz,
           toto,
           tutu,
@@ -302,6 +298,9 @@ ignore-docstrings=yes
 
 # Ignore imports when computing similarities.
 ignore-imports=yes
+
+# Ignore the signatures of functions
+ignore-signatures=yes
 
 # Minimum lines number of a similarity.
 min-similarity-lines=6

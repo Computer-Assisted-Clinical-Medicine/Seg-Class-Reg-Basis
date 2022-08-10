@@ -76,3 +76,22 @@ def test_nmi_images():
     )
     assert np.allclose(diff, diff_sk, atol=0.03)
     return
+
+
+def test_constraint_output():
+    """Test the constraint output by just calculating a few values"""
+    standard_loss = loss.ConstrainOutput(reduction="none")
+    test_numbers = tf.convert_to_tensor([-0.3, -0.1, 0.1, 0.5, 0.8, 1.0, 1.2, 1.5, 10])
+    target_numbers = np.array([0.3, 0.1, 0, 0, 0, 0, 0.2, 0.5, 9])
+    loss_vals = standard_loss(None, test_numbers).numpy()
+    assert np.allclose(loss_vals, target_numbers)
+    # do the whole thing with scaling
+    scaled_loss = loss.ConstrainOutput(reduction="none", scaling=2)
+    loss_vals = scaled_loss(None, test_numbers).numpy()
+    assert np.allclose(loss_vals, 2 * target_numbers)
+    # try different min and max values
+    range_loss = loss.ConstrainOutput(reduction="none", min_val=-1, max_val=2)
+    test_numbers = tf.convert_to_tensor([-1.3, -1.1, 0.1, 0.5, 0.8, 1.0, 2.2, 2.5, 10])
+    target_numbers = np.array([0.3, 0.1, 0, 0, 0, 0, 0.2, 0.5, 8])
+    loss_vals = range_loss(None, test_numbers).numpy()
+    assert np.allclose(loss_vals, target_numbers)
