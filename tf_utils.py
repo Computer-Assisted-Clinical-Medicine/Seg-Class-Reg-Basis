@@ -282,9 +282,10 @@ class CustomTBCallback(callbacks.TensorBoard):
         with self._train_writer.as_default():
             # write learning rate
             with tf.name_scope("learning_rate"):
-                tf.summary.scalar(
-                    "learning_rate", self.model.optimizer.learning_rate, step=epoch
-                )
+                l_r = self.model.optimizer.learning_rate
+                if callable(l_r):
+                    l_r = l_r(self.params["steps"] * epoch)
+                tf.summary.scalar("learning_rate", l_r, step=epoch)
             # only write on every epoch divisible by visualization_frequency
             if epoch % self.visualization_frequency != 0:
                 return

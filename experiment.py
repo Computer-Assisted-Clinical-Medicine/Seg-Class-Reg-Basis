@@ -592,6 +592,7 @@ class Experiment:
 
         net: segbasisnet.SegBasisNet = self.hyper_parameters["architecture"](
             loss_name=self.hyper_parameters["loss"],
+            n_epochs=self.hyper_parameters["train_parameters"]["epochs"],
             # add initialization parameters
             **self.hyper_parameters["network_parameters"],
         )

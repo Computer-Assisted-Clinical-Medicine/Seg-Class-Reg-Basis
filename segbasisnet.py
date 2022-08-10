@@ -20,6 +20,7 @@ import numpy as np
 import SimpleITK as sitk
 import tensorflow as tf
 from tensorboard.plugins.hparams import api as hp
+from tensorflow.keras.optimizers import schedules
 
 from . import config as cfg
 from . import loss, tf_utils, utils
@@ -252,6 +253,40 @@ class SegBasisNet:
             loss_parameters = None
         return loss.get_loss(loss_name, loss_parameters)
 
+    def get_lr_scheduler(
+        self, schedule_type: str, initial_rate: float, final_rate: float
+    ) -> schedules.LearningRateSchedule:
+        """Get the learning rate scheduler, the decay rate is calculated using
+        the initial and final learning rate. So far, only exponential is implemented
+
+        Parameters
+        ----------
+        schedule_type : str
+            The type of scheduler
+        initial_rate : float
+            The initial learning rate
+        final_rate : float
+            The final learning rate (at the end of training)
+
+        Returns
+        -------
+        schedules.LearningRateSchedule
+            The scheduler which can be passed to the optimizer
+        """
+        iter_per_epoch = cfg.samples_per_volume * cfg.num_files // cfg.batch_size_train
+        n_epochs = self.options["n_epochs"]
+        if schedule_type == "exponential":
+            decay_rate = (final_rate / initial_rate) ** (1 / n_epochs)
+            lr_schedule = schedules.ExponentialDecay(
+                initial_learning_rate=initial_rate,
+                decay_steps=iter_per_epoch,
+                decay_rate=decay_rate,
+            )
+        else:
+            raise ValueError(f"LR scheduler {schedule_type} unknown")
+        assert np.isclose(lr_schedule(n_epochs * iter_per_epoch), final_rate)
+        return lr_schedule
+
     def plot_model(self, save_dir: Path):
         """Plot the model to the save dir
 
@@ -388,6 +423,9 @@ class SegBasisNet:
             }
 
         metric_objects = self._get_task_metrics(metrics, self.tasks)
+
+        if isinstance(l_r, (list, tuple)):
+            l_r = self.get_lr_scheduler(*l_r)
 
         # compile model
         self.model.compile(
