@@ -487,8 +487,8 @@ class SegBasisNet:
             callbacks.append(lr_reduce_callback)
 
         # ignore the latent dimension for the autoencoder
-        if "autoencoder" in self.tasks and len(self.model.outputs) == 2:
-            ignore = [1]
+        if "autoencoder" in self.tasks and len(self.model.outputs) > 1:
+            ignore = list(range(1, len(self.model.outputs)))
         else:
             ignore = None
         # for tensorboard
