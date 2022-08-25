@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import SimpleITK as sitk
 
-from SegmentationNetworkBasis import config as cfg
+from SegClassRegBasis import config as cfg
 
 
 def create_test_files(test_path=Path("test_data"), n_files=5) -> list:
