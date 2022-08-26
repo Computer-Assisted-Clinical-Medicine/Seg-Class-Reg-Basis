@@ -13,8 +13,6 @@ import pandas as pd
 import SimpleITK as sitk
 import tensorflow as tf
 
-from .experiment import Experiment
-
 # configure logger
 logger = logging.getLogger(__name__)
 
@@ -669,7 +667,7 @@ def export_batch_file(filename, commands):
     os.chmod(filename, stat.S_IRWXU)
 
 
-def export_powershell_scripts(script_dir: Path, experiments: list[Experiment]):
+def export_powershell_scripts(script_dir: Path, experiments: list):
     """Export power shell script to start the different folds and to start tensorboard.
 
     Parameters
