@@ -13,6 +13,8 @@ import pandas as pd
 import SimpleITK as sitk
 import tensorflow as tf
 
+from .experiment import Experiment
+
 # configure logger
 logger = logging.getLogger(__name__)
 
@@ -667,24 +669,23 @@ def export_batch_file(filename, commands):
     os.chmod(filename, stat.S_IRWXU)
 
 
-def export_powershell_scripts(experiment_group: str, experiments: list):
+def export_powershell_scripts(script_dir: Path, experiments: list[Experiment]):
     """Export power shell script to start the different folds and to start tensorboard.
 
     Parameters
     ----------
-    experiment_group : str
-        The name of the experiment group (used as folder in the experiment_dir)
+    script_dir : Path
+        The directory where the scripts should be placed
     experiments : List[Experiment]
         The experiments to export
     """
     # set the environment (might be changed for each machine)
     first_exp = experiments[0]
     experiment_dir = first_exp.experiment_dir
-    exp_group_dir = experiment_dir / experiment_group
     data_dir = Path(os.environ["data_dir"])
     ps_script_set_env = experiment_dir / "set_env.ps1"
-    script_dir = Path(sys.argv[0]).resolve().parent
-    command = f'$env:script_dir="{script_dir}"\n'
+    python_script_dir = Path(sys.argv[0]).resolve().parent
+    command = f'$env:script_dir="{python_script_dir}"\n'
     command += "$env:script_dir=$env:script_dir -replace ' ', '` '\n"
     command += f'$env:data_dir="{data_dir}"\n'
     command += f'$env:experiment_dir="{experiment_dir}"\n'
@@ -697,12 +698,15 @@ def export_powershell_scripts(experiment_group: str, experiments: list):
         with open(ps_script_set_env, "w+", encoding="utf8") as powershell_file_tb:
             powershell_file_tb.write(command)
 
-    ps_script = exp_group_dir / "start.ps1"
-    ps_script_tb = exp_group_dir / "start_tensorboard.ps1"
+    ps_script = script_dir / "start.ps1"
+    ps_script_tb = script_dir / "start_tensorboard.ps1"
 
     # make a powershell command, add env
-    command = "$script_parent = (get-item $PSScriptRoot ).parent.FullName\n"
-    command += '$set_env="${script_parent}\\set_env.ps1"\n'
+    if script_dir.resolve() == experiment_dir.resolve():
+        command = '$set_env=".\\set_env.ps1"\n'
+    else:
+        command = "$script_parent = (get-item $PSScriptRoot ).parent.FullName\n"
+        command += '$set_env="${script_parent}\\set_env.ps1"\n'
     command += "$set_env=$set_env -replace ' ', '` '\n"
     command += "Invoke-Expression ${set_env}\n"
     command += 'Write-Output "Data dir: $env:data_dir"\n'
@@ -717,7 +721,11 @@ def export_powershell_scripts(experiment_group: str, experiments: list):
     # tensorboard command (up to here, it is the same)
     command_tb = command
     command_tb += "$start='tensorboard --logdir=\"' + "
-    command_tb += f"${{env:experiment_dir}} + '\\{experiment_group}\"'\n"
+    if script_dir.resolve() == experiment_dir.resolve():
+        rel_dir = ""
+    else:
+        rel_dir = script_dir.relative_to(experiment_dir)
+    command_tb += f"${{env:experiment_dir}} + '\\{rel_dir}\"'\n"
     command_tb += "Write-Output $start\n"
     command_tb += "Invoke-Expression ${start}\n"
 
@@ -725,8 +733,7 @@ def export_powershell_scripts(experiment_group: str, experiments: list):
     command += '$script=${env:script_dir} + "\\run_single_experiment.py"\n'
     for exp in experiments:
         command += f'\n\nWrite-Output "starting with {exp.name}"\n'
-        exp_p_rel = f"\\{experiment_group}\\{exp.output_path.name}"
-        command += f'$output_path=${{env:experiment_dir}} + "{exp_p_rel}"\n'
+        command += f'$output_path=${{env:experiment_dir}} + "\\{exp.output_path_rel}"\n'
         for fold_num in range(exp.folds):
             command += f'$command="python " + ${{script}} + " -f {fold_num} -e " + \'${{output_path}}\'\n'
             command += "Invoke-Expression ${command}\n"
@@ -742,7 +749,7 @@ def export_powershell_scripts(experiment_group: str, experiments: list):
     print(f"To run tensorboard, execute {ps_script_tb}")
 
 
-def export_experiments_run_files(experiment_group: str, experiments: list):
+def export_experiments_run_files(script_dir: Path, experiments: list):
     """Export the files to run the experiments. These are first the hyperparameter
     comparison files and then depending on the environment (Windows or Linux cluster),
     either bash script to submit slurm jobs or powershell scripts to start the
@@ -750,18 +757,14 @@ def export_experiments_run_files(experiment_group: str, experiments: list):
 
     Parameters
     ----------
-    experiment_group : str
-        The name of the experiment group (used as folder in the experiment_dir)
+    script_dir : Path
+        The directory where the scripts should be placed
     experiments : List[Experiment]
         The experiments to export
     """
 
-    first_exp = experiments[0]
-    experiment_dir = first_exp.experiment_dir
-    exp_group_dir = experiment_dir / experiment_group
-
     # export all hyperparameters
-    export_hyperparameters(experiments, exp_group_dir)
+    export_hyperparameters(experiments, script_dir)
 
     # if on cluster, export slurm files
     if "CLUSTER" in os.environ:
@@ -772,7 +775,7 @@ def export_experiments_run_files(experiment_group: str, experiments: list):
         for exp in experiments:
             slurm_files.append(exp.export_slurm_file(working_dir))
 
-        start_all_batch = exp_group_dir / "start_all_jobs.sh"
+        start_all_batch = script_dir / "start_all_jobs.sh"
         export_batch_file(
             filename=start_all_batch,
             commands=[f"sbatch {f}" for f in slurm_files],
@@ -788,4 +791,4 @@ def export_experiments_run_files(experiment_group: str, experiments: list):
         print(f"To start the training, execute {start_all_batch}")
     # if on local computer, export powershell start file
     else:
-        export_powershell_scripts(experiment_group, experiments)
+        export_powershell_scripts(script_dir, experiments)
