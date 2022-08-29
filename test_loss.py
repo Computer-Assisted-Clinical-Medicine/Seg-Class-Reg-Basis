@@ -5,7 +5,11 @@ import tensorflow as tf
 from . import loss
 
 
-def assign_bin_numbers(x: np.array, bin_centers: np.array):
+def to_tensor(x: tf.Tensor):
+    return tf.convert_to_tensor(x, dtype=tf.float32)
+
+
+def assign_bin_numbers(x: np.ndarray, bin_centers: np.ndarray):
     x = x.reshape(-1, 1)
     bin_centers = bin_centers.reshape(1, bin_centers.size)
     diff = np.square(x - bin_centers)
@@ -25,10 +29,9 @@ def test_nmi_abstract():
         sigma_ratio=1e-5,
     )
     assert np.allclose(nmi_loss.bin_centers, np.arange(4))
-    to_tensor = lambda x: tf.convert_to_tensor(np.array(x).reshape(1, -1), dtype=tf.float32)
-    no_mi = nmi_loss(to_tensor([0, 0, 0, 0]), to_tensor([0, 1, 2, 3]))
+    no_mi = nmi_loss(to_tensor([[0, 0, 0, 0]]), to_tensor([[0, 1, 2, 3]]))
     assert np.isclose(0, no_mi, atol=1e-5)
-    high_mi = nmi_loss(to_tensor([0, 0, 1, 1]), to_tensor([0, 0, 1, 1]))
+    high_mi = nmi_loss(to_tensor([[0, 0, 1, 1]]), to_tensor([[0, 0, 1, 1]]))
     assert np.isclose(1, high_mi, atol=1e-5)
     return
 
@@ -48,9 +51,6 @@ def test_nmi_images():
         debug=True,
         sigma_ratio=1e-1,  # then it is the same as in sk-learn, but lower creates too high numbers
     )
-
-    to_tensor = lambda x: tf.convert_to_tensor(x, dtype=tf.float32)
-
     img_shape = (1, 64, 64, 1)
     n_voxels = np.prod(img_shape)
     regular_img = np.linspace(0, 1, n_voxels).reshape(img_shape)

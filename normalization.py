@@ -400,7 +400,7 @@ class HistogramMatching(Normalization):
         self, quantiles: List[float] = None, mask_quantile=0, center_volume=None
     ) -> None:
         if quantiles is None:
-            quantiles = np.concatenate(([0.01], np.arange(0.10, 0.91, 0.10), [0.99]))
+            quantiles = np.concatenate(([0.01], list(np.arange(0.10, 0.91, 0.10)), [0.99]))
         self.quantiles = np.array(quantiles)
         if center_volume is None:
             center_volume = [180, 180, 100]
@@ -511,6 +511,7 @@ class HistogramMatching(Normalization):
         # get the clipped image
         image_clipped = clip_outliers(image_np, self.quantiles[0], self.quantiles[-1])
 
+        assert self.standard_scale is not None
         # create interpolation function (with extremes of standard scale as fill values)
         f = interp1d(
             landmarks,
@@ -614,7 +615,7 @@ class HMQuantile(HistogramMatching):
         self, quantiles: List[float] = None, mask_quantile=0, center_volume=None
     ) -> None:
         if quantiles is None:
-            quantiles = np.concatenate(([0.01], np.arange(0.10, 0.91, 0.10), [0.99]))
+            quantiles = np.concatenate(([0.01], list(np.arange(0.10, 0.91, 0.10)), [0.99]))
         self.quantiles = np.array(quantiles)
         super().__init__(
             quantiles=quantiles, mask_quantile=mask_quantile, center_volume=center_volume

@@ -2,7 +2,6 @@
 Preprocess the input images
 """
 import logging
-import os
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
@@ -21,13 +20,13 @@ class NoLabelsInOverlap(Exception):
         super().__init__("Labels were not in the overlapping region")
 
 
-def load_image(path: os.PathLike):
+def load_image(path: Path):
     if not path.exists():
         raise FileNotFoundError(f"{path} not found")
     return sitk.ReadImage(str(path))
 
 
-def save_image(image: sitk.Image, path: os.PathLike):
+def save_image(image: sitk.Image, path: Path):
     sitk.WriteImage(image, str(path))
 
 

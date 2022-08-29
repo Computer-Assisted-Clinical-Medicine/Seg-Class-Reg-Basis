@@ -5,7 +5,7 @@ import copy
 import logging
 import os
 from pathlib import Path, PurePath
-from typing import Any, Dict, Iterable, List, Optional, OrderedDict, Tuple
+from typing import Any, Collection, Dict, Iterable, List, Optional, OrderedDict
 
 import numpy as np
 import pandas as pd
@@ -307,9 +307,9 @@ class Experiment:
             test_folds = np.array_split(all_indices, self.folds)
         else:
             # otherwise, us cfg.data_train_split
-            test_folds = all_indices[
-                int(all_indices.size * cfg.data_train_split) :
-            ].reshape(1, -1)
+            test_folds = np.array(
+                all_indices[int(all_indices.size * cfg.data_train_split) :].reshape(1, -1)
+            )
 
         for fold in range(0, self.folds):
             # test is the section
@@ -466,7 +466,7 @@ class Experiment:
                 1: float(col_max),
             }
 
-    def convert_dataset(self, dataset: Dict) -> Tuple[Dict, List[str]]:
+    def convert_dataset(self, dataset: Dict) -> Dict:
         """Convert the dataset to a format that can be used to train the neural
         network. The classification columns will be converted to one-hot encoding
         and the regression columns to a normalized numeric value. The image and
@@ -500,7 +500,7 @@ class Experiment:
                     list(values.values()), list(values.keys())
                 )
 
-        train_dataset = {}
+        train_dataset: Dict[str, Any] = {}
         for patient, data in dataset.items():
             train_dataset[patient] = {}
             if "image" in data:
@@ -526,16 +526,16 @@ class Experiment:
                 train_dataset[patient]["autoencoder"] = data["autoencoder"]
         return train_dataset
 
-    def training(self, folder_name: str, train_files: List, vald_files: List):
+    def training(self, folder_name: str, train_files: Collection, vald_files: Collection):
         """Do the actual training
 
         Parameters
         ----------
         folder_name : str
             Training output will be in the output path in this subfolder
-        train_files : List
+        train_files : Collection
             List of training files as string
-        vald_files : List
+        vald_files : Collection
             List of validation files as string
         """
         tf.keras.backend.clear_session()
@@ -599,7 +599,7 @@ class Experiment:
         # Train the network with the dataset iterators
         logger.info("Started training of %s", folder_name)
         net.train(
-            base_output_path=str(self.output_path),
+            base_output_path=self.output_path,
             folder_name=folder_name,
             training_dataset=training_dataset,
             validation_dataset=validation_dataset,
@@ -786,7 +786,7 @@ class Experiment:
         # see that the labels are there
         if not "labels" in self.data_set[file]:
             logger.info("No labels found for %s", file)
-            return None
+            return {}
         label_path = self.experiment_dir / self.data_set[file]["labels"]
         if not label_path.exists():
             logger.info("Label %s does not exists. It will be skipped", label_path)
@@ -918,8 +918,8 @@ class Experiment:
             return gpu
 
         folder_name = self.fold_dir_names[fold]
-        folddir = self.output_path / folder_name
-        logger.info("workingdir is %s", folddir)
+        fold_dir = self.output_path / folder_name
+        logger.info("workingdir is %s", fold_dir)
 
         tqdm.write(
             f"Starting with {self.name} {folder_name} (Fold {fold+1} of {self.folds})"
@@ -929,8 +929,8 @@ class Experiment:
         vald_files = np.loadtxt(self.datasets[fold]["vald"], dtype="str", delimiter=",")
         test_files = np.loadtxt(self.datasets[fold]["test"], dtype="str", delimiter=",")
 
-        if not folddir.exists():
-            folddir.mkdir()
+        if not fold_dir.exists():
+            fold_dir.mkdir()
 
         cfg.num_files = len(train_files)
         assert cfg.number_of_vald == len(vald_files), "Wrong number of valid files"
@@ -955,7 +955,7 @@ class Experiment:
             cfg.batch_size_train = cfg.samples_per_volume * cfg.num_files
 
         # try the actual training
-        model_result = folddir / "models" / "model-final"
+        model_result = fold_dir / "models" / "model-final"
         if self.restart is False and model_result.exists():
             tqdm.write("Already trained, skip training.")
             logger.info("Already trained, skip training.")
@@ -968,7 +968,7 @@ class Experiment:
             eval_base = f"evaluation-{folder_name}-{version}"
             # do the application and evaluation
             eval_files = (
-                folddir / f"{eval_base}_test-{tsk}.csv"
+                fold_dir / f"{eval_base}_test-{tsk}.csv"
                 for tsk in self.tasks
                 if "discriminator" not in tsk
             )
@@ -984,7 +984,7 @@ class Experiment:
 
             # evaluate the postprocessed files
             eval_files = (
-                folddir / f"{eval_base}_postprocessed_test-{tsk}.csv"
+                fold_dir / f"{eval_base}_postprocessed_test-{tsk}.csv"
                 for tsk in self.tasks
                 if "discriminator" not in tsk
             )
@@ -997,7 +997,7 @@ class Experiment:
             # evaluate the external set if present
             if self.external_test_set is not None:
                 eval_files = (
-                    folddir / f"{eval_base}_external_testset-{tsk}.csv"
+                    fold_dir / f"{eval_base}_external_testset-{tsk}.csv"
                     for tsk in self.tasks
                 )
                 eval_files_exist = np.all([eval_f.exists() for eval_f in eval_files])
@@ -1022,7 +1022,7 @@ class Experiment:
                     )
                 # also evaluate the postprocessed version
                 eval_files = (
-                    folddir / f"{eval_base}_postprocessed_external_testset-{tsk}.csv"
+                    fold_dir / f"{eval_base}_postprocessed_external_testset-{tsk}.csv"
                     for tsk in self.tasks
                 )
                 eval_files_exist = np.all([eval_f.exists() for eval_f in eval_files])

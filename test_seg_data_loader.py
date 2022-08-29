@@ -24,7 +24,7 @@ def set_seeds():
     tf.random.set_seed(42)
 
 
-def get_loader(name, file_dict, precent_obj=0.33):
+def get_loader(name, file_dict, percent_obj=0.33):
     """
     Get the data loader using the specified module, normalization method and
     object percentage.
@@ -32,12 +32,12 @@ def get_loader(name, file_dict, precent_obj=0.33):
     # generate loader
     if name == "train":
         data_loader = SegBasisLoader(
-            name="training_loader", frac_obj=precent_obj, file_dict=file_dict
+            name="training_loader", frac_obj=percent_obj, file_dict=file_dict
         )
     elif name == "vald":
         data_loader = SegBasisLoader(
             mode=SegBasisLoader.MODES.VALIDATE,
-            frac_obj=precent_obj,
+            frac_obj=percent_obj,
             name="validation_loader",
             file_dict=file_dict,
         )
@@ -151,7 +151,7 @@ def set_parameters_according_to_dimension(
         ]
 
         # set sample numbers
-        # most patches should cover the whole tumore, so a lower sample number
+        # most patches should cover the whole tumor, so a lower sample number
         # can be used
         cfg.samples_per_volume = 8
         cfg.batch_capacity_train = (
@@ -219,7 +219,7 @@ names = [
 frac_objects = [0, 0.3, 1]
 n_class = [0, 1, 5, 10]
 n_reg = [0, 1, 5, 10]
-load_labels = [True, False]
+load_labels_var = [True, False]
 
 
 @pytest.mark.parametrize("dimension", dimensions)
@@ -227,7 +227,7 @@ load_labels = [True, False]
 @pytest.mark.parametrize("frac_obj", frac_objects)
 @pytest.mark.parametrize("n_classification", n_class)
 @pytest.mark.parametrize("n_regression", n_reg)
-@pytest.mark.parametrize("load_labels", load_labels)
+@pytest.mark.parametrize("load_labels", load_labels_var)
 def test_functions(dimension, name, frac_obj, n_classification, n_regression, load_labels):
     """Test the individual functions contained in the wrapper.
 
@@ -511,15 +511,15 @@ if __name__ == "__main__":
         for mod_name in names:
             for n_c in n_class:
                 for n_r in n_reg:
-                    for ll in load_labels:
+                    for ll in load_labels_var:
                         if ll:
-                            fr_obj = 0.4
+                            FR_OBJ = 0.4
                         else:
-                            fr_obj = 0
+                            FR_OBJ = 0
                         test_functions(
                             dim,
                             mod_name,
-                            frac_obj=fr_obj,
+                            frac_obj=FR_OBJ,
                             n_classification=n_c,
                             n_regression=n_r,
                             load_labels=ll,
@@ -527,7 +527,7 @@ if __name__ == "__main__":
                         test_wrapper(
                             dim,
                             mod_name,
-                            frac_obj=fr_obj,
+                            frac_obj=FR_OBJ,
                             n_classification=n_c,
                             n_regression=n_r,
                         )

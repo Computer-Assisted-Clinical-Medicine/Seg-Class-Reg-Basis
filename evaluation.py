@@ -2,7 +2,6 @@
 Collection of functions to evaluate and plot the results.
 """
 import logging
-import os
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -159,8 +158,8 @@ def evaluate_classification(
     # reverse the mapping dictionary to get the original labels
     map_dict_rev = {v: k for k, v in map_dict.items()}
     pred_mean = predictions.mean(axis=tuple(range(predictions.ndim - 1)))
-    class_prediction = map_dict_rev[np.argmax(pred_mean)]
-    metrics_dict["accuracy"] = int(class_prediction == ground_truth)
+    class_prediction = map_dict_rev[int(np.argmax(pred_mean))]
+    metrics_dict["accuracy"] = float(class_prediction == ground_truth)
     metrics_dict["top_prediction"] = class_prediction
     metrics_dict["ground_truth"] = ground_truth
     for num, prob_val in enumerate(pred_mean):
@@ -395,30 +394,28 @@ def calculate_regression_metrics(prediction: np.ndarray, ground_truth: np.ndarra
     return metrics_dict
 
 
-def combine_evaluation_results_from_folds(results_path, eval_files: List):
+def combine_evaluation_results_from_folds(results_path: Path, eval_files: List[Path]):
     """Combine the results of the individual folds into one file and calculate
     the means and standard deviations in separate files
 
     Parameters
     ----------
-    results_path : Pathlike
+    results_path : Path
         The path where the results should be written
-    eval_files : List
+    eval_files : List[Path]
         A list of the eval files
     """
     if len(eval_files) == 0:
         logger.info("Eval files empty, nothing to combine")
         return
 
-    if not os.path.exists(results_path):
-        os.mkdir(results_path)
+    if not results_path.exists():
+        results_path.mkdir()
 
-    _, experiment = os.path.split(results_path)
-    eval_mean_file_path = os.path.join(
-        results_path, "evaluation-mean-" + experiment + ".csv"
-    )
-    eval_std_file_path = os.path.join(results_path, "evaluation-std-" + experiment + ".csv")
-    all_statistics_path = os.path.join(results_path, "evaluation-all-files.csv")
+    experiment = results_path.name
+    eval_mean_file_path = results_path / ("evaluation-mean-" + experiment + ".csv")
+    eval_std_file_path = results_path / ("evaluation-std-" + experiment + ".csv")
+    all_statistics_path = results_path / "evaluation-all-files.csv"
 
     statistics_list = []
     for eval_f in eval_files:

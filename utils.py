@@ -295,7 +295,7 @@ def export_hyperparameters(experiments, experiment_dir):
 
 
 def gather_results(
-    experiment_dir: os.PathLike,
+    experiment_dir: Path,
     task: str,
     external=False,
     postprocessed=False,
@@ -325,7 +325,6 @@ def gather_results(
     pd.DataFrame
         The results with all metrics for all files
     """
-    experiment_dir = Path(experiment_dir)
     experiments_file = experiment_dir / "experiments.json"
 
     if external:
@@ -390,7 +389,7 @@ def gather_results(
 
 
 def gather_training_data(
-    experiment_dir: os.PathLike,
+    experiment_dir: Path,
 ) -> pd.DataFrame:
     """Collect all training data from all experiments.
 
@@ -404,7 +403,6 @@ def gather_training_data(
     pd.DataFrame
         The results with all metrics for all files
     """
-    experiment_dir = Path(experiment_dir)
     experiments_file = experiment_dir / "experiments.json"
 
     hparams = pd.read_json(experiments_file)
@@ -680,6 +678,7 @@ def export_powershell_scripts(script_dir: Path, experiments: list):
     # set the environment (might be changed for each machine)
     first_exp = experiments[0]
     experiment_dir = first_exp.experiment_dir
+    assert isinstance(experiment_dir, Path)
     data_dir = Path(os.environ["data_dir"])
     ps_script_set_env = experiment_dir / "set_env.ps1"
     python_script_dir = Path(sys.argv[0]).resolve().parent
@@ -722,7 +721,7 @@ def export_powershell_scripts(script_dir: Path, experiments: list):
     if script_dir.resolve() == experiment_dir.resolve():
         rel_dir = ""
     else:
-        rel_dir = script_dir.relative_to(experiment_dir)
+        rel_dir = str(script_dir.relative_to(experiment_dir))
     command_tb += f"${{env:experiment_dir}} + '\\{rel_dir}\"'\n"
     command_tb += "Write-Output $start\n"
     command_tb += "Invoke-Expression ${start}\n"

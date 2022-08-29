@@ -133,7 +133,7 @@ class SegBasisLoader:
 
         self.dshapes = None
         self.dtypes = None
-        self.n_files = None
+        self.n_files: Optional[int] = None
 
         self.n_inputs = None
 
@@ -216,7 +216,9 @@ class SegBasisLoader:
         self.data_rank = len(image_shape)
         assert self.data_rank in [3, 4], "The rank should be 3 or 4."
 
-    def __call__(self, file_list: List, batch_size: int, n_epochs=50) -> tf.data.Dataset:
+    def __call__(
+        self, file_list: Collection, batch_size: int, n_epochs=50
+    ) -> tf.data.Dataset:
         """This function operates as follows,
         - Generates Tensor of strings from the file_list
         - Creates file_list_ds dataset from the Tensor of strings.
@@ -360,7 +362,8 @@ class SegBasisLoader:
         List[Any]
             The list
         """
-        output = []
+        output: List[tuple] = []
+        assert self.n_inputs is not None
         # if there is more than 1 input, turn it into a tuple
         if self.n_inputs > 1:
             output.append(tuple((ds for ds in datasets[: self.n_inputs])))
@@ -421,10 +424,11 @@ class SegBasisLoader:
                 raise
             return samples_np
 
-        ex = tf.py_function(
+        ex: tf.Tensor = tf.py_function(
             get_sample_tensors_from_file_name, [id_data_set], self.dtypes
         )  # use python function in tensorflow
 
+        assert self.dshapes is not None
         tensors = []
         # set shape of tensors for downstream inference of shapes
         for tensor_shape, sample_shape in zip(ex, self.dshapes):
@@ -608,6 +612,7 @@ class SegBasisLoader:
         # calculate the maximum padding, so that at least three quarters in
         # each dimension is inside the image
         # sample shape is without the number of channels
+        assert self.dshapes is not None
         if self.data_rank == 4:
             sample_shape = np.array(self.dshapes[0][:-1])
         # if the rank is three, add a dimension for the z-extent
@@ -746,7 +751,7 @@ class SegBasisLoader:
             )
             return (samples,)
 
-    def _augment_numpy(self, img: np.ndarray, lbl: np.ndarray):
+    def _augment_numpy(self, img: np.ndarray, lbl: Optional[np.ndarray]):
         """!
         samplewise data augmentation
 

@@ -83,10 +83,6 @@ class SegBasisNet:
         self.options["do_finetune"] = do_finetune
         self.options["regularize"] = regularize
 
-        # custom objects will be used during the _load_net
-        if not hasattr(self, "custom_objects"):
-            self.custom_objects: Dict[str, object] = {}
-
         if not self.options["is_training"] or (
             self.options["is_training"] and self.options["do_finetune"]
         ):
@@ -110,7 +106,7 @@ class SegBasisNet:
         # this number should be determined by the network
         self.divisible_by = 1
         # extra compile options, which can be changed in subclasses
-        self._compile_options = {}
+        self._compile_options: Dict[str, Any] = {}
 
         if self.options["is_training"] and not self.options["do_finetune"]:
             self._set_up_inputs()
@@ -273,6 +269,7 @@ class SegBasisNet:
         schedules.LearningRateSchedule
             The scheduler which can be passed to the optimizer
         """
+        assert cfg.num_files is not None
         iter_per_epoch = cfg.samples_per_volume * cfg.num_files // cfg.batch_size_train
         n_epochs = self.options["n_epochs"]
         if schedule_type == "exponential":
@@ -561,18 +558,16 @@ class SegBasisNet:
         self.model.save(model_dir / "model-best", save_format="tf")
         print("Saving finished.")
 
-    def _get_task_metrics(
-        self, metrics: List[Union[str, Callable, Collection]], tasks: List[str]
-    ):
+    def _get_task_metrics(self, metrics: Dict, tasks: Collection[str]):
         # set metrics
-        metric_objects: List[List[Union[str, Callable]]] = []
+        metric_objects: List[Collection[Union[str, Callable]]] = []
         for t_name in tasks:
             metric_objects.append(
                 tuple(self.get_metric(m, t_name) for m in metrics[t_name])
             )
         return metric_objects
 
-    def get_metric(self, metric, task="segmentation") -> Callable:
+    def get_metric(self, metric, task="segmentation") -> Union[Callable, str]:
         """Get the metric as callable object from the name
 
         Parameters
@@ -585,8 +580,8 @@ class SegBasisNet:
 
         Returns
         -------
-        Callable
-            The metric
+        Callable | str
+            The metric as callable or str, which is understood by tensorflow
         """
         nmi_params = {}
         if "loss_parameters" in self.options:
@@ -717,7 +712,9 @@ class SegBasisNet:
                 results.append(res_np)
 
             # separate into multiple lists
-            output = [[row[out] for row in results] for out in range(n_outputs)]
+            output_lists = [[row[out] for row in results] for out in range(n_outputs)]
             # and concatenate them
-            output = [np.concatenate(out, axis=0) for out in output]
+            output = [np.concatenate(out, axis=0) for out in output_lists]
+        else:
+            raise NotImplementedError("Only implemented for 2D")
         return output
