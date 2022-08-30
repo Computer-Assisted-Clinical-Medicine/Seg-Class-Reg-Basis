@@ -636,7 +636,7 @@ class SegBasisNet:
         ----------
         version : int or str
             The epoch, can be int or identifier (final for example)
-        application_dataset : ApplyBasisLoader
+        application_dataset : ApplyLoader
             The dataset
         filename : str
             The file that is being processed, used to generate the new file name

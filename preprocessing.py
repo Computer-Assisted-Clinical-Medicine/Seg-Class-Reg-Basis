@@ -255,6 +255,7 @@ def preprocess_dataset(
     preprocessed_dir: Path,
     train_dataset: Collection,
     preprocessing_parameters: dict,
+    pass_modality=False,
 ):
     """Preprocess the images by applying the normalization and then combining
     them into one image.
@@ -277,6 +278,9 @@ def preprocess_dataset(
         The parameters for the normalization, "normalizing_method" is NORMALIZING
         enumerator to use, available classes are in Normalization, the dict
         is passed to the class.
+    pass_modality : bool, optional
+        If the number of the modality should be passed to the normalization
+        initializer as mod_num, by default False
 
     Returns
     -------
@@ -313,9 +317,14 @@ def preprocess_dataset(
                         "Normalization of preprocessed images has different parameters."
                     )
         else:
-            norm = normalization_class(
-                **preprocessing_parameters["normalization_parameters"]
-            )
+            if pass_modality:
+                norm = normalization_class(
+                    mod_num=num, **preprocessing_parameters["normalization_parameters"]
+                )
+            else:
+                norm = normalization_class(
+                    **preprocessing_parameters["normalization_parameters"]
+                )
             norm.train_normalization(norm_train_set[num])
             # and save it
             norm.to_file(norm_file)
