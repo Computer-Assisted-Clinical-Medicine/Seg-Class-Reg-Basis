@@ -9,13 +9,13 @@ import numpy as np
 import SimpleITK as sitk
 
 from . import config as cfg
-from .segbasisloader import SegBasisLoader
+from .segloader import SegLoader
 
 # configure logger
 logger = logging.getLogger(__name__)
 
 
-class ApplyBasisLoader(SegBasisLoader):
+class ApplyLoader(SegLoader):
     """The loader to apply the data to an image. It will mainly just preprocess
     and pad the image and return the values if called, it will not be converted
     to a data loader and should just be used for single images.

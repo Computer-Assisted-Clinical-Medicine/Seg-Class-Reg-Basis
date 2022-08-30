@@ -16,6 +16,20 @@ from . import config as cfg
 # configure logger
 logger = logging.getLogger(__name__)
 
+
+def clip_labels(label_img: sitk.Image):
+    """Clip the labels to the maximum value defined in the config"""
+    label_img = sitk.Threshold(
+        label_img,
+        upper=cfg.num_classes_seg - 1,
+        outsideValue=cfg.num_classes_seg - 1,
+    )
+    # label should be uint-8
+    if label_img.GetPixelID() != sitk.sitkUInt8:
+        label_img = sitk.Cast(label_img, sitk.sitkUInt8)
+    return label_img
+
+
 # define enums
 class NOISETYPE(Enum):
     """The different noise types"""
@@ -24,7 +38,7 @@ class NOISETYPE(Enum):
     POISSON = 1
 
 
-class SegBasisLoader:
+class SegLoader:
     """A basis loader for segmentation network. The Image is padded by a quarter of
     the sample size in each direction and the random patches are extracted.
 
@@ -84,6 +98,7 @@ class SegBasisLoader:
         shuffle=None,
         sample_buffer_size=4000,
         tasks=("segmentation",),
+        preprocessing_func=None,
         **kwargs,
     ):
 
@@ -140,6 +155,8 @@ class SegBasisLoader:
         # set seed
         np.random.seed(self.seed)
         tf.random.set_seed(self.seed)
+
+        self.preprocessing_func = preprocessing_func
 
         self._set_up_shapes_and_types()
 
@@ -504,24 +521,10 @@ class SegBasisLoader:
         else:
             label_img = None
         # adapt to task
-        data_img, label_img = self.adapt_to_task(data_img, label_img)
-        return data_img, label_img
-
-    def adapt_to_task(self, data_img: sitk.Image, label_img: sitk.Image):
-        """This function can be used to adapt the images to the task at hand.
-
-        Parameters
-        ----------
-        data_img : sitk.Image
-            The image
-        label_img : sitk.Image
-            The labels
-
-        Returns
-        -------
-        sitk.Image, sitk.Image
-            The adapted image and labels
-        """
+        if self.preprocessing_func is not None:
+            data_img, label_img = self.preprocessing_func(data_img, label_img)
+        if label_img is not None:
+            label_img = clip_labels(label_img)
         return data_img, label_img
 
     def _read_file_and_return_numpy_samples(self, file_name_queue: bytes):

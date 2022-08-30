@@ -53,7 +53,7 @@ class SegBasisNet:
 
     def __init__(
         self,
-        loss_name: str,
+        loss_name: Union[dict, str, Callable],
         tasks: Optional[OrderedDict[str, str]] = None,
         is_training=True,
         do_finetune=False,

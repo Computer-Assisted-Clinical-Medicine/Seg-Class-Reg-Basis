@@ -4,7 +4,8 @@ Different methods to normalize the input images
 import logging
 import os
 from enum import Enum
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from pathlib import Path
+from typing import Any, Collection, Dict, List, Optional, Tuple
 
 import numpy as np
 import SimpleITK as sitk
@@ -42,7 +43,7 @@ class Normalization:
     def normalization_func(self, image: np.ndarray) -> np.ndarray:
         return image
 
-    def train_normalization(self, images: Iterable[sitk.Image]) -> None:
+    def train_normalization(self, images: Collection[Path]) -> None:
         pass
 
     def normalize(self, image: sitk.Image) -> sitk.Image:
@@ -467,7 +468,7 @@ class HistogramMatching(Normalization):
 
         return landmarks, mean, std
 
-    def train_normalization(self, images: Iterable[sitk.Image]) -> None:
+    def train_normalization(self, images: Collection[Path]) -> None:
         """Extract the mean and landmarks (quantiles) and the standard deviation
         from a set of images.
         """
@@ -475,7 +476,8 @@ class HistogramMatching(Normalization):
         standard_scale_list = []
         means_list = []
         stds_list = []
-        for image in tqdm(images, unit="image", desc="Train Normalization"):
+        for image_path in tqdm(images, unit="image", desc="Train Normalization"):
+            image = sitk.ReadImage(str(image_path))
             # get landmarks
             landmarks, current_mean, current_std = self.get_landmarks(image)
 
@@ -626,9 +628,10 @@ class HMQuantile(HistogramMatching):
             normalize_channelwise=True,
         )
 
-    def train_normalization(self, images: Iterable[sitk.Image]) -> None:
+    def train_normalization(self, images: Collection[Path]) -> None:
+        images_gen = (sitk.ReadImage(str(img)) for img in images)
         # apply quantile normalization
-        images = (self.quantile_norm(img) for img in images)
+        images = (self.quantile_norm(img) for img in images_gen)
         return super().train_normalization(images)
 
     def normalize(self, image: sitk.Image) -> sitk.Image:

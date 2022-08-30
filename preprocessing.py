@@ -3,7 +3,7 @@ Preprocess the input images
 """
 import logging
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Callable, Collection, Dict, List, Optional, Tuple
 
 import numpy as np
 import SimpleITK as sitk
@@ -253,7 +253,7 @@ def preprocess_dataset(
     num_channels: int,
     base_dir: Path,
     preprocessed_dir: Path,
-    train_dataset: Iterable,
+    train_dataset: Collection,
     preprocessing_parameters: dict,
 ):
     """Preprocess the images by applying the normalization and then combining
@@ -270,7 +270,7 @@ def preprocess_dataset(
         The dir all other directories are relative to, usually the experiment dir
     preprocessed_dir : Path
         The directory to save the preprocessed data to (relative to base dir)
-    train_dataset : Iterable
+    train_dataset : Collection
         If the normalization is trained (like histogram matching), use these
         images for training
     preprocessing_parameters : dict
@@ -291,7 +291,7 @@ def preprocess_dataset(
     normalization_method = preprocessing_parameters["normalizing_method"]
     normalization_class = normalization_method.get_class()
     # make lists to train the normalization
-    norm_train_set = [[] for n in range(num_channels)]
+    norm_train_set: List[List[Path]] = [[] for n in range(num_channels)]
     for name in train_dataset:
         images = data_set[name]["images"]
         assert len(images) == num_channels, "Number of modalities inconsistent"
@@ -316,8 +316,7 @@ def preprocess_dataset(
             norm = normalization_class(
                 **preprocessing_parameters["normalization_parameters"]
             )
-            images_gen = (load_image(img) for img in norm_train_set[num])
-            norm.train_normalization(images_gen)
+            norm.train_normalization(norm_train_set[num])
             # and save it
             norm.to_file(norm_file)
         normalizations.append(norm)

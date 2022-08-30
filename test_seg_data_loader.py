@@ -12,8 +12,8 @@ import tensorflow as tf
 
 from . import create_test_files
 from . import config as cfg
-from .segbasisloader import SegBasisLoader
-from .segapplyloader import ApplyBasisLoader
+from .segloader import SegLoader
+from .segapplyloader import ApplyLoader
 
 # pylint: disable=protected-access,duplicate-code
 
@@ -31,19 +31,19 @@ def get_loader(name, file_dict, percent_obj=0.33):
     """
     # generate loader
     if name == "train":
-        data_loader = SegBasisLoader(
+        data_loader = SegLoader(
             name="training_loader", frac_obj=percent_obj, file_dict=file_dict
         )
     elif name == "vald":
-        data_loader = SegBasisLoader(
-            mode=SegBasisLoader.MODES.VALIDATE,
+        data_loader = SegLoader(
+            mode=SegLoader.MODES.VALIDATE,
             frac_obj=percent_obj,
             name="validation_loader",
             file_dict=file_dict,
         )
     elif name == "test":
-        data_loader = ApplyBasisLoader(
-            mode=SegBasisLoader.MODES.APPLY,
+        data_loader = ApplyLoader(
+            mode=SegLoader.MODES.APPLY,
             name="test_loader",
             file_dict=file_dict,
         )

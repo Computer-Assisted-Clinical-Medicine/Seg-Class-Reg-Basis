@@ -16,7 +16,8 @@ from tqdm.autonotebook import tqdm
 
 from . import config as cfg
 from . import evaluation, postprocessing, segbasisnet, utils
-from .seg_data_loader import ApplyLoader, SegLoader
+from .segloader import SegLoader
+from .segapplyloader import ApplyLoader
 
 # configure logger
 logger = logging.getLogger(__name__)
@@ -552,6 +553,7 @@ class Experiment:
             file_dict=self.train_dataset,
             frac_obj=self.hyper_parameters["train_parameters"]["percent_of_object_samples"],
             tasks=self.tasks,
+            **self.hyper_parameters["dataloader_parameters"],
         )(
             train_files,
             batch_size=cfg.batch_size_train,
@@ -563,6 +565,7 @@ class Experiment:
             file_dict=self.train_dataset,
             frac_obj=self.hyper_parameters["train_parameters"]["percent_of_object_samples"],
             tasks=self.tasks,
+            **self.hyper_parameters["dataloader_parameters"],
         )(
             vald_files,
             batch_size=cfg.batch_size_valid,
@@ -582,6 +585,7 @@ class Experiment:
                 samples_per_volume=5,
                 shuffle=False,
                 tasks=self.tasks,
+                **self.hyper_parameters["dataloader_parameters"],
             )(
                 vald_files,
                 batch_size=cfg.batch_size_train,
@@ -765,10 +769,11 @@ class Experiment:
                     results.append(file_metrics)
 
             # write evaluation results
-            if len(results) == 0:
+            if len(results) == 0 and len(test_files) != 0:
                 continue
             results = pd.DataFrame(results)
-            results.set_index("File Number", inplace=True)
+            if len(test_files) != 0:
+                results.set_index("File Number", inplace=True)
             results.to_csv(eval_file_path, sep=";")
 
     def evaluate_segmentation(self, file: str, prediction_path: Path) -> Dict[str, Any]:
