@@ -144,7 +144,10 @@ class Experiment:
         # check input
         if len(self.crossvalidation_set) == 0:
             raise ValueError("Dataset is empty.")
-        if cfg.number_of_vald * self.folds > self.crossvalidation_set.size:
+        n_vald = self.hyper_parameters["train_parameters"].get(
+            "number_of_vald", cfg.number_of_vald
+        )
+        if n_vald * self.folds > self.crossvalidation_set.size:
             raise ValueError("Dataset to small for the specified folds.")
 
         for d_name in self.crossvalidation_set:
@@ -322,9 +325,9 @@ class Experiment:
             # the rest is used for training
             train_indices = remaining_indices[cfg.number_of_vald :]
 
-            train_files = data_set[train_indices]
-            vald_files = data_set[vald_indices]
-            test_files = data_set[test_indices]
+            train_files = np.sort(data_set[train_indices])
+            vald_files = np.sort(data_set[vald_indices])
+            test_files = np.sort(data_set[test_indices])
 
             # only write files if they do not exist or overwrite is true
             if not self.datasets[fold]["train"].exists() or overwrite:

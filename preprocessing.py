@@ -267,7 +267,7 @@ def preprocess_dataset(
     num_channels : int
         The number of channels (has to be the length of the "images" list)
     base_dir : Path
-        The dir all other directories are relative to
+        The dir all other directories are relative to, usually the experiment dir
     preprocessed_dir : Path
         The directory to save the preprocessed data to (relative to base dir)
     train_dataset : Iterable
