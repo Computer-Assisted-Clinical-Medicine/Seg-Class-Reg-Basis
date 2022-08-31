@@ -5,7 +5,7 @@ import logging
 import os
 from enum import Enum
 from pathlib import Path
-from typing import Any, Collection, Dict, List, Optional, Tuple
+from typing import Any, Collection, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import SimpleITK as sitk
@@ -468,7 +468,7 @@ class HistogramMatching(Normalization):
 
         return landmarks, mean, std
 
-    def train_normalization(self, images: Collection[Path]) -> None:
+    def train_normalization(self, images: Collection[Union[Path, sitk.Image]]) -> None:
         """Extract the mean and landmarks (quantiles) and the standard deviation
         from a set of images.
         """
@@ -476,8 +476,9 @@ class HistogramMatching(Normalization):
         standard_scale_list = []
         means_list = []
         stds_list = []
-        for image_path in tqdm(images, unit="image", desc="Train Normalization"):
-            image = sitk.ReadImage(str(image_path))
+        for image in tqdm(images, unit="image", desc="Train Normalization"):
+            if not isinstance(image, sitk.Image):
+                image = sitk.ReadImage(str(image))
             # get landmarks
             landmarks, current_mean, current_std = self.get_landmarks(image)
 
