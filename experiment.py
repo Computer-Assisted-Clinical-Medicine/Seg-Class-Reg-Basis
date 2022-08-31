@@ -553,7 +553,7 @@ class Experiment:
             file_dict=self.train_dataset,
             frac_obj=self.hyper_parameters["train_parameters"]["percent_of_object_samples"],
             tasks=self.tasks,
-            **self.hyper_parameters["dataloader_parameters"],
+            **self.hyper_parameters.get("dataloader_parameters", {}),
         )(
             train_files,
             batch_size=cfg.batch_size_train,
@@ -565,7 +565,7 @@ class Experiment:
             file_dict=self.train_dataset,
             frac_obj=self.hyper_parameters["train_parameters"]["percent_of_object_samples"],
             tasks=self.tasks,
-            **self.hyper_parameters["dataloader_parameters"],
+            **self.hyper_parameters.get("dataloader_parameters", {}),
         )(
             vald_files,
             batch_size=cfg.batch_size_valid,
@@ -585,7 +585,7 @@ class Experiment:
                 samples_per_volume=5,
                 shuffle=False,
                 tasks=self.tasks,
-                **self.hyper_parameters["dataloader_parameters"],
+                **self.hyper_parameters.get("dataloader_parameters", {}),
             )(
                 vald_files,
                 batch_size=cfg.batch_size_train,
