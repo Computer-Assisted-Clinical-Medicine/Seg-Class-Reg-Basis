@@ -253,7 +253,8 @@ class SegBasisNet:
         self, schedule_type: str, initial_rate: float, final_rate: float
     ) -> schedules.LearningRateSchedule:
         """Get the learning rate scheduler, the decay rate is calculated using
-        the initial and final learning rate. So far, only exponential is implemented
+        the initial and final learning rate. So far, only exponential and
+        exponential_half is implemented
 
         Parameters
         ----------
@@ -278,6 +279,14 @@ class SegBasisNet:
                 initial_learning_rate=initial_rate,
                 decay_steps=iter_per_epoch,
                 decay_rate=decay_rate,
+            )
+        elif schedule_type == "exponential_half":
+            decay_rate = (final_rate / initial_rate) ** (1 / (n_epochs / 2))
+            lr_schedule = tf_utils.ExponentialDecayMin(
+                initial_learning_rate=initial_rate,
+                decay_steps=iter_per_epoch,
+                decay_rate=decay_rate,
+                final_rate=final_rate,
             )
         else:
             raise ValueError(f"LR scheduler {schedule_type} unknown")

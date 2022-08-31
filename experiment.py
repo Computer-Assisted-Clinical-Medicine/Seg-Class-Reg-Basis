@@ -387,6 +387,9 @@ class Experiment:
         # set shape according to the dimension
         dim = self.hyper_parameters["dimensions"]
         n_cls_seg = cfg.num_classes_seg
+
+        cfg.samples_per_volume = hp_train.get("samples_per_volume", 64)
+
         if dim == 2:
             # set shape
             cfg.train_input_shape = [p_dim, p_dim, self.num_channels]
@@ -395,7 +398,6 @@ class Experiment:
             # there are 10-30 layers per image containing foreground data. Half the
             # samples are taken from the foreground, so take about 64 samples
             # to cover all the foreground pixels at least once on average, but
-            cfg.samples_per_volume = 64
             logger.debug(
                 "   Train Shapes: %s (input), %s (labels)",
                 cfg.train_input_shape,
@@ -425,8 +427,8 @@ class Experiment:
         # set the valid batch size
         cfg.batch_size_valid = cfg.batch_size_train
         # see if the batch size is bigger than the validation set
-        if cfg.samples_per_volume * cfg.number_of_vald <= cfg.batch_size_valid:
-            cfg.batch_size_valid = cfg.samples_per_volume * cfg.number_of_vald
+        if cfg.samples_per_volume * cfg.number_of_vald < cfg.batch_size_valid:
+            raise ValueError("Validation set less than one batch")
 
         cfg.batch_capacity_train = 4 * cfg.samples_per_volume
 

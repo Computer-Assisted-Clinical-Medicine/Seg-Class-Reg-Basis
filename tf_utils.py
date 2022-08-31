@@ -4,7 +4,7 @@ logging and to only save the best weights, which does save disk space.
 
 import logging
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import tensorflow as tf
 from tensorflow.keras import callbacks
@@ -58,6 +58,23 @@ def get_optimizer(
         return tf.optimizers.Adamax(learning_rate=l_r, epsilon=1e-3, clipvalue=None)
     else:
         raise ValueError(f"Optimizer {optimizer} unknown.")
+
+
+class ExponentialDecayMin(tf.keras.optimizers.schedules.ExponentialDecay):
+    """exponential decay with minimum rate"""
+
+    def __init__(self, final_rate: float, **kwargs) -> None:
+        self.final_rate = final_rate
+        super().__init__(**kwargs)
+
+    def get_config(self):
+        conf = super().get_config()
+        conf["final_rate"] = self.final_rate
+        return conf
+
+    def __call__(self, *args: Any, **kwds: Any) -> Any:
+        learning_rate = super().__call__(*args, **kwds)
+        return tf.maximum(learning_rate, self.final_rate)
 
 
 class KeepBestModel(callbacks.ModelCheckpoint):
