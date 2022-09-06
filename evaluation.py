@@ -25,8 +25,6 @@ def evaluate_segmentation_prediction(prediction_path: str, label_path: str) -> d
 
     Parameters
     ----------
-    result_metrics : dict
-        The dict were the metrics will be written
     prediction_path : str
         The path of the predicted image
     label_path : str
@@ -295,17 +293,19 @@ def evaluate_regression(
     return metrics_dict
 
 
-def evaluate_autoencoder_prediction(prediction_path: str, orig_path: str) -> dict:
+def evaluate_autoencoder_prediction(
+    prediction_path: str, orig_path: str, channel=None
+) -> dict:
     """Evaluate autoencoder metrics for one image
 
     Parameters
     ----------
-    result_metrics : dict
-        The dict were the metrics will be written
     prediction_path : str
         The path of the predicted image
     orig_path : str
         The path of the original image
+    channel : int, optional
+        The channel to use, if None, all are used
 
     Returns
     -------
@@ -333,6 +333,10 @@ def evaluate_autoencoder_prediction(prediction_path: str, orig_path: str) -> dic
     pred_img_np = sitk.GetArrayFromImage(pred_img)
     orig_img_np = sitk.GetArrayFromImage(orig_img)
 
+    if channel is not None:
+        pred_img_np = pred_img_np[..., channel]
+        orig_img_np = orig_img_np[..., channel]
+
     error = pred_img_np - orig_img_np
     error_abs = np.abs(error)
     rmse = np.sqrt(np.mean(np.square(error)))
@@ -346,12 +350,16 @@ def evaluate_autoencoder_prediction(prediction_path: str, orig_path: str) -> dic
     result_metrics["norm_mutual_inf"] = skimage.metrics.normalized_mutual_information(
         orig_img_np, pred_img_np, bins=100
     )
-    result_metrics["structured_similarity_index"] = skimage.metrics.structural_similarity(
-        orig_img_np,
-        pred_img_np,
-        data_range=data_range,
-        channel_axis=2 if pred_img_np.ndim == 4 else None,
-    )
+    try:
+        ssi = skimage.metrics.structural_similarity(
+            orig_img_np,
+            pred_img_np,
+            data_range=data_range,
+            channel_axis=3 if pred_img_np.ndim == 4 else None,
+        )
+    except ValueError:
+        ssi = None
+    result_metrics["structured_similarity_index"] = ssi
     result_metrics["peak_signal_to_noise"] = skimage.metrics.peak_signal_noise_ratio(
         orig_img_np, pred_img_np, data_range=data_range
     )

@@ -2,11 +2,13 @@
 Preprocess the input images
 """
 import logging
+import warnings
 from pathlib import Path
 from typing import Callable, Collection, Dict, List, Optional, Tuple
 
 import numpy as np
 import SimpleITK as sitk
+import yaml
 from tqdm import tqdm
 
 from . import config as cfg
@@ -35,6 +37,7 @@ def combine_images(
     labels: Optional[sitk.Image],
     resample=True,
     target_spacing=(1, 1, 3),
+    cut_to_overlap=True,
 ) -> Tuple[sitk.Image, Optional[sitk.Image]]:
     """Combine images by calculating the best overlap and the combining the images
     into one composed image. The images will also be resampled if specified.
@@ -51,15 +54,20 @@ def combine_images(
     target_spacing : tuple, optional
         The spacing for the resampling, by default (1, 1, 3), if any values are None,
         the original spacing is used
+    cut_to_overlap : bool, optional
+        If the sample should be cut to the overlapping region of all images, by default true
 
     Returns
     -------
     Tuple[sitk.Image, Optional[sitk.Image]]
         The resulting images, if no labels were given, the second image will be None.
     """
-    overlap = get_overlap(images)
     # take the first image as reference image
-    reference_image: sitk.Image = images[0][overlap]
+    if cut_to_overlap:
+        overlap = get_overlap(images)
+        reference_image = images[0][overlap]
+    else:
+        reference_image = images[0]
     if labels is not None:
         num_labels = sitk.GetArrayFromImage(labels).astype(bool).sum()
         if num_labels == 0:
@@ -234,15 +242,15 @@ def get_overlap(images: List[sitk.Image]) -> list:
         end = valid.size - np.argmax(np.flip(valid))
         valid_indices.append(slice(start, end))
         frac_removed = (valid.size - (end - start)) / valid.size
-        if frac_removed > 0.3:
+        if frac_removed > 0.5:
+            warnings.warn(
+                f"More that 50% ({frac_removed} %) removed in direction {dir_name}."
+            )
+        elif frac_removed > 0.3:
             logger.warning(
                 "More than 30 %% (%i %%) removed in direction %s.",
                 int(frac_removed * 100),
                 dir_name,
-            )
-        elif frac_removed > 0.5:
-            raise Exception(
-                f"More that 50% ({frac_removed} %) removed in direction {dir_name}."
             )
 
     return valid_indices
@@ -256,6 +264,7 @@ def preprocess_dataset(
     train_dataset: Collection,
     preprocessing_parameters: dict,
     pass_modality=False,
+    cut_to_overlap=True,
 ):
     """Preprocess the images by applying the normalization and then combining
     them into one image.
@@ -281,6 +290,8 @@ def preprocess_dataset(
     pass_modality : bool, optional
         If the number of the modality should be passed to the normalization
         initializer as mod_num, by default False
+    cut_to_overlap : bool, optional
+        If the sample should be cut to the overlapping region of all images, by default true
 
     Returns
     -------
@@ -289,8 +300,9 @@ def preprocess_dataset(
         for each individual patient are added to the new dict as well. The keys are
         kept the same also.
     """
-    if not preprocessed_dir.exists():
-        preprocessed_dir.mkdir(parents=True)
+    preprocessed_dir_abs = base_dir / preprocessed_dir
+    if not preprocessed_dir_abs.exists():
+        preprocessed_dir_abs.mkdir(parents=True)
     # load normalization
     normalization_method = preprocessing_parameters["normalizing_method"]
     normalization_class = normalization_method.get_class()
@@ -304,7 +316,7 @@ def preprocess_dataset(
     # train the normalization
     normalizations = []
     for num in range(num_channels):
-        norm_file = base_dir / preprocessed_dir / f"normalization_mod{num}.yaml"
+        norm_file = preprocessed_dir_abs / f"normalization_mod{num}.yaml"
         if not norm_file.parent.exists():
             norm_file.parent.mkdir(parents=True)
         if norm_file.exists():
@@ -363,6 +375,7 @@ def preprocess_dataset(
             labels_processed_path=labels_processed_path,
             normalizations=normalizations,
             preprocessing_parameters=preprocessing_parameters,
+            cut_to_overlap=cut_to_overlap,
         )
 
         if image_processed_path.exists():
@@ -387,6 +400,10 @@ def preprocess_dataset(
 
     logger.info("Preprocessing finished.")
 
+    dataset_file = preprocessed_dir_abs / "preprocessing_dataset.yaml"
+    with open(dataset_file, "w", encoding="utf8") as f:
+        yaml.dump(preprocessed_dict, f, sort_keys=False)
+
     return preprocessed_dict
 
 
@@ -397,6 +414,7 @@ def preprocess_image(
     labels_processed_path: Optional[Path],
     normalizations: List[Callable],
     preprocessing_parameters: Dict,
+    cut_to_overlap=True,
 ):
     """Preprocess a single image, it will be normalized and then all images
     will be combined into one
@@ -412,6 +430,8 @@ def preprocess_image(
     normalizations : List
         A list of the normalizations used to process each image, should be the
         same length as the images
+    cut_to_overlap : bool, optional
+        If the sample should be cut to the overlapping region of all images, by default true
     """
     # preprocess if it does not exist yet
     if labels_path is None:
@@ -434,6 +454,7 @@ def preprocess_image(
                 labels=labels,
                 resample=preprocessing_parameters["resample"],
                 target_spacing=preprocessing_parameters["target_spacing"],
+                cut_to_overlap=cut_to_overlap,
             )
         except NoLabelsInOverlap as exc:
             print("Labels were not in the overlapping image portion.")

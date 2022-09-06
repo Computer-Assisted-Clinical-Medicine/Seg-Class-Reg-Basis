@@ -69,7 +69,8 @@ class SegLoader:
         If the dataset should be shuffled. If None, it will be set to true when
         training and false for application, by default None
     sample_buffer_size : int, optional
-        How big the buffer should be for shuffling, by default 4000.
+        How big the buffer should be for shuffling, by default 4000. Otherwise,
+        samples_per_volume * n_files will be used
     tasks : Tuple[str], optional
         Which tasks to perform, available are segmentation, autoencoder,
         classification and regression by default ("segmentation",).
@@ -286,7 +287,7 @@ class SegLoader:
 
         # set the buffer size
         if self.sample_buffer_size is None:
-            sample_buffer_size = 8 * self.n_files
+            sample_buffer_size = self.samples_per_volume * self.n_files
         else:
             sample_buffer_size = self.sample_buffer_size
 
