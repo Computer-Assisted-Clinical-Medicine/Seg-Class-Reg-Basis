@@ -33,7 +33,7 @@ class UNet(SegBasisNet):
 
     def __init__(
         self,
-        loss,
+        loss_name,
         is_training=True,
         do_finetune=False,
         model_path="",
@@ -64,7 +64,7 @@ class UNet(SegBasisNet):
 
         super().__init__(
             # standard parameters
-            loss_name=loss,
+            loss_name=loss_name,
             is_training=is_training,
             do_finetune=do_finetune,
             model_path=model_path,
@@ -178,7 +178,7 @@ class DenseTiramisu(SegBasisNet):
 
     def __init__(
         self,
-        loss,
+        loss_name,
         is_training=True,
         kernel_dims=3,
         growth_rate=16,
@@ -199,7 +199,7 @@ class DenseTiramisu(SegBasisNet):
             do_batch_normalization = True
 
         super().__init__(
-            loss_name=loss,
+            loss_name=loss_name,
             is_training=is_training,
             kernel_dims=kernel_dims,
             growth_rate=growth_rate,
@@ -265,7 +265,7 @@ class DeepLabv3plus(SegBasisNet):
 
     def __init__(
         self,
-        loss,
+        loss_name,
         is_training=True,
         kernel_dims=3,
         drop_out=(True, 0.2),
@@ -285,7 +285,7 @@ class DeepLabv3plus(SegBasisNet):
             do_batch_normalization = True
 
         super().__init__(
-            loss_name=loss,
+            loss_name=loss_name,
             is_training=is_training,
             kernel_dims=kernel_dims,
             drop_out=drop_out,

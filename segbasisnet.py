@@ -140,29 +140,6 @@ class SegBasisNet:
         )
         self.options["out_channels"] = cfg.num_classes_seg
 
-    def _select_final_activation(self):
-        # http://dataaspirant.com/2017/03/07/difference-between-softmax-function-and-sigmoid-function/
-        if self.options["out_channels"] > 2 or self.options["loss"] in [
-            "DICE",
-            "TVE",
-            "GDL",
-        ]:
-            # Dice, GDL and Tversky require SoftMax
-            return "softmax"
-        elif self.options["out_channels"] == 2 and self.options["loss"] in [
-            "CEL",
-            "WCEL",
-            "GCEL",
-        ]:
-            return "sigmoid"
-        else:
-            raise ValueError(
-                self.options["loss"],
-                "is not a supported loss function or cannot combined with ",
-                self.options["out_channels"],
-                "output channels.",
-            )
-
     def _build_model(self) -> tf.keras.Model:
         raise NotImplementedError("not implemented")
 
@@ -200,6 +177,7 @@ class SegBasisNet:
     def _get_task_losses(self, loss_input: Union[str, dict, object, Iterable]):
         if isinstance(loss_input, str):
             loss_obj = self.get_loss(loss_input)
+            loss_name = loss_input
         elif hasattr(loss_input, "__call__"):
             if hasattr(loss_input, "__name__"):
                 loss_name = loss_input.__name__

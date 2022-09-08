@@ -350,15 +350,17 @@ def evaluate_autoencoder_prediction(
     result_metrics["norm_mutual_inf"] = skimage.metrics.normalized_mutual_information(
         orig_img_np, pred_img_np, bins=100
     )
-    try:
-        ssi = skimage.metrics.structural_similarity(
-            orig_img_np,
-            pred_img_np,
-            data_range=data_range,
-            channel_axis=3 if pred_img_np.ndim == 4 else None,
-        )
-    except ValueError:
-        ssi = None
+    # set win size to 7 or to the smalles dimension
+    win_size = np.min(orig_img_np.shape + (7,))
+    if win_size % 2 == 0:
+        win_size -= 1
+    ssi = skimage.metrics.structural_similarity(
+        orig_img_np,
+        pred_img_np,
+        data_range=data_range,
+        channel_axis=3 if pred_img_np.ndim == 4 else None,
+        win_size=win_size,
+    )
     result_metrics["structured_similarity_index"] = ssi
     result_metrics["peak_signal_to_noise"] = skimage.metrics.peak_signal_noise_ratio(
         orig_img_np, pred_img_np, data_range=data_range

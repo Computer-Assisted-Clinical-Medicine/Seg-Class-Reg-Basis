@@ -124,10 +124,10 @@ class SegLoader:
         self.samples_per_volume = samples_per_volume
 
         if shuffle is None:
-            if mode == self.MODES.APPLY:
-                self.shuffle = False
-            else:
+            if mode == self.MODES.TRAIN:
                 self.shuffle = True
+            else:
+                self.shuffle = False
         else:
             self.shuffle = shuffle
 
@@ -300,11 +300,8 @@ class SegLoader:
             else:
                 file_list_ds = tf.data.Dataset.from_tensor_slices(id_tensor)
 
-            if self.mode is self.MODES.TRAIN:
-                # shuffle and repeat n_epoch times if in training mode
-                file_list_ds = file_list_ds.shuffle(buffer_size=self.n_files).repeat(
-                    count=n_epochs
-                )
+            if self.shuffle:
+                file_list_ds = file_list_ds.shuffle(buffer_size=self.n_files)
 
             # read data from file using the _read_wrapper
             dataset = file_list_ds.map(
@@ -322,18 +319,17 @@ class SegLoader:
             if self.n_inputs != 1 or self.n_labels > 1:
                 dataset = dataset.map(self._make_x_y)
 
-            if self.mode is not self.MODES.APPLY:
-                # shuffle
-                if self.shuffle:
-                    dataset = dataset.shuffle(
-                        buffer_size=sample_buffer_size, seed=self.seed
-                    )
+            if self.shuffle:
+                dataset = dataset.shuffle(buffer_size=sample_buffer_size, seed=self.seed)
 
-            if self.mode is self.MODES.APPLY:
-                dataset = dataset.batch(batch_size=batch_size, drop_remainder=False)
-            else:
+            if self.mode is self.MODES.TRAIN:
                 # no smaller final batch
                 dataset = dataset.batch(batch_size=batch_size, drop_remainder=True)
+            else:
+                dataset = dataset.batch(batch_size=batch_size, drop_remainder=False)
+
+            if self.mode is not self.MODES.APPLY:
+                dataset = dataset.repeat(count=n_epochs)
 
             # batch prefetch
             dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)

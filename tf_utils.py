@@ -425,30 +425,34 @@ def write_images(x, y, y_pred, step: int, num_segmentations=0, ignore=None):
             n_channels = probabilities.shape[-1]
             with tf.name_scope("Segmentation Results"):
                 if dimension == 3:
-                    y = y[:, dim_z // 2, :, :]
+                    labels_prob = y[0][:, dim_z // 2, :, :]
                     probabilities = probabilities[:, dim_z // 2, :, :]
                     predictions = predictions[:, dim_z // 2, :, :]
+                else:
+                    labels_prob = y[0]
 
-                label = tf.expand_dims(
-                    tf.cast(tf.argmax(y, -1) * (255 // (n_channels - 1)), tf.uint8),
+                labels = tf.expand_dims(
+                    tf.cast(
+                        tf.argmax(labels_prob, -1) * (255 // (n_channels - 1)), tf.uint8
+                    ),
                     axis=-1,
                 )
-                tf.summary.image(f"train_seg_lbl_{img_num}", label, step, max_image_output)
+                tf.summary.image(f"train_seg_lbl_{img_num}", labels, step, max_image_output)
                 pred = tf.expand_dims(
                     tf.cast(predictions * (255 // (n_channels - 1)), tf.uint8), axis=-1
                 )
             with tf.name_scope(
-                "Combined_predictions (prediction in red, label in green, both in yellow)"
+                "Combined_predictions (prediction in red, labels in green, both in yellow)"
             ):
                 tf.summary.image(f"train_seg_pred_{img_num}", pred, step, max_image_output)
                 # set to first channel where both labels are zero
-                mask = tf.cast(tf.math.logical_and(pred == 0, label == 0), tf.uint8)
+                mask = tf.cast(tf.math.logical_and(pred == 0, labels == 0), tf.uint8)
                 # set those values to the mask
-                label += image_fc * mask
+                labels += image_fc * mask
                 pred += image_fc * mask
                 # set the opposite values of the image to zero
                 image_fc -= image_fc * (1 - mask)
-                combined = tf.concat([pred, label, image_fc], -1)
+                combined = tf.concat([pred, labels, image_fc], -1)
                 tf.summary.image(
                     f"train_seg_combined_{img_num}", combined, step, max_image_output
                 )
