@@ -56,7 +56,8 @@ class SegLoader:
         keys and the file paths as values
     seed : int, optional
         set a fixed seed for the loader, by default 42
-    mode : has no effect, should not be Apply
+    mode : SegLoader.MODES
+        Which mode to use, can be train, validation or apply
     name : str, optional
         the name of the loader, by default 'reader'
     frac_obj : float, optional
@@ -91,7 +92,7 @@ class SegLoader:
     def __init__(
         self,
         file_dict: Dict[str, Dict[str, Any]],
-        mode=None,
+        mode,
         seed=42,
         name="reader",
         frac_obj=0.5,

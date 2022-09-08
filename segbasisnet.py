@@ -136,7 +136,7 @@ class SegBasisNet:
     def _set_up_inputs(self):
         """setup the inputs. Inputs are taken from the config file."""
         self.inputs["x"] = tf.keras.Input(
-            shape=cfg.train_input_shape, batch_size=cfg.batch_size_train, dtype=cfg.dtype
+            shape=cfg.train_input_shape, batch_size=None, dtype=cfg.dtype
         )
         self.options["out_channels"] = cfg.num_classes_seg
 
@@ -426,7 +426,9 @@ class SegBasisNet:
         assert cfg.num_files is not None, "Number of files should be set"
         iter_per_epoch = cfg.samples_per_volume * cfg.num_files // cfg.batch_size_train
         assert iter_per_epoch > 0, "Steps per epoch is zero, lower the batch size"
-        iter_per_vald = cfg.samples_per_volume * cfg.number_of_vald // cfg.batch_size_valid
+        iter_per_vald = int(
+            np.ceil(cfg.samples_per_volume * cfg.number_of_vald / cfg.batch_size_valid)
+        )
         assert (
             iter_per_vald > 0
         ), "Steps per epoch is zero for the validation, lower the batch size"

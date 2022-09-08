@@ -551,6 +551,7 @@ class Experiment:
 
         # generate loader
         training_dataset = SegLoader(
+            mode=SegLoader.MODES.TRAIN,
             name="training_loader",
             file_dict=self.train_dataset,
             frac_obj=self.hyper_parameters["train_parameters"]["percent_of_object_samples"],
@@ -582,6 +583,7 @@ class Experiment:
         if self.tensorboard_images:
             visualization_dataset = SegLoader(
                 name="visualization",
+                mode=SegLoader.MODES.TRAIN,
                 file_dict=self.train_dataset,
                 frac_obj=frac_obj_val,
                 samples_per_volume=5,
