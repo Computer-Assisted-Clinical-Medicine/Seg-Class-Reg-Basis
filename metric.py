@@ -234,6 +234,8 @@ def overlap_measures_sitk(output, target):
 
 def symmetric_surface_measures_sitk(output, target):
     # http://insightsoftwareconsortium.github.io/SimpleITK-Notebooks/Python_html/34_Segmentation_Evaluation.html
+    if sitk.GetArrayFromImage(target).sum() == 0:
+        return 0, 0, 0, 0
     segmented_surface = sitk.LabelContour(output)
     reference_surface = sitk.LabelContour(target)
     reference_distance_map = sitk.Abs(
