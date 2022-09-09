@@ -213,12 +213,12 @@ def configure_logging(tf_logger: logging.Logger) -> logging.Logger:
 
 def generate_res_path(version: str, external: bool, postprocessed: bool, task: str):
     """For a given path, generate the relative path to the result file"""
+    if postprocessed:
+        version += "-postprocessed"
     if external:
         folder_name = f"results_external_testset_{version}_{task}"
     else:
         folder_name = f"results_test_{version}_{task}"
-    if postprocessed:
-        folder_name += "-postprocessed"
     res_path = Path(folder_name) / "evaluation-all-files.csv"
     return res_path
 
@@ -246,6 +246,7 @@ def export_hyperparameters(experiments, experiment_dir):
                 "architecture": exp.hyper_parameters["architecture"].__name__,
                 "dimensions": exp.hyper_parameters["dimensions"],
                 "path": str(exp.output_path_rel),
+                "exp_group_name": str(exp.output_path_rel.parent.name),
             }
         )
 
