@@ -583,10 +583,10 @@ class Experiment:
         if self.tensorboard_images:
             visualization_dataset = SegLoader(
                 name="visualization",
-                mode=SegLoader.MODES.TRAIN,
+                mode=SegLoader.MODES.VALIDATE,
                 file_dict=self.train_dataset,
                 frac_obj=frac_obj_val,
-                samples_per_volume=5,
+                samples_per_volume=1,
                 shuffle=False,
                 tasks=self.tasks,
                 **self.hyper_parameters.get("dataloader_parameters", {}),
@@ -665,10 +665,9 @@ class Experiment:
 
             # do inference
             result_npz = apply_path / f"prediction-{f_name}-{version}.npz"
-            res_img = apply_path / f"prediction-{f_name}-{version}{cfg.file_suffix}"
             task_files = [
-                apply_path / f"prediction-{f_name}-{version}_{tsk}{cfg.file_suffix}"
-                for tsk in self.tasks
+                apply_path / f"prediction-{f_name}-{version}_{tsk_name}{cfg.file_suffix}"
+                for tsk_name, tsk in self.expanded_tasks.items()
                 if "discriminator" not in tsk
             ]
             if not (result_npz.exists() or np.all([t.exists() for t in task_files])):
@@ -683,10 +682,10 @@ class Experiment:
             if "segmentation" in self.tasks:
                 postprocessed_image = (
                     apply_path
-                    / f"prediction-{f_name}-{version}-postprocessed{cfg.file_suffix}"
+                    / f"prediction-{f_name}-{version}-postprocessed_seg{cfg.file_suffix}"
                 )
                 if not postprocessed_image.exists():
-                    self.postprocess(res_img, postprocessed_image)
+                    self.postprocess(task_files[0], postprocessed_image)
 
         tf.keras.backend.clear_session()
 
@@ -754,7 +753,7 @@ class Experiment:
                 desc=f"evaluate {version} {name} {task}",
             ):
                 base_name = f"prediction-{file}-{version}"
-                prediction_path_seg = apply_path / f"{base_name}_segmentation.nii.gz"
+                prediction_path_seg = apply_path / f"{base_name}_seg.nii.gz"
                 prediction_path_np = apply_path / f"{base_name}.npz"
                 prediction_path_auto = apply_path / f"{base_name}_autoencoder.nii.gz"
 
@@ -796,6 +795,8 @@ class Experiment:
             The resulting metrics as a dictionary with each metric as one entry
         """
         # see that the labels are there
+        if not prediction_path.exists():
+            raise FileNotFoundError(f"Predicted file {prediction_path} not found.")
         if not "labels" in self.data_set[file]:
             logger.info("No labels found for %s", file)
             return {}
@@ -804,13 +805,10 @@ class Experiment:
             logger.info("Label %s does not exists. It will be skipped", label_path)
             raise FileNotFoundError(f"Labels {label_path} not found.")
         # do the evaluation
-        try:
-            result_metrics = evaluation.evaluate_segmentation_prediction(
-                str(prediction_path), str(label_path)
-            )
-            logger.info("        Finished Evaluation for %s", file)
-        except RuntimeError as err:
-            logger.exception("Evaluation failed for %s, %s", file, err)
+        result_metrics = evaluation.evaluate_segmentation_prediction(
+            str(prediction_path), str(label_path)
+        )
+        logger.info("        Finished Evaluation for %s", file)
         return result_metrics
 
     def evaluate_classification(self, file: str, prediction_path: Path) -> Dict[str, Any]:

@@ -210,6 +210,8 @@ def confusion_rate_sitk(output, target, target_class, non_target_class):
     n_confused = stats_f.GetSum()
     stats_f.Execute(label_target)
     n_target = stats_f.GetSum()
+    if np.isclose(n_target, 0):
+        return np.nan
     return n_confused / n_target
 
 

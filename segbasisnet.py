@@ -135,8 +135,13 @@ class SegBasisNet:
 
     def _set_up_inputs(self):
         """setup the inputs. Inputs are taken from the config file."""
+        ndim = len(cfg.train_input_shape) - 1
+        input_shape = [None] * ndim + cfg.train_input_shape[-1:]
         self.inputs["x"] = tf.keras.Input(
-            shape=cfg.train_input_shape, batch_size=None, dtype=cfg.dtype
+            shape=input_shape,
+            batch_size=None,
+            dtype=cfg.dtype,
+            name="input",
         )
         self.options["out_channels"] = cfg.num_classes_seg
 
@@ -646,7 +651,7 @@ class SegBasisNet:
         # export the images
         for out, tsk, task_name in zip(output, self.tasks, self.task_names):
             # remove padding
-            if task_name in ("segmentation", "autoencoder"):
+            if tsk in ("segmentation", "autoencoder"):
                 if self.options["rank"] == 2:
                     out = application_dataset.remove_padding(out)
                 else:
