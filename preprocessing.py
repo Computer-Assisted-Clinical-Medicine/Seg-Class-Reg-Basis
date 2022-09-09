@@ -260,6 +260,7 @@ def preprocess_dataset(
     data_set: dict,
     num_channels: int,
     base_dir: Path,
+    data_dir: Path,
     preprocessed_dir: Path,
     train_dataset: Collection,
     preprocessing_parameters: dict,
@@ -278,6 +279,8 @@ def preprocess_dataset(
         The number of channels (has to be the length of the "images" list)
     base_dir : Path
         The dir all other directories are relative to, usually the experiment dir
+    data_dir : Path
+        The path everything in the dataset is relative to
     preprocessed_dir : Path
         The directory to save the preprocessed data to (relative to base dir)
     train_dataset : Collection
@@ -312,7 +315,7 @@ def preprocess_dataset(
         images = data_set[name]["images"]
         assert len(images) == num_channels, "Number of modalities inconsistent"
         for num, img in enumerate(images):
-            norm_train_set[num].append(img)
+            norm_train_set[num].append(data_dir / img)
     # train the normalization
     normalizations = []
     for num in range(num_channels):
@@ -348,14 +351,14 @@ def preprocess_dataset(
     # resample and apply normalization
     for name, data in tqdm(data_set.items(), unit="image"):
         # define paths
-        image_paths = data["images"]
+        image_paths = [data_dir / img for img in data["images"]]
         image_rel_path = preprocessed_dir / str(
             cfg.sample_file_name_prefix + name + cfg.file_suffix
         )
         image_processed_path = base_dir / image_rel_path
         labels_exist = True
         if "labels" in data:
-            labels_path = data["labels"]
+            labels_path = data_dir / data["labels"]
             label_rel_path = preprocessed_dir / str(
                 cfg.label_file_name_prefix + name + cfg.file_suffix
             )
