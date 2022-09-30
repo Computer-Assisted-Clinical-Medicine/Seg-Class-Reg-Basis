@@ -109,7 +109,7 @@ class SegBasisNet:
         self._compile_options: Dict[str, Any] = {}
 
         if self.options["is_training"] and not self.options["do_finetune"]:
-            self._set_up_inputs()
+            self.set_up_inputs()
             self.options["regularizer"] = self._get_reg()
             # if training build everything according to parameters
             if hasattr(self.inputs["x"], "shape"):
@@ -133,7 +133,7 @@ class SegBasisNet:
                 loss_name
             )
 
-    def _set_up_inputs(self):
+    def set_up_inputs(self):
         """setup the inputs. Inputs are taken from the config file."""
         ndim = len(cfg.train_input_shape) - 1
         input_shape = [None] * ndim + cfg.train_input_shape[-1:]
@@ -693,22 +693,57 @@ class SegBasisNet:
         application_dataset.divisible_by = self.divisible_by
 
         if self.options["rank"] == 2:
-            results = []
-            for sample in application_dataset(filename):
-                # add batch dimension
-                sample_batch = sample.reshape((1,) + sample.shape)
-                res = self.model(sample_batch)
-                # make sure the result is a tuple
-                if len(res) == 1:
-                    res = (res,)
-                # convert to numpy
-                res_np = tuple(r.numpy() for r in res)
+            image_data = application_dataset(filename)
+
+            if self.model.output.shape[1:3].is_fully_defined():
+                predictions = []
+                window_shape = [1] + cfg.train_input_shape[:2]
+                overlap = [0, 15, 15]
+                image_data_patches = application_dataset.get_windowed_test_sample(
+                    image_data, window_shape, overlap
+                )
+                # remove z-dimension
+                image_data_patches = image_data_patches.reshape(
+                    [-1] + cfg.train_input_shape
+                )
+                # turn into batches with last batch being not a full one
+                batch_rest = image_data_patches.shape[0] % cfg.batch_size_train
+                batch_shape = (-1, cfg.batch_size_train) + image_data_patches.shape[-3:]
+                if batch_rest != 0:
+                    image_data_batched = image_data_patches[:-batch_rest].reshape(
+                        batch_shape
+                    )
+                    last_batch_shape = (batch_rest,) + image_data_patches.shape[-3:]
+                    last_batch = image_data_patches[-batch_rest:].reshape(last_batch_shape)
+                else:
+                    image_data_batched = image_data_patches.reshape(batch_shape)
+                for x in image_data_batched:
+                    pred = self.model(x, training=False)
+                    predictions.append(pred)
+                if batch_rest != 0:
+                    pred = self.model(last_batch, training=False)
+                    predictions.append(pred)
+                # concatenate
+                probability_patches = np.concatenate(predictions)
+                probability_map = application_dataset.stitch_patches(probability_patches)
+                output = [probability_map]
+            else:
+                results = []
+                for sample in image_data:
+                    # add batch dimension
+                    sample_batch = sample.reshape((1,) + sample.shape)
+                    res = self.model(sample_batch)
+                    # make sure the result is a tuple
+                    if len(res) == 1:
+                        res = (res,)
+                    # convert to numpy
+                    res_np = tuple(r.numpy() for r in res)
                 results.append(res_np)
 
-            # separate into multiple lists
-            output_lists = [[row[out] for row in results] for out in range(n_outputs)]
-            # and concatenate them
-            output = [np.concatenate(out, axis=0) for out in output_lists]
+                # separate into multiple lists
+                output_lists = [[row[out] for row in results] for out in range(n_outputs)]
+                # and concatenate them
+                output = [np.concatenate(out, axis=0) for out in output_lists]
         else:
             raise NotImplementedError("Only implemented for 2D")
         return output

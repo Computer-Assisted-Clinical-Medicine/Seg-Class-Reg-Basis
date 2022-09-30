@@ -95,14 +95,13 @@ class KeepBestModel(callbacks.ModelCheckpoint):
         specified rate.
     """
 
-    def __init__(self, filepath, max_keep=3, save_best_only=True, decay=None, **kwargs):
+    def __init__(self, filepath, max_keep=1, save_best_only=True, decay=None, **kwargs):
         super().__init__(filepath, save_best_only=save_best_only, **kwargs)
         # maximum number of checkpoints to keep
         self.max_keep = max_keep
         self.best_checkpoints = {}
         self.decay = decay
-        if decay is not None:
-            self.previous_val = 0
+        self.previous_val = None
 
     def on_epoch_end(self, epoch, logs=None):
         """On epoch end, save the checkpoint if it was better than max_keep and
@@ -113,6 +112,8 @@ class KeepBestModel(callbacks.ModelCheckpoint):
             val = logs[self.monitor]
         # with moving average if specified
         else:
+            if self.previous_val is None:
+                self.previous_val = logs[self.monitor]
             val = self.decay * self.previous_val + (1 - self.decay) * logs[self.monitor]
             self.previous_val = val
             logger.info("Monitored values %s is %5f", self.monitor, logs[self.monitor])

@@ -730,7 +730,7 @@ def export_powershell_scripts(script_dir: Path, experiments: list):
     # add the experiments
     command += '$script=${env:script_dir} + "\\run_single_experiment.py"\n'
     for exp in experiments:
-        command += f'\n\nWrite-Output "starting with {exp.name}"\n'
+        command += f'\n\nWrite-Output "starting with {exp.output_path_rel.parent.name}-{exp.name}"\n'
         command += f'$output_path=${{env:experiment_dir}} + "\\{exp.output_path_rel}"\n'
         for fold_num in range(exp.folds):
             command += f'$command="python " + ${{script}} + " -f {fold_num} -e " + \'${{output_path}}\'\n'

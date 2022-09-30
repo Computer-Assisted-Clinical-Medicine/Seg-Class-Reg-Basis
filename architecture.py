@@ -9,13 +9,12 @@ class Model(tf.keras.models.Model):
 """
 import logging
 
+import tensorflow as tf
+from SegmentationArchitectures import deeplab, densenets, unets
 from tensorflow.keras.models import Model
 
-from SegmentationArchitectures import densenets
-from SegmentationArchitectures import deeplab
-from SegmentationArchitectures import unets
+from . import config as cfg
 from .segbasisnet import SegBasisNet
-
 
 # configure logger
 logger = logging.getLogger(__name__)
@@ -305,6 +304,16 @@ class DeepLabv3plus(SegBasisNet):
     def get_name():
         return "DeepLabv3plus"
 
+    def set_up_inputs(self):
+        """setup the inputs. Inputs are taken from the config file."""
+        self.inputs["x"] = tf.keras.Input(
+            shape=cfg.train_input_shape,
+            batch_size=None,
+            dtype=cfg.dtype,
+            name="input",
+        )
+        self.options["out_channels"] = cfg.num_classes_seg
+
     def _build_model(self) -> Model:
         """Builds DeepLabv3plus"""
 
@@ -319,5 +328,5 @@ class DeepLabv3plus(SegBasisNet):
             backbone=self.options["backbone"],
             aspp_rates=self.options["aspp_rates"],
             activation=self.options["activation"],
-            debug=self.options["debug"],
+            debug=self.options.get("debug", False),
         )
