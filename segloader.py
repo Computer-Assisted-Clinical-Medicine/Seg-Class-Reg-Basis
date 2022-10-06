@@ -75,6 +75,9 @@ class SegLoader:
     tasks : Tuple[str], optional
         Which tasks to perform, available are segmentation, autoencoder,
         classification and regression by default ("segmentation",).
+    drop_remainder : bool, optional
+        If the remainder should be dropped, if None, it will True for training
+        and False for validation and testing
     """
 
     class MODES(Enum):
@@ -101,6 +104,7 @@ class SegLoader:
         sample_buffer_size=4000,
         tasks=("segmentation",),
         preprocessing_func=None,
+        drop_remainder=None,
         **kwargs,
     ):
 
@@ -159,6 +163,11 @@ class SegLoader:
         tf.random.set_seed(self.seed)
 
         self.preprocessing_func = preprocessing_func
+
+        if drop_remainder is None:
+            self.drop_remainder = mode == self.MODES.TRAIN
+        else:
+            self.drop_remainder = drop_remainder
 
         self._set_up_shapes_and_types()
 
@@ -325,9 +334,13 @@ class SegLoader:
 
             if self.mode is self.MODES.TRAIN:
                 # no smaller final batch
-                dataset = dataset.batch(batch_size=batch_size, drop_remainder=True)
+                dataset = dataset.batch(
+                    batch_size=batch_size, drop_remainder=self.drop_remainder
+                )
             else:
-                dataset = dataset.batch(batch_size=batch_size, drop_remainder=False)
+                dataset = dataset.batch(
+                    batch_size=batch_size, drop_remainder=self.drop_remainder
+                )
 
             if self.mode is not self.MODES.APPLY:
                 dataset = dataset.repeat(count=n_epochs)

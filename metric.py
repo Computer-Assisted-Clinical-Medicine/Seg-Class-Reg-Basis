@@ -159,7 +159,7 @@ class NMI(Metric):
             raise NotImplementedError("Different sample weights not implemented")
         # update count
         self.count.assign_add(nmi.shape[0])
-        # update dice
+        # update nmi
         self.nmi.assign_add(tf.reduce_sum(nmi))
 
     def result(self):
