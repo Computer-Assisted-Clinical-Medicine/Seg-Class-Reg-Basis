@@ -312,6 +312,7 @@ class SegBasisNet:
         reduce_lr_on_plateau=False,
         patience_lr_plat=5,
         factor_lr_plat=0.5,
+        write_tensorboard=True,
         visualization_dataset=None,
         write_grads=False,
         visualize_labels=True,
@@ -363,6 +364,8 @@ class SegBasisNet:
             The patience before reducing the learning rate, by default 5
         factor_lr_plat : float, optional
             The factor by which the learning rate is multiplied at a plateau, by default 0.5
+        write_tensorboard: bool, optional
+            If the tensorboard callback should be used, by default True
         visualization_dataset: SegBasisLoader, optional
             If provided, this dataset will be used to visualize the training results and input images.
             Writing the images can take a bit, so it is only done every 5 epochs.
@@ -477,26 +480,27 @@ class SegBasisNet:
             )
             callbacks.append(lr_reduce_callback)
 
-        # ignore the latent dimension for the autoencoder
-        if "autoencoder" in self.tasks and len(self.model.outputs) > 1:
-            ignore = list(range(1, len(self.model.outputs)))
-        else:
-            ignore = None
-        # for tensorboard
-        tb_callback = tf_utils.CustomTBCallback(
-            output_path / "logs",
-            update_freq="epoch",
-            profile_batch=(2, 12),
-            histogram_freq=1,
-            embeddings_freq=0,
-            write_grads=write_grads,
-            write_graph=write_graph,
-            visualization_dataset=visualization_dataset,
-            visualization_frequency=1,
-            write_labels=visualize_labels,
-            ignore=ignore,
-        )
-        callbacks.append(tb_callback)
+        if write_tensorboard:
+            # ignore the latent dimension for the autoencoder
+            if "autoencoder" in self.tasks and len(self.model.outputs) > 1:
+                ignore = list(range(1, len(self.model.outputs)))
+            else:
+                ignore = None
+            # for tensorboard
+            tb_callback = tf_utils.CustomTBCallback(
+                output_path / "logs",
+                update_freq="epoch",
+                profile_batch=(2, 12),
+                histogram_freq=1,
+                embeddings_freq=0,
+                write_grads=write_grads,
+                write_graph=write_graph,
+                visualization_dataset=visualization_dataset,
+                visualization_frequency=1,
+                write_labels=visualize_labels,
+                ignore=ignore,
+            )
+            callbacks.append(tb_callback)
 
         # callback for hyperparameters
         hparams = self.get_hyperparameter_dict()
