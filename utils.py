@@ -697,6 +697,7 @@ def export_powershell_scripts(script_dir: Path, experiments: list):
             powershell_file_tb.write(command)
 
     ps_script = script_dir / "start.ps1"
+    eval_script = script_dir / "start_eval.ps1"
     ps_script_tb = script_dir / "start_tensorboard.ps1"
 
     # make a powershell command, add env
@@ -728,16 +729,28 @@ def export_powershell_scripts(script_dir: Path, experiments: list):
     command_tb += "Invoke-Expression ${start}\n"
 
     # add the experiments
-    command += '$script=${env:script_dir} + "\\run_single_experiment.py"\n'
+    command += '\n\n\n$script_run=${env:script_dir} + "\\run_single_experiment.py"\n'
+    command_eval = (
+        command + '$script_eval=${env:script_dir} + "\\evaluate_single_experiment.py"\n'
+    )
     for exp in experiments:
-        command += f'\n\nWrite-Output "starting with {exp.output_path_rel.parent.name}-{exp.name}"\n'
-        command += f'$output_path=${{env:experiment_dir}} + "\\{exp.output_path_rel}"\n'
+        command_path = f'$output_path=${{env:experiment_dir}} + "\\{exp.output_path_rel}"\n'
+        command += command_path
+        command_eval += command_path
         for fold_num in range(exp.folds):
-            command += f'$command="python " + ${{script}} + " -f {fold_num} -e " + \'${{output_path}}\'\n'
-            command += "Invoke-Expression ${command}\n"
+            fold_task_name = f"{exp.output_path_rel.parent.name}-{exp.name} Fold {fold_num}"
+            command += f'Write-Output "starting with {fold_task_name}"\n'
+            command_eval += f'Write-Output "starting with {fold_task_name}"\n'
+            command += f'$command="python " + ${{script_run}} + " -f {fold_num} -e " + \'${{output_path}}\'\n'
+            command += "Invoke-Expression ${command}\n\n"
+            command_eval += f'$command="python " + ${{script_eval}} + " -f {fold_num} -e " + \'${{output_path}}\'\n'
+            command_eval += "Invoke-Expression ${command}\n\n"
 
     with open(ps_script, "w+", encoding="utf8") as powershell_file:
         powershell_file.write(command)
+
+    with open(eval_script, "w+", encoding="utf8") as powershell_file:
+        powershell_file.write(command_eval)
 
     # create tensorboard file
     with open(ps_script_tb, "w+", encoding="utf8") as powershell_file_tb:

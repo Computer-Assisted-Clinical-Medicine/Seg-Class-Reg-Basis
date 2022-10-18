@@ -404,7 +404,9 @@ def calculate_regression_metrics(prediction: np.ndarray, ground_truth: np.ndarra
     return metrics_dict
 
 
-def combine_evaluation_results_from_folds(results_path: Path, eval_files: List[Path]):
+def combine_evaluation_results_from_folds(
+    results_path: Path, eval_files: List[Path], overwrite=False
+):
     """Combine the results of the individual folds into one file and calculate
     the means and standard deviations in separate files
 
@@ -414,6 +416,8 @@ def combine_evaluation_results_from_folds(results_path: Path, eval_files: List[P
         The path where the results should be written
     eval_files : List[Path]
         A list of the eval files
+    overwrite : bool, optional
+        If existing files should be overwritten, by default False
     """
     if len(eval_files) == 0:
         logger.info("Eval files empty, nothing to combine")
@@ -426,6 +430,11 @@ def combine_evaluation_results_from_folds(results_path: Path, eval_files: List[P
     eval_mean_file_path = results_path / ("evaluation-mean-" + experiment + ".csv")
     eval_std_file_path = results_path / ("evaluation-std-" + experiment + ".csv")
     all_statistics_path = results_path / "evaluation-all-files.csv"
+
+    files = [eval_mean_file_path, eval_std_file_path, all_statistics_path]
+
+    if (not overwrite) and np.all([f.exists() for f in files]):
+        return
 
     statistics_list = []
     for eval_f in eval_files:
@@ -448,7 +457,7 @@ def combine_evaluation_results_from_folds(results_path: Path, eval_files: List[P
         std_statistics.to_csv(eval_std_file_path, sep=";")
 
 
-def make_boxplot_graphic(results_path: Path, result_file: Path):
+def make_boxplot_graphic(results_path: Path, result_file: Path, overwrite=False):
     """Make a boxplot of the resulting metrics
 
     Parameters
@@ -457,6 +466,8 @@ def make_boxplot_graphic(results_path: Path, result_file: Path):
         Plots where the plots should be saved (a plot directory is created there)
     result_file : Path
         The file where the results were previously exported
+    overwrite : bool, optional
+        If existing files should be overwritten, by default False
 
     Raises
     ------
@@ -484,6 +495,11 @@ def make_boxplot_graphic(results_path: Path, result_file: Path):
     ]
 
     for met in metric_names:
+
+        fig_path = plot_dir / (met.replace(" ", "") + ".png")
+
+        if fig_path.exists() and not overwrite:
+            continue
 
         groups = results.groupby("fold")  # pylint: disable=no-member
         labels = list(groups.groups.keys())
@@ -513,5 +529,5 @@ def make_boxplot_graphic(results_path: Path, result_file: Path):
             labels=labels,
         )
 
-        plt.savefig(plot_dir / (met.replace(" ", "") + ".png"), transparent=False)
+        plt.savefig(fig_path, transparent=False)
         plt.close()

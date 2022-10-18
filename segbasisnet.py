@@ -698,6 +698,7 @@ class SegBasisNet:
 
         if self.options["rank"] == 2:
             image_data = application_dataset(filename)
+            assert image_data.ndim == 4, "Image should have 4 dimensions"
 
             if self.model.output.shape[1:3].is_fully_defined():
                 predictions = []
@@ -742,7 +743,7 @@ class SegBasisNet:
                         res = (res,)
                     # convert to numpy
                     res_np = tuple(r.numpy() for r in res)
-                results.append(res_np)
+                    results.append(res_np)
 
                 # separate into multiple lists
                 output_lists = [[row[out] for row in results] for out in range(n_outputs)]

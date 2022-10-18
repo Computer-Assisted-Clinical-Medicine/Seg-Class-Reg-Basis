@@ -349,7 +349,7 @@ def preprocess_dataset(
     preprocessed_dict = {}
 
     # resample and apply normalization
-    for name, data in tqdm(data_set.items(), unit="image"):
+    for name, data in tqdm(data_set.items(), unit="image", desc="preprocess images"):
         # define paths
         image_paths = [data_dir / img for img in data["images"]]
         image_rel_path = preprocessed_dir / str(

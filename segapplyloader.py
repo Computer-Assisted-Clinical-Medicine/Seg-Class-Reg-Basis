@@ -148,7 +148,6 @@ class ApplyLoader(SegLoader):
             if self.last_file_name == file_name:
                 return self.last_file, None
 
-        # see if filename should be converted
         if os.path.exists(file_name):
             logger.debug("        Loading %s (%s)", file_name, self.mode)
             # load image
