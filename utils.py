@@ -35,7 +35,6 @@ def get_gpu(memory_limit=4000) -> str:
     SystemError
         If not free GPU is available
     """
-    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     output = (
         subprocess.check_output(
             "nvidia-smi --query-gpu=name,memory.total,memory.free,memory.used --format=csv,nounits",
@@ -44,19 +43,22 @@ def get_gpu(memory_limit=4000) -> str:
         .decode(sys.stdout.encoding)
         .strip()
     )
-    tf_gpus = [device.name for device in tf.config.list_physical_devices("GPU")]
-    gpus = pd.read_csv(StringIO(output))
-    gpus["tf_name"] = tf_gpus
+    gpus_tf = tf.config.list_physical_devices("GPU")
+    gpus_nvidia_smi = pd.read_csv(StringIO(output))
+    gpu_devices = {
+        tf.config.experimental.get_device_details(g)["device_name"]: g.name for g in gpus_tf
+    }
+    gpus_nvidia_smi["tf_name"] = gpus_nvidia_smi["name"].replace(gpu_devices)
     if "preferred_gpu" in os.environ:
-        preferred_gpu = gpus.loc[int(os.environ["preferred_gpu"])]
+        preferred_gpu = gpus_nvidia_smi.loc[int(os.environ["preferred_gpu"])]
     else:
         # get the GPU with the most free memory
-        preferred_gpu = gpus.sort_values(" memory.free [MiB]").iloc[-1]
+        preferred_gpu = gpus_nvidia_smi.sort_values(" memory.free [MiB]").iloc[-1]
     free = preferred_gpu[" memory.free [MiB]"]
     if free > memory_limit:
         print(f"Using {preferred_gpu['name']}")
         logger.info("Using %s", preferred_gpu["name"])
-        return preferred_gpu.tf_name.partition("physical_device:")[2]
+        return preferred_gpu.tf_name.partition("physical_device:")[-1]
     else:
         raise SystemError("No free GPU available")
 
