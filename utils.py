@@ -368,7 +368,8 @@ def gather_results(
             results_all_list.append(results)
         else:
             name = Path(results_file).parent.parent.name
-            print(f"Could not find the evaluation file for {name}")
+            path_name = Path(results_file).parent.parent.parent.name
+            print(f"Could not find the evaluation file for {path_name} {name}")
 
     if len(results_all_list) == 0:
         print("No files found")
@@ -729,12 +730,14 @@ def export_powershell_scripts(script_dir: Path, experiments: list):
     command_tb += "Invoke-Expression ${start}\n"
 
     # add the experiments
-    command += '\n\n\n$script_run=${env:script_dir} + "\\run_single_experiment.py"\n'
     command_eval = (
         command + '$script_eval=${env:script_dir} + "\\evaluate_single_experiment.py"\n'
     )
+    command += '$script_run=${env:script_dir} + "\\run_single_experiment.py"\n'
     for exp in experiments:
-        command_path = f'$output_path=${{env:experiment_dir}} + "\\{exp.output_path_rel}"\n'
+        command_path = (
+            f'\n\n$output_path=${{env:experiment_dir}} + "\\{exp.output_path_rel}"\n'
+        )
         command += command_path
         command_eval += command_path
         for fold_num in range(exp.folds):
