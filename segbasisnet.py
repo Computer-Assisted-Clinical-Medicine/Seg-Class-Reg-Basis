@@ -733,13 +733,21 @@ class SegBasisNet:
                 probability_map = application_dataset.stitch_patches(probability_patches)
                 output = [probability_map]
             else:
+                # reduce batch size according to data size
+                batch_size = int(
+                    np.prod(cfg.train_input_shape)
+                    / np.prod(image_data.shape[1:])
+                    * cfg.batch_size_train
+                )
+                image_data_batched = [
+                    image_data[i : i + batch_size]
+                    for i in range(0, image_data.shape[0], batch_size)
+                ]
                 results = []
-                for sample in image_data:
-                    # add batch dimension
-                    sample_batch = sample.reshape((1,) + sample.shape)
-                    res = self.model(sample_batch)
+                for sample in image_data_batched:
+                    res = self.model(sample)
                     # make sure the result is a tuple
-                    if len(res) == 1:
+                    if not isinstance(res, tuple):
                         res = (res,)
                     # convert to numpy
                     res_np = tuple(r.numpy() for r in res)
