@@ -292,9 +292,9 @@ def export_hyperparameters(experiments, experiment_dir):
                     hparams_changed.drop(columns=col, inplace=True)
 
     hparams.to_csv(experiments_file, sep=";")
-    hparams.to_json(experiments_file.with_suffix(".json"))
+    hparams.to_json(experiments_file.with_suffix(".json"), indent=4)
     hparams_changed.to_csv(hyperparameter_changed_file, sep=";")
-    hparams_changed.to_json(hyperparameter_changed_file.with_suffix(".json"))
+    hparams_changed.to_json(hyperparameter_changed_file.with_suffix(".json"), indent=4)
 
 
 def gather_results(

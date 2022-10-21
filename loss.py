@@ -556,13 +556,20 @@ def calculate_nmi(
         y_true = tf.clip_by_value(y_true, clip_value_min=min_val, clip_value_max=max_val)
         y_pred = tf.clip_by_value(y_pred, clip_value_min=min_val, clip_value_max=max_val)
 
+    if not y_true.dtype == y_pred.dtype:
+        y_true = tf.cast(y_true, y_pred.dtype)
+    if not bin_centers.dtype == y_pred.dtype:
+        bin_centers = tf.cast(bin_centers, y_pred.dtype)
+    if not preterm.dtype == y_pred.dtype:
+        preterm = tf.cast(preterm, y_pred.dtype)
+
     # reshape: flatten images into shape (batch_size, height x width x depth x chan, 1)
     y_true = tf.reshape(y_true, (-1, tf.math.reduce_prod(y_true.shape[1:])))
     y_true = tf.expand_dims(y_true, 2)
     y_pred = tf.reshape(y_pred, (-1, tf.math.reduce_prod(y_pred.shape[1:])))
     y_pred = tf.expand_dims(y_pred, 2)
 
-    number_voxels = tf.cast(K.shape(y_pred)[1], tf.float32)
+    number_voxels = tf.cast(K.shape(y_pred)[1], y_pred.dtype)
 
     # reshape bin centers to be (1, 1, B)
     bin_shape = [1, 1, np.prod(bin_centers.get_shape().as_list())]
@@ -595,7 +602,8 @@ def calculate_nmi(
 
     if normalize and mutual_info > K.epsilon():
         mutual_info = mutual_info / entropy(prob_a)
-    return tf.clip_by_value(mutual_info, 0, np.inf, name=name)
+    result = tf.clip_by_value(mutual_info, 0, np.inf, name=name)
+    return tf.cast(result, tf.float32)
 
 
 class MutualInformation(losses.Loss):

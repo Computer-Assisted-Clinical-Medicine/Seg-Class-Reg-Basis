@@ -15,7 +15,7 @@ import yaml
 from tqdm.autonotebook import tqdm
 
 from . import config as cfg
-from . import evaluation, postprocessing, segbasisnet, utils
+from . import evaluation, postprocessing, segbasisnet
 from .segloader import SegLoader
 from .segapplyloader import ApplyLoader
 
@@ -280,9 +280,6 @@ class Experiment:
 
         # set postprocessing method
         self.postprocessing_method = postprocessing.keep_big_structures
-
-        # only get the gpu once
-        self.gpu = None
 
         # export parameters
         self.export_experiment()
@@ -701,13 +698,12 @@ class Experiment:
                 if "discriminator" not in tsk
             ]
             if not (result_npz.exists() or np.all([t.exists() for t in task_files])):
-                with self.get_gpu():
-                    net.apply(
-                        version=version,
-                        application_dataset=testloader,
-                        filename=file,
-                        apply_path=apply_path,
-                    )
+                net.apply(
+                    version=version,
+                    application_dataset=testloader,
+                    filename=file,
+                    apply_path=apply_path,
+                )
 
             # postprocess the image
             if "segmentation" in self.tasks:
@@ -935,12 +931,6 @@ class Experiment:
             raise err
         return result_metrics
 
-    def get_gpu(self) -> tf.device:
-        """Only get a GPU once needed"""
-        if self.gpu is None:
-            self.gpu = tf.device(utils.get_gpu(memory_limit=2000))
-        return self.gpu
-
     def train_fold(self, fold):
         """Run the training:
 
@@ -986,8 +976,7 @@ class Experiment:
             if cfg.batch_size_train > cfg.samples_per_volume * cfg.num_files:
                 print("Reduce batch size to epoch size")
                 cfg.batch_size_train = cfg.samples_per_volume * cfg.num_files
-            with self.get_gpu():
-                self.training(folder_name, train_files, vald_files)
+            self.training(folder_name, train_files, vald_files)
 
         tqdm.write(
             f"Finished training {self.name} {folder_name} (Fold {fold+1} of {self.folds})"
