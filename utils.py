@@ -17,13 +17,15 @@ import tensorflow as tf
 logger = logging.getLogger(__name__)
 
 
-def get_gpu(memory_limit=4000) -> str:
+def get_gpu(memory_limit=4000, silent=False) -> str:
     """Get the name of the GPU with the most free memory as required by tensorflow
 
     Parameters
     ----------
     memory_limit : int, optional
         The minimum free memory in MB, by default 4000
+    silent : bool, optional
+        If the card should not be printed, by default False
 
     Returns
     -------
@@ -56,9 +58,11 @@ def get_gpu(memory_limit=4000) -> str:
         preferred_gpu = gpus_nvidia_smi.sort_values(" memory.free [MiB]").iloc[-1]
     free = preferred_gpu[" memory.free [MiB]"]
     if free > memory_limit:
-        print(f"Using {preferred_gpu['name']}")
+        if not silent:
+            print(f"Using {preferred_gpu['name']}")
         logger.info("Using %s", preferred_gpu["name"])
-        return preferred_gpu.tf_name.partition("physical_device:")[-1]
+        selected_gpu = preferred_gpu.tf_name.partition("physical_device:")[-1]
+        return selected_gpu
     else:
         raise SystemError("No free GPU available")
 
