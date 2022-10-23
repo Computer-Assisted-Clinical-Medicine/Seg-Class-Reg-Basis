@@ -645,7 +645,7 @@ nvidia-smi
         f.write(slurm_file)
 
 
-def export_batch_file(filename, commands):
+def export_batch_file(filename, commands, file_start=""):
     """Exports a list of commands (one per line) as batch script
 
     Parameters
@@ -654,11 +654,13 @@ def export_batch_file(filename, commands):
         The new file
     commands : [str]
         List of commands (as strings)
+    file_start : str, optional
+        Is added to the start of each file, by default empty
     """
 
     filename = Path(filename)
 
-    batch_file = "#!/bin/bash"
+    batch_file = file_start + "#!/bin/bash"
 
     for com in commands:
         batch_file += f"\n\n{com}"
@@ -673,7 +675,7 @@ def export_batch_file(filename, commands):
     os.chmod(filename, stat.S_IRWXU)
 
 
-def export_powershell_scripts(script_dir: Path, experiments: list):
+def export_powershell_scripts(script_dir: Path, experiments: list, file_start=""):
     """Export power shell script to start the different folds and to start tensorboard.
 
     Parameters
@@ -682,6 +684,8 @@ def export_powershell_scripts(script_dir: Path, experiments: list):
         The directory where the scripts should be placed
     experiments : List[Experiment]
         The experiments to export
+    file_start : str, optional
+        Is added to the start of each file, by default empty
     """
     # set the environment (might be changed for each machine)
     first_exp = experiments[0]
@@ -708,10 +712,11 @@ def export_powershell_scripts(script_dir: Path, experiments: list):
     ps_script_tb = script_dir / "start_tensorboard.ps1"
 
     # make a powershell command, add env
+    command = file_start
     if script_dir.resolve() == experiment_dir.resolve():
-        command = '$set_env=".\\set_env.ps1"\n'
+        command += '$set_env=".\\set_env.ps1"\n'
     else:
-        command = "$script_parent = (get-item $PSScriptRoot ).parent.FullName\n"
+        command += "$script_parent = (get-item $PSScriptRoot ).parent.FullName\n"
         command += '$set_env="${script_parent}\\set_env.ps1"\n'
     command += "$set_env=$set_env -replace ' ', '` '\n"
     command += "Invoke-Expression ${set_env}\n"
@@ -769,7 +774,7 @@ def export_powershell_scripts(script_dir: Path, experiments: list):
     print(f"To run tensorboard, execute {ps_script_tb}")
 
 
-def export_experiments_run_files(script_dir: Path, experiments: list):
+def export_experiments_run_files(script_dir: Path, experiments: list, file_start=""):
     """Export the files to run the experiments. These are first the hyperparameter
     comparison files and then depending on the environment (Windows or Linux cluster),
     either bash script to submit slurm jobs or powershell scripts to start the
@@ -781,6 +786,8 @@ def export_experiments_run_files(script_dir: Path, experiments: list):
         The directory where the scripts should be placed
     experiments : List[Experiment]
         The experiments to export
+    file_start : str, optional
+        Is added to the start of each file, by default empty
     """
 
     # export all hyperparameters
@@ -799,6 +806,7 @@ def export_experiments_run_files(script_dir: Path, experiments: list):
         export_batch_file(
             filename=start_all_batch,
             commands=[f"sbatch {f}" for f in slurm_files],
+            file_start=file_start,
         )
 
         # and create some needed directories (without their log dirs, jobs don't start)
@@ -811,4 +819,4 @@ def export_experiments_run_files(script_dir: Path, experiments: list):
         print(f"To start the training, execute {start_all_batch}")
     # if on local computer, export powershell start file
     else:
-        export_powershell_scripts(script_dir, experiments)
+        export_powershell_scripts(script_dir, experiments, file_start)
