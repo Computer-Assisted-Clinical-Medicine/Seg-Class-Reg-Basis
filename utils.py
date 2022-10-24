@@ -253,6 +253,7 @@ def export_hyperparameters(experiments, experiment_dir):
                 "dimensions": exp.hyper_parameters["dimensions"],
                 "path": str(exp.output_path_rel),
                 "exp_group_name": str(exp.output_path_rel.parent.name),
+                "versions": exp.versions,
             }
         )
 
@@ -708,7 +709,7 @@ def export_powershell_scripts(script_dir: Path, experiments: list, file_start=""
             powershell_file_tb.write(command)
 
     ps_script = script_dir / "start.ps1"
-    eval_script = script_dir / "start_eval.ps1"
+    ps_script_single = script_dir / "start_individual_jobs.ps1"
     ps_script_tb = script_dir / "start_tensorboard.ps1"
 
     # make a powershell command, add env
@@ -729,6 +730,12 @@ def export_powershell_scripts(script_dir: Path, experiments: list, file_start=""
     command += '$activate=${env:script_dir} + "\\venv\\Scripts\\activate.ps1"\n'
     command += "Invoke-Expression ${activate}\n"
 
+    command_all = command
+    command_all += '$script=${env:script_dir} + "\\run_all_experiments.py"\n'
+    command_all += '$command="python " + "${script}"\n'
+    command_all += "Write-Output $command\n"
+    command_all += "Invoke-Expression ${command}\n"
+
     # tensorboard command (up to here, it is the same)
     command_tb = command
     command_tb += "$start='tensorboard --logdir=\"' + "
@@ -741,30 +748,23 @@ def export_powershell_scripts(script_dir: Path, experiments: list, file_start=""
     command_tb += "Invoke-Expression ${start}\n"
 
     # add the experiments
-    command_eval = (
-        command + '$script_eval=${env:script_dir} + "\\evaluate_single_experiment.py"\n'
-    )
     command += '$script_run=${env:script_dir} + "\\run_single_experiment.py"\n'
     for exp in experiments:
         command_path = (
             f'\n\n$output_path=${{env:experiment_dir}} + "\\{exp.output_path_rel}"\n'
         )
         command += command_path
-        command_eval += command_path
         for fold_num in range(exp.folds):
             fold_task_name = f"{exp.output_path_rel.parent.name}-{exp.name} Fold {fold_num}"
             command += f'Write-Output "starting with {fold_task_name}"\n'
-            command_eval += f'Write-Output "starting with {fold_task_name}"\n'
             command += f'$command="python " + ${{script_run}} + " -f {fold_num} -e " + \'${{output_path}}\'\n'
             command += "Invoke-Expression ${command}\n\n"
-            command_eval += f'$command="python " + ${{script_eval}} + " -f {fold_num} -e " + \'${{output_path}}\'\n'
-            command_eval += "Invoke-Expression ${command}\n\n"
 
     with open(ps_script, "w+", encoding="utf8") as powershell_file:
-        powershell_file.write(command)
+        powershell_file.write(command_all)
 
-    with open(eval_script, "w+", encoding="utf8") as powershell_file:
-        powershell_file.write(command_eval)
+    with open(ps_script_single, "w+", encoding="utf8") as powershell_file:
+        powershell_file.write(command)
 
     # create tensorboard file
     with open(ps_script_tb, "w+", encoding="utf8") as powershell_file_tb:
