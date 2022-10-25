@@ -254,6 +254,7 @@ def export_hyperparameters(experiments, experiment_dir):
                 "path": str(exp.output_path_rel),
                 "exp_group_name": str(exp.output_path_rel.parent.name),
                 "versions": exp.versions,
+                "external": exp.external_test_set is not None,
             }
         )
 
