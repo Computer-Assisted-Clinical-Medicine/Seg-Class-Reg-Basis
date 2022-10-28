@@ -329,7 +329,7 @@ def preprocess_dataset(
             for key, value in preprocessing_parameters["normalization_parameters"].items():
                 if not parameters_from_file[key] == value:
                     raise ValueError(
-                        "Normalization of preprocessed images has different parameters."
+                        f"Normalization of preprocessed images has different parameters for {key}."
                     )
         else:
             if pass_modality:
