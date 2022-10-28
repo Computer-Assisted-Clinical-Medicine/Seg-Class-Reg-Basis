@@ -50,6 +50,15 @@ def get_gpu(memory_limit=4000, silent=False) -> str:
     gpu_devices = {
         tf.config.experimental.get_device_details(g)["device_name"]: g.name for g in gpus_tf
     }
+    if not "CUDA_VISIBLE_DEVICES" in os.environ:
+        cuda_num = {
+            tf.config.experimental.get_device_details(g)["device_name"]: str(i)
+            for i, g in enumerate(gpus_tf)
+        }
+        gpus_nvidia_smi["cuda_num"] = gpus_nvidia_smi["name"].replace(cuda_num)
+    else:
+        to_drop = [n not in gpu_devices for n in gpus_nvidia_smi["name"]]
+        gpus_nvidia_smi.drop(index=gpus_nvidia_smi.index[to_drop], inplace=True)
     gpus_nvidia_smi["tf_name"] = gpus_nvidia_smi["name"].replace(gpu_devices)
     if "preferred_gpu" in os.environ:
         preferred_gpu = gpus_nvidia_smi.loc[int(os.environ["preferred_gpu"])]
@@ -62,6 +71,8 @@ def get_gpu(memory_limit=4000, silent=False) -> str:
             print(f"Using {preferred_gpu['name']}")
         logger.info("Using %s", preferred_gpu["name"])
         selected_gpu = preferred_gpu.tf_name.partition("physical_device:")[-1]
+        if not "CUDA_VISIBLE_DEVICES" in os.environ:
+            os.environ["CUDA_VISIBLE_DEVICES"] = preferred_gpu.cuda_num
         return selected_gpu
     else:
         raise SystemError("No free GPU available")
