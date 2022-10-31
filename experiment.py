@@ -48,6 +48,7 @@ class Experiment:
         tasks="segmentation",
         expanded_tasks=None,
         mapping=None,
+        priority=0,
     ):
         """Run experiments using a fixed set of hyperparameters
 
@@ -96,6 +97,8 @@ class Experiment:
             mapping: dict, optional
                 For classification and regression tasks, the mapping between the real values and
                 training values, by default None
+            priority: int, optional
+                The priority of the experiment, can be used to decide the order
         """
         # do a deep copy of the parameters, because they contain lists and dicts
         self.hyper_parameters = copy.deepcopy(hyper_parameters)
@@ -280,6 +283,9 @@ class Experiment:
 
         # set postprocessing method
         self.postprocessing_method = postprocessing.keep_big_structures
+
+        # set the priority
+        self.priority = priority
 
         # export parameters
         self.export_experiment()
@@ -1177,6 +1183,7 @@ class Experiment:
             "tasks": self.tasks,
             "expanded_tasks": self.expanded_tasks,
             "mapping": self.mapping,
+            "priority": self.priority,
         }
         if hasattr(self, "external_test_set"):
             if self.external_test_set is not None:

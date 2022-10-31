@@ -240,14 +240,15 @@ def generate_res_path(version: str, external: bool, postprocessed: bool, task: s
     return res_path
 
 
-def export_hyperparameters(experiments, experiment_dir):
+def export_hyperparameters(experiments, target_dir, keep_existing=True):
     """
     Export a summary of the experiments and compare the hyperparameters of all experiments
     and collect the ones that were changed.
     """
     # export the hyperparameters
-    experiments_file = experiment_dir / "experiments.csv"
-    hyperparameter_changed_file = experiment_dir / "hyperparameters_changed.csv"
+    experiment_dir = Path(os.environ["experiment_dir"])
+    experiments_file = target_dir / "experiments.json"
+    hyperparameter_changed_file = target_dir / "hyperparameters_changed.json"
     # collect all results
     hparams = []
     for exp in experiments:
@@ -266,11 +267,27 @@ def export_hyperparameters(experiments, experiment_dir):
                 "exp_group_name": str(exp.output_path_rel.parent.name),
                 "versions": exp.versions,
                 "external": exp.external_test_set is not None,
+                "priority": exp.priority,
             }
         )
 
-    # convert to dataframes
+    # convert to data frames
     hparams = pd.DataFrame(hparams)
+
+    if keep_existing and experiments_file.exists():
+        hparams_old = pd.read_json(experiments_file)
+        params_present = hparams_old.path.apply(
+            lambda x: (experiment_dir / x / "parameters.yaml").exists()
+        )
+        hparams_old = hparams_old[params_present]
+        missing = hparams_old.path.apply(
+            lambda x: np.all(str(x) != hparams.path.astype(str))
+        )
+        hparams_old = hparams_old[missing]
+        hparams = pd.concat([hparams_old, hparams])
+        hparams.sort_values("priority", ascending=False, na_position="last", inplace=True)
+        hparams = hparams.reset_index().drop(columns="index")
+
     # find changed parameters
     changed_params = []
     # drop the results file when analyzing the changed hyperparameters
@@ -287,7 +304,14 @@ def export_hyperparameters(experiments, experiment_dir):
             hparams_changed["n_filters"].dropna().apply(lambda x: x[0])
         )
     if "normalizing_method" in hparams_changed:
-        n_name = hparams_changed["normalizing_method"].apply(lambda x: x.name)
+
+        def get_norm_name(obj):
+            if isinstance(obj, dict):
+                return obj["name"]
+            else:
+                return obj.name
+
+        n_name = hparams_changed["normalizing_method"].apply(get_norm_name)
         hparams_changed.loc[:, "normalizing_method"] = n_name
     # ignore the batch size (it correlates with the dimension)
     if "batch_size" in hparams_changed:
@@ -307,11 +331,14 @@ def export_hyperparameters(experiments, experiment_dir):
             for col in arch_params:
                 if np.all(arch_params[col] == 1):
                     hparams_changed.drop(columns=col, inplace=True)
+    # drop the priority
+    if "priority" in hparams_changed:
+        hparams_changed.drop(columns="priority", inplace=True)
 
-    hparams.to_csv(experiments_file, sep=";")
-    hparams.to_json(experiments_file.with_suffix(".json"), indent=4)
-    hparams_changed.to_csv(hyperparameter_changed_file, sep=";")
-    hparams_changed.to_json(hyperparameter_changed_file.with_suffix(".json"), indent=4)
+    hparams.to_csv(experiments_file.with_suffix(".csv"), sep=";")
+    hparams.to_json(experiments_file, indent=4)
+    hparams_changed.to_csv(hyperparameter_changed_file.with_suffix(".csv"), sep=";")
+    hparams_changed.to_json(hyperparameter_changed_file, indent=4)
 
 
 def gather_results(
