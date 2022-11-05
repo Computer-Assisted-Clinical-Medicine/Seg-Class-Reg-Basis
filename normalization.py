@@ -83,7 +83,7 @@ class Normalization:
     def check_image(self, image: np.ndarray) -> None:
         # do checks
         assert not np.any(np.isnan(image)), "NaNs in normalized image."
-        assert np.abs(image).max() < 1e3, "Voxel values over 1000."
+        assert np.abs(image).max() < 1e4, "Voxel values over 10000."
 
     def get_parameters(self) -> Dict[str, Any]:
         """get the parameters used to initialize the method, they are converted
@@ -147,6 +147,7 @@ class NORMALIZING(Enum):
     To get the corresponding class, call get_class
     """
 
+    NO_NORM = -1
     WINDOW = 0
     MEAN_STD = 1
     QUANTILE = 2
@@ -233,6 +234,14 @@ def window(image: np.ndarray, lower: float, upper: float):
     return image_normed  # type: ignore
 
 
+class NoNorm(Normalization):
+    """Will not perform any normalization, but can be passed as object"""
+
+    enum = NORMALIZING.NO_NORM
+
+    parameters_to_save: List[str] = []
+
+
 class Window(Normalization):
     """Normalize the image by a window. The image is clipped to the lower and
     upper value and then scaled to a range between -1 and 1.
@@ -243,7 +252,7 @@ class Window(Normalization):
         The lower window value
     upper : float
         The higher value
-    normalize_channelwise : bool
+    normalize_channelwise : bool, optional
         If it should be applied channelwise, does not matter for window.
     """
 
@@ -251,7 +260,7 @@ class Window(Normalization):
 
     parameters_to_save = ["lower", "upper", "normalize_channelwise"]
 
-    def __init__(self, lower: float, upper: float, normalize_channelwise: bool) -> None:
+    def __init__(self, lower: float, upper: float, normalize_channelwise=True) -> None:
         self.lower = lower
         self.upper = upper
         if lower >= upper:
