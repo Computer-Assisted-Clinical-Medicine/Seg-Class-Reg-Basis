@@ -313,7 +313,14 @@ def preprocess_dataset(
             norm_train_set[num].append(data_dir / img)
     # train the normalization
     normalizations = []
+    norm_params = preprocessing_parameters["normalization_parameters"]
     for num in range(num_channels):
+        if isinstance(norm_params, dict):
+            norm_params_channel = norm_params
+        elif isinstance(norm_params, list):
+            norm_params_channel = norm_params[num]
+        else:
+            raise TypeError("normalization_parameters should be dict or list")
         norm_file = preprocessed_dir_abs / f"normalization_mod{num}.yaml"
         if not norm_file.parent.exists():
             norm_file.parent.mkdir(parents=True)
@@ -321,20 +328,16 @@ def preprocess_dataset(
             norm = normalization_class.from_file(norm_file)
             # make sure the parameters are correct
             parameters_from_file = norm.get_parameters()
-            for key, value in preprocessing_parameters["normalization_parameters"].items():
+            for key, value in norm_params_channel.items():
                 if not parameters_from_file[key] == value:
                     raise ValueError(
                         f"Normalization of preprocessed images has different parameters for {key}."
                     )
         else:
             if pass_modality:
-                norm = normalization_class(
-                    mod_num=num, **preprocessing_parameters["normalization_parameters"]
-                )
+                norm = normalization_class(mod_num=num, **norm_params_channel)
             else:
-                norm = normalization_class(
-                    **preprocessing_parameters["normalization_parameters"]
-                )
+                norm = normalization_class(**norm_params_channel)
             norm.train_normalization(norm_train_set[num])
             # and save it
             norm.to_file(norm_file)
