@@ -769,12 +769,6 @@ def export_powershell_scripts(script_dir: Path, experiments: list, file_start=""
     command += '$activate=${env:script_dir} + "\\venv\\Scripts\\activate.ps1"\n'
     command += "Invoke-Expression ${activate}\n"
 
-    command_all = command
-    command_all += '$script=${env:script_dir} + "\\run_all_experiments.py"\n'
-    command_all += '$command="python " + "${script}"\n'
-    command_all += "Write-Output $command\n"
-    command_all += "Invoke-Expression ${command}\n"
-
     # tensorboard command (up to here, it is the same)
     command_tb = command
     command_tb += "$start='tensorboard --logdir=\"' + "
@@ -785,6 +779,23 @@ def export_powershell_scripts(script_dir: Path, experiments: list, file_start=""
     command_tb += f"${{env:experiment_dir}} + '\\{rel_dir}\"'\n"
     command_tb += "Write-Output $start\n"
     command_tb += "Invoke-Expression ${start}\n"
+
+    # add GPU selection
+    command += '\n$print_gpus="python " + ${env:script_dir} +'
+    command += ' "\\SegClassRegBasis\\print_tf_gpus.py"\n'
+    command += "if ($null -eq $env:CUDA_VISIBLE_DEVICES) {\n"
+    command += "    Invoke-Expression ${print_gpus}\n"
+    command += '    $env:CUDA_VISIBLE_DEVICES=Read-Host -Prompt "Use GPU number"\n'
+    command += "} else {\n"
+    command += '    Write-Output "Using the following GPU:"\n'
+    command += "    Invoke-Expression ${print_gpus}\n"
+    command += "}\n\n"
+
+    command_all = command
+    command_all += '$script=${env:script_dir} + "\\run_all_experiments.py"\n'
+    command_all += '$command="python " + "${script}"\n'
+    command_all += "Write-Output $command\n"
+    command_all += "Invoke-Expression ${command}\n"
 
     # add the experiments
     command += '$script_run=${env:script_dir} + "\\run_single_experiment.py"\n'
