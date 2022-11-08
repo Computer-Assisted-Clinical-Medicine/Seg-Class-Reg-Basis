@@ -13,7 +13,6 @@ from typing import (
     List,
     Optional,
     OrderedDict,
-    Tuple,
     Union,
 )
 
@@ -557,7 +556,9 @@ class SegBasisNet:
         self.model.save(model_dir / "model-best", save_format="tf")
         print("Saving finished.")
 
-    def get_task_metrics(self, metrics: Dict, tasks: Collection[str]) -> List[Tuple[Any]]:
+    def get_task_metrics(
+        self, metrics: Dict, tasks: Collection[str]
+    ) -> List[Collection[Any]]:
         """Get the metrics for the individual tasks as list of tuple
 
         Parameters
