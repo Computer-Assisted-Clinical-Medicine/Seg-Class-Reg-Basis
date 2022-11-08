@@ -13,6 +13,7 @@ from typing import (
     List,
     Optional,
     OrderedDict,
+    Tuple,
     Union,
 )
 
@@ -24,7 +25,7 @@ from tensorflow.keras.optimizers import schedules
 
 from . import config as cfg
 from . import loss, tf_utils, utils
-from .metric import Dice, NMI
+from .metric import NMI, Dice
 
 # configure logger
 logger = logging.getLogger(__name__)
@@ -414,7 +415,7 @@ class SegBasisNet:
                 "autoencoder": ("rmse", "nmi"),
             }
 
-        metric_objects = self._get_task_metrics(metrics, self.tasks)
+        metric_objects = self.get_task_metrics(metrics, self.tasks)
 
         if isinstance(l_r, (list, tuple)):
             l_r = self.get_lr_scheduler(*l_r)
@@ -556,7 +557,21 @@ class SegBasisNet:
         self.model.save(model_dir / "model-best", save_format="tf")
         print("Saving finished.")
 
-    def _get_task_metrics(self, metrics: Dict, tasks: Collection[str]):
+    def get_task_metrics(self, metrics: Dict, tasks: Collection[str]) -> List[Tuple[Any]]:
+        """Get the metrics for the individual tasks as list of tuple
+
+        Parameters
+        ----------
+        metrics : Dict
+            The metrics as dict, the keys are the tasks nad the values are lists of metrics
+        tasks : Collection[str]
+            The tasks that should be used
+
+        Returns
+        -------
+        list
+            A list with an entry for each task with the metric objects
+        """
         # set metrics
         metric_objects: List[Collection[Union[str, Callable]]] = []
         for t_name in tasks:
@@ -594,6 +609,7 @@ class SegBasisNet:
             "tp": tf.keras.metrics.TruePositives,
             "precision": tf.keras.metrics.Precision,
             "recall": tf.keras.metrics.Recall,
+            "acc": tf.keras.metrics.Accuracy,
             "auc": tf.keras.metrics.AUC,
             "rmse": tf.keras.metrics.RootMeanSquaredError,
         }

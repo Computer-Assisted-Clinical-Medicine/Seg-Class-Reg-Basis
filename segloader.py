@@ -78,6 +78,9 @@ class SegLoader:
     drop_remainder : bool, optional
         If the remainder should be dropped, if None, it will True for training
         and False for validation and testing
+    load_incomplete_labels : bool, optional
+        Load incomplete labels, when no labels are there and set to None,
+        NaNs are provided, by default False.
     """
 
     class MODES(Enum):
@@ -105,6 +108,7 @@ class SegLoader:
         tasks=("segmentation",),
         preprocessing_func=None,
         drop_remainder=None,
+        load_incomplete_labels=False,
         **kwargs,
     ):
 
@@ -168,6 +172,8 @@ class SegLoader:
             self.drop_remainder = mode == self.MODES.TRAIN
         else:
             self.drop_remainder = drop_remainder
+
+        self.load_incomplete_labels = load_incomplete_labels
 
         self._set_up_shapes_and_types()
 
@@ -488,8 +494,11 @@ class SegLoader:
         sample = os.path.join(cfg.data_base_dir, data["image"])
         assert os.path.exists(sample), "image not found."
         if "labels" in data:
-            labels = os.path.join(cfg.data_base_dir, data["labels"])
-            assert os.path.exists(labels), "labels not found."
+            if self.load_incomplete_labels and data["labels"] is None:
+                labels = None
+            else:
+                labels = os.path.join(cfg.data_base_dir, data["labels"])
+                assert os.path.exists(labels), "labels not found."
         else:
             labels = None
         return sample, labels
@@ -527,7 +536,9 @@ class SegLoader:
         data_file, label_file = self.get_filenames(file_id, **kwargs)
         # load images
         data_img = sitk.ReadImage(str(data_file))
-        if load_labels:
+        if load_labels and not self.load_incomplete_labels:
+            assert label_file is not None, "labels should be provided"
+        if load_labels and label_file is not None:
             label_img = sitk.ReadImage(str(label_file))
         else:
             label_img = None
@@ -605,19 +616,22 @@ class SegLoader:
             lbl = None
         else:
             lbl = sitk.GetArrayFromImage(label_img)
-            assert np.any(lbl != 0), "no labels found after sITK augmentation"
 
         # augment the numpy arrays
         if self.mode == self.MODES.TRAIN:
+            lbl_pre_aug = lbl
             data, lbl = self._augment_numpy(data, lbl)
 
-        # check that there are labels
-        assert np.any(lbl != 0), "no labels found after numpy augmentation"
-        # check shape
-        assert len(data.shape) == 4, "data should be 4d"
-        if lbl is not None:
-            assert len(lbl.shape) == 3, "labels should be 3d"
-            assert np.all(data.shape[:-1] == lbl.shape), f"{data.shape} - {lbl.shape}"
+            # check shape
+            assert len(data.shape) == 4, "data should be 4d"
+            # check that there are labels
+            if lbl is not None:
+                assert len(lbl.shape) == 3, "labels should be 3d"
+                assert np.all(data.shape[:-1] == lbl.shape), f"{data.shape} - {lbl.shape}"
+                # there only should be an error if the labels weren't empty
+                if not np.any(lbl != 0):
+                    if np.any(lbl_pre_aug != 0):
+                        raise ValueError("no labels found after numpy augmentation")
 
         # determine the number of background and foreground samples
         n_foreground = int(self.samples_per_volume * self.frac_obj)
@@ -748,7 +762,7 @@ class SegLoader:
         # convert to one_hot_label
         if lbl is not None:
             labels_onehot = np.squeeze(np.eye(self.n_seg)[labels.flat]).reshape(
-                labels.shape + (-1,)
+                labels.shape + (self.n_seg,)
             )
 
         if lbl is not None:
@@ -758,6 +772,8 @@ class SegLoader:
                 str(labels_onehot.shape),
             )
             return samples, labels_onehot
+        elif lbl is None and self.load_incomplete_labels:
+            return samples, np.full(samples.shape[:-1] + (self.n_seg,), np.nan)
         else:
             logger.debug(
                 "Sample shape: %s",

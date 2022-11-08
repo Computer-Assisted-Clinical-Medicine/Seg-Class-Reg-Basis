@@ -164,7 +164,10 @@ class Experiment:
                 raise FileNotFoundError(f"The image for {d_name} does not exist.")
             if "labels" not in self.data_set[d_name] and "segmentation" in self.tasks:
                 raise ValueError(f"{d_name} does not have labels")
-            if "segmentation" in self.tasks:
+            if (
+                "segmentation" in self.tasks
+                and self.data_set[d_name].get("labels", None) is not None
+            ):
                 lbl_path = self.experiment_dir / self.data_set[d_name]["labels"]
                 if not lbl_path.exists():
                     raise FileNotFoundError(f"The labels file for {d_name} does not exist.")

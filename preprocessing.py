@@ -17,11 +17,6 @@ from . import config as cfg
 logger = logging.getLogger(__name__)
 
 
-class NoLabelsInOverlap(Exception):
-    def __init__(self):
-        super().__init__("Labels were not in the overlapping region")
-
-
 def load_image(path: Path):
     if not path.exists():
         raise FileNotFoundError(f"{path} not found")
@@ -159,7 +154,7 @@ def combine_images(
     if labels is not None:
         num_labels_res = sitk.GetArrayFromImage(labels_resampled).astype(bool).sum()
         if num_labels != 0 and num_labels_res < 10:
-            raise NoLabelsInOverlap()
+            warnings.warn("Labels were not in the overlapping region")
         # account for the differences in the spacing when seeing if labels are missing
         if num_labels_res < num_labels / reduction_factor * 0.85:
             logger.warning("Less labelled voxels in the resampled image.")
@@ -357,7 +352,7 @@ def preprocess_dataset(
         )
         image_processed_path = base_dir / image_rel_path
         labels_exist = True
-        if "labels" in data:
+        if "labels" in data and data.get("labels", None) is not None:
             labels_path = data_dir / data["labels"]
             label_rel_path = preprocessed_dir / str(
                 cfg.label_file_name_prefix + name + cfg.file_suffix
@@ -395,6 +390,10 @@ def preprocess_dataset(
                 raise FileNotFoundError(
                     f"{labels_processed_path} not found after preprocessing"
                 )
+        else:
+            # set labels to None if it previously was None
+            if "labels" in data:
+                preprocessed_dict[str(name)]["labels"] = None
 
         # add additional keys
         additional_keys = set(data.keys()) - set(("labels", "images"))
@@ -451,21 +450,16 @@ def preprocess_image(
             labels = None
 
         logger.info("Processing image %s", image_processed_path.name)
-        try:
-            res_image, res_labels = combine_images(
-                images=images_normalized,
-                labels=labels,
-                resample=preprocessing_parameters["resample"],
-                target_spacing=preprocessing_parameters["target_spacing"],
-                cut_to_overlap=cut_to_overlap,
-            )
-        except NoLabelsInOverlap as exc:
-            print("Labels were not in the overlapping image portion.")
-            logger.exception(exc)
-        else:
-            save_image(res_image, image_processed_path)
-            if labels is not None:
-                assert (
-                    labels_processed_path is not None
-                ), "if there are labels, also provide a path."
-                save_image(res_labels, labels_processed_path)
+        res_image, res_labels = combine_images(
+            images=images_normalized,
+            labels=labels,
+            resample=preprocessing_parameters["resample"],
+            target_spacing=preprocessing_parameters["target_spacing"],
+            cut_to_overlap=cut_to_overlap,
+        )
+        save_image(res_image, image_processed_path)
+        if labels is not None:
+            assert (
+                labels_processed_path is not None
+            ), "if there are labels, also provide a path."
+            save_image(res_labels, labels_processed_path)
