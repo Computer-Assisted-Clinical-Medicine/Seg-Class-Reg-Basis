@@ -328,8 +328,10 @@ def preprocess_dataset(
             norm = normalization_class.from_file(norm_file)
             # make sure the parameters are correct
             parameters_from_file = norm.get_parameters()
-            for key, value in norm_params_channel.items():
-                if not parameters_from_file[key] == value:
+            for key, value in parameters_from_file.items():
+                if not norm_params_channel.get(key) == value:
+                    if not hasattr(parameters_from_file, key):
+                        continue
                     raise ValueError(
                         f"Normalization of preprocessed images has different parameters for {key}."
                     )
