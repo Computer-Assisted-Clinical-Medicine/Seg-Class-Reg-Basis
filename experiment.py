@@ -683,10 +683,14 @@ class Experiment:
 
         testloader = ApplyLoader(name="test_loader", file_dict=self.train_dataset)
 
+        model_path = self.output_path / folder_name / "models" / f"model-{version}"
+        # if saved as weights, add suffix
+        if self.hyper_parameters["train_parameters"].get("save_mode", "model") == "weights":
+            model_path = model_path.with_suffix(".h5")
         net = self.hyper_parameters["architecture"](
             self.hyper_parameters["loss"],
             is_training=False,
-            model_path=str(self.output_path / folder_name / "models" / f"model-{version}"),
+            model_path=str(model_path),
             **(self.hyper_parameters["network_parameters"]),
         )
 
@@ -971,7 +975,9 @@ class Experiment:
 
         # try the actual training
         model_result = fold_dir / "models" / "model-final"
-        if self.restart is False and model_result.exists():
+        model_result_h5 = fold_dir / "models" / "model-final.h5"
+        already_trained = model_result.exists() or model_result_h5.exists()
+        if self.restart is False and already_trained:
             tqdm.write("Already trained, skip training.")
             logger.info("Already trained, skip training.")
         else:

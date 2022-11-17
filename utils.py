@@ -196,7 +196,7 @@ def export_npz(
             output_dict[name + "_median"] = np.median(out, axis=tuple(range(out.ndim - 1)))
         # for now, just use less data for segmentation
         elif tsk == "segmentation":
-            output_dict[name] = out.astype(np.float16)
+            output_dict[name] = None
     np.savez_compressed(file_path, **output_dict)
 
 
@@ -819,9 +819,6 @@ def export_powershell_scripts(script_dir: Path, experiments: list, file_start=""
     # create tensorboard file
     with open(ps_script_tb, "w+", encoding="utf8") as powershell_file_tb:
         powershell_file_tb.write(command_tb)
-
-    print(f"To run the training, execute {ps_script}")
-    print(f"To run tensorboard, execute {ps_script_tb}")
 
 
 def export_experiments_run_files(script_dir: Path, experiments: list, file_start=""):

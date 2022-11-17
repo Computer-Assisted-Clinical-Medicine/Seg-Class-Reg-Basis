@@ -58,8 +58,9 @@ class UNet(SegBasisNet):
     ):
 
         if do_bias:
-            print("use no bias with this network, bias set to False")
-            do_bias = False
+            if do_batch_normalization or do_instance_normalization:
+                print("use no bias with this network, bias set to False")
+                do_bias = False
 
         super().__init__(
             # standard parameters

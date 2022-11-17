@@ -3,6 +3,7 @@
 import collections
 import logging
 import os
+import warnings
 from pathlib import Path
 from typing import (
     Any,
@@ -47,6 +48,8 @@ class SegBasisNet:
         be a dict with the task name as keys and a list of losses as values
     tasks : OrderedDict[str, str], optional
         The tasks that should be performed, loss and metrics will be selected accordingly
+    custom_objects : dict, optional
+        Custom objects, that should be used when loading the network
     """
 
     name: str
@@ -57,8 +60,9 @@ class SegBasisNet:
         tasks: Optional[OrderedDict[str, str]] = None,
         is_training=True,
         do_finetune=False,
-        model_path="",
+        model_path=None,
         regularize=(True, "L2", 0.00001),
+        custom_objects=None,
         **kwargs,
     ):
 
@@ -66,7 +70,9 @@ class SegBasisNet:
         # policy = tf.keras.mixed_precision.experimental.Policy('mixed_float16')
         # tf.keras.mixed_precision.experimental.set_policy(policy)
 
-        self.custom_objects = {"Dice": Dice, "NMI": NMI}
+        self.custom_objects = {"Dice": Dice, "NMI": NMI, "dice_loss": loss.dice_loss}
+        if custom_objects is not None:
+            self.custom_objects = self.custom_objects | custom_objects
         if tasks is None:
             tasks = collections.OrderedDict({"seg": "segmentation"})
         if not isinstance(tasks, collections.OrderedDict):
@@ -86,13 +92,19 @@ class SegBasisNet:
         if not self.options["is_training"] or (
             self.options["is_training"] and self.options["do_finetune"]
         ):
-            if model_path == "":
+            if model_path is None:
                 raise ValueError("Model Path cannot be empty for Finetuning or Inference!")
         else:
-            if model_path != "":
-                logger.warning("Caution: argument model_path is ignored in training!")
+            if model_path is not None:
+                warnings.warn("Caution: argument model_path is ignored in training!")
 
-        self.options["model_path"] = model_path
+        self.options["model_path"] = str(model_path)
+
+        load_full_model = False
+        if model_path is not None:
+            if os.path.isdir(model_path):
+                load_full_model = True
+
         if not hasattr(self, "tasks"):
             self.tasks = ("segmentation",)
 
@@ -108,7 +120,7 @@ class SegBasisNet:
         # extra compile options, which can be changed in subclasses
         self._compile_options: Dict[str, Any] = {}
 
-        if self.options["is_training"] and not self.options["do_finetune"]:
+        if not load_full_model:
             self.set_up_inputs()
             self.options["regularizer"] = self._get_reg()
             # if training build everything according to parameters
@@ -125,7 +137,8 @@ class SegBasisNet:
                 loss_name
             )
             self.model = self._build_model()
-        else:
+
+        if not self.options["is_training"] or self.options["do_finetune"]:
             # for finetuning load net from file
             # tf.summary.trace_on(graph=True, profiler=False)
             self._load_net()
@@ -150,18 +163,14 @@ class SegBasisNet:
 
     def _load_net(self):
         # This loads the keras network and the first checkpoint file
-        self.model: tf.keras.Model = tf.keras.models.load_model(
-            self.options["model_path"], compile=False, custom_objects=self.custom_objects
-        )
-
-        epoch = Path(self.options["model_path"]).name.split("-")[-1]
-        self.variables["epoch"] = epoch
-
-        if self.options["is_training"] is False:
-            self.model.trainable = False
-        self.options["rank"] = len(self.model.inputs[0].shape) - 2
-        self.options["in_channels"] = self.model.inputs[0].shape.as_list()[-1]
-        self.options["out_channels"] = self.model.outputs[0].shape.as_list()[-1]
+        if self.options["model_path"].endswith(".h5"):
+            self.model.load_weights(self.options["model_path"])
+            self.model.compile()
+        else:
+            self.model: tf.keras.Model = tf.keras.models.load_model(
+                self.options["model_path"],
+                custom_objects=self.custom_objects,
+            )
         logger.info("Model was loaded")
 
     def _get_reg(self) -> tf.keras.regularizers.Regularizer:
@@ -195,6 +204,9 @@ class SegBasisNet:
         elif isinstance(loss_input, Iterable):
             loss_name = "-".join(str(l) for l in loss_input)
             loss_obj = tuple(self.get_loss(l) for l in loss_input)
+        elif loss_input is None:
+            loss_name = "None"
+            loss_obj = None
         else:
             raise ValueError(
                 "Incompatible loss, it should be a Callable, string, dict or Iterable."
@@ -321,6 +333,7 @@ class SegBasisNet:
         finetune_epoch=None,
         finetune_layers=None,
         finetune_lr=None,
+        save_mode="model",
         **kwargs,
     ):
         """Run the training using the keras.Model.fit interface with a lot of callbacks.
@@ -386,6 +399,9 @@ class SegBasisNet:
             which enables training on all layers besides batchnorm layers, by default None
         finetune_lr : float, optional
             If not None, this rate will be set after enabling the finetuning, by default None
+        save_mode : str, optional
+            How the model should be saved, options are model or weights to save the whole model
+            or the weights for the best and final model, by default model
         """
 
         # set path
@@ -540,7 +556,12 @@ class SegBasisNet:
             callbacks=callbacks,
         )
         print("Saving the final model.")
-        self.model.save(model_dir / "model-final", save_format="tf")
+        if save_mode == "model":
+            self.model.save(model_dir / "model-final", save_format="tf")
+        elif save_mode == "weights":
+            self.model.save_weights(model_dir / "model-final.h5")
+        else:
+            raise ValueError(f"Save mode {save_mode} unknown.")
         # save the best model
         best_val = None
         best_weights = None
@@ -553,7 +574,10 @@ class SegBasisNet:
                 best_weights = weights
         self.model.load_weights(best_weights)
         print("Saving the best model.")
-        self.model.save(model_dir / "model-best", save_format="tf")
+        if save_mode == "model":
+            self.model.save(model_dir / "model-best", save_format="tf")
+        elif save_mode == "weights":
+            self.model.save_weights(model_dir / "model-best.h5")
         print("Saving finished.")
 
     def get_task_metrics(
