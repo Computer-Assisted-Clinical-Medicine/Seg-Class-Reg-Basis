@@ -218,26 +218,50 @@ class SegLoader:
             assert np.all(
                 np.array(image_shape[:2]) == labels_shape[:2]
             ), "Sample and label shapes do not match."
-            if isinstance(first["labels"], (list, tuple)):
-                self.dshapes += [labels_shape] * len(first["labels"])
-                self.dtypes += [cfg.dtype] * len(first["labels"])
-                self.n_labels += len(first["labels"])
-                self.n_label_images = len(first["labels"])
+            first_labels = [
+                l["label"] for l in self.file_dict.values() if l["labels"] is not None
+            ][0]
+            if isinstance(first_labels, (list, tuple)):
+                self.dshapes += [labels_shape] * len(first_labels)
+                self.dtypes += [cfg.dtype] * len(first_labels)
+                self.n_labels += len(first_labels)
+                self.n_label_images = len(first_labels)
             else:
                 self.dshapes.append(labels_shape)
                 self.dtypes.append(cfg.dtype)
                 self.n_labels += 1
                 self.n_label_images = 1
         if "classification" in self.tasks or "discriminator-classification" in self.tasks:
-            self.dshapes += [i.shape for i in first["classification"]]
-            self.dtypes += [cfg.dtype] * len(first["classification"])
-            self.n_labels += len(first["classification"])
-            self.n_classification = len(first["classification"])
+            # get the first values, that are not None
+            first_class = []
+            for i in range(len(first["classification"])):
+                list_not_none = [
+                    c["classification"][i]
+                    for c in self.file_dict.values()
+                    if c["classification"][i] is not None
+                ]
+                if len(list_not_none) == 0:
+                    raise ValueError("One of the classification labels only contains None")
+                first_class.append(list_not_none[0])
+            self.dshapes += [i.shape for i in first_class]
+            self.dtypes += [cfg.dtype] * len(first_class)
+            self.n_labels += len(first_class)
+            self.n_classification = len(first_class)
         if "regression" in self.tasks or "discriminator-regression" in self.tasks:
-            self.dshapes += [(1,)] * len(first["regression"])
-            self.dtypes += [cfg.dtype] * len(first["regression"])
-            self.n_labels += len(first["regression"])
-            self.n_regression = len(first["regression"])
+            first_reg = []
+            for i in range(len(first["regression"])):
+                list_not_none = [
+                    c["regression"][i]
+                    for c in self.file_dict.values()
+                    if c["regression"][i] is not None
+                ]
+                if len(list_not_none) == 0:
+                    raise ValueError("One of the regression labels only contains None")
+                first_reg.append(list_not_none[0])
+            self.dshapes += [(1,)] * len(first_reg)
+            self.dtypes += [cfg.dtype] * len(first_reg)
+            self.n_labels += len(first_reg)
+            self.n_regression = len(first_reg)
         if "autoencoder" in self.tasks:
             # use the image shape and type again
             self.dshapes += [image_shape] * n_images
@@ -292,6 +316,17 @@ class SegLoader:
         tf.data.Dataset
             tf.dataset of data and labels
         """
+
+        # check for nans
+        for tsk in ("classification", "regression"):
+            is_nan_list = []
+            for f in file_list:
+                is_nan_list.append([s is None for s in self.file_dict[f][tsk]])
+            is_nan = np.array(is_nan_list)
+            all_nan = np.all(is_nan, axis=0)
+            if np.any(all_nan):
+                nan_cols = ", ".join(list(np.argwhere(all_nan).astype(str).flat))
+                raise ValueError(f"Columns {nan_cols} only consist of Nans.")
 
         if not np.issubdtype(type(batch_size), int):
             raise ValueError("The batch size should be an integer")
@@ -911,6 +946,11 @@ class SegLoader:
             # make sure the regression samples have a shape
             reg_samples = [np.array(s).reshape((1,)) for s in reg_samples]
             file_samples = tuple(class_samples + reg_samples)
+            # increase the None values
+            file_samples = tuple(
+                np.tile(None, lbl_shape) if s is None else s
+                for s, lbl_shape in zip(file_samples, self.dshapes[self.n_inputs :])
+            )
             # duplicate the samples self.samples_per_volume times
             file_samples_expanded = tuple(
                 np.tile(s, (self.samples_per_volume,) + (1,) * s.ndim) for s in file_samples

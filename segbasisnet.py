@@ -438,7 +438,7 @@ class SegBasisNet:
         # compile model
         self.model.compile(
             optimizer=tf_utils.get_optimizer(
-                optimizer, l_r, clipvalue=self.options["clip_value"]
+                optimizer, l_r, clipvalue=self.options.get("clip_value", None)
             ),
             loss=self.outputs["loss"],
             metrics=metric_objects,

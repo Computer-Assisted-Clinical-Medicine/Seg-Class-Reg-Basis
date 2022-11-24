@@ -35,7 +35,7 @@ class UNet(SegBasisNet):
         loss_name,
         is_training=True,
         do_finetune=False,
-        model_path="",
+        model_path=None,
         n_filters=(8, 16, 32, 64, 128),
         kernel_dims=3,
         n_convolutions=(2, 2, 3, 3, 3),

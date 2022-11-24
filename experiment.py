@@ -5,7 +5,7 @@ import copy
 import logging
 import os
 from pathlib import Path, PurePath
-from typing import Any, Collection, Dict, Iterable, List, Optional, OrderedDict
+from typing import Any, Collection, Dict, Iterable, List, Optional, OrderedDict, Union
 
 import numpy as np
 import pandas as pd
@@ -33,7 +33,7 @@ class Experiment:
         self,
         name: str,
         hyper_parameters: dict,
-        data_set: Dict[str, Dict[str, str]],
+        data_set: Dict[str, Dict[str, Union[str, list]]],
         crossvalidation_set: List,
         external_test_set: List = None,
         folds=5,
@@ -455,9 +455,16 @@ class Experiment:
         if classification_df.size == 0:
             return
         for col in sorted(classification_df.columns):
-            col_data = pd.Categorical(classification_df[col])
+            col_data = classification_df[col]
+            if pd.api.types.is_numeric_dtype(col_data.dtype):
+                col_data = col_data.astype(pd.Int32Dtype())
+            col_data_cat = pd.Categorical(col_data)
+            categories = col_data_cat.categories
+            # use int as type, pandas types are weird when converting to yaml
+            if pd.api.types.is_numeric_dtype(categories):
+                categories = categories.astype(int)
             self.mapping["classification"][col] = {
-                cat: i for i, cat in enumerate(col_data.categories)
+                cat: i for i, cat in enumerate(categories)
             }
 
     def map_regression(self):
@@ -508,6 +515,8 @@ class Experiment:
                 values = self.mapping["classification"][feature]
                 matrix = np.eye(max(values.values()) + 1)
                 class_map[feature] = {k: matrix[v] for k, v in values.items()}
+                # add none for missing values
+                class_map[feature] |= {None: None}
             # and the regression mapping
             if "regression" in task:
                 values = self.mapping["regression"][feature]
@@ -530,12 +539,15 @@ class Experiment:
                 if len(classification_data):
                     train_dataset[patient]["classification"] = classification_data
             if "regression" in data:
-                regression_data = [
-                    f_map(data["regression"][f_name])
-                    for f_name, f_map in reg_map.items()
-                    if f_name in self.expanded_tasks
-                ]
-                if len(classification_data):
+                regression_data = []
+                for f_name, f_map in reg_map.items():
+                    if f_name not in self.expanded_tasks:
+                        continue
+                    if data["regression"][f_name] is None:
+                        regression_data.append(None)
+                    else:
+                        regression_data.append(f_map(data["regression"][f_name]))
+                if len(regression_data):
                     train_dataset[patient]["regression"] = regression_data
             if "autoencoder" in data and "autoencoder" in self.tasks:
                 train_dataset[patient]["autoencoder"] = data["autoencoder"]
