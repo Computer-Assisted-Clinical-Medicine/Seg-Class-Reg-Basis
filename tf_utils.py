@@ -4,7 +4,7 @@ logging and to only save the best weights, which does save disk space.
 
 import logging
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Collection, List, Optional
 
 import tensorflow as tf
 from tensorflow.keras import callbacks
@@ -289,7 +289,30 @@ class CustomTBCallback(callbacks.TensorBoard):
             # predict it
             probabilities = self.model(x)
             # get the loss
-            loss = self.model.compiled_loss(y_true=y, y_pred=probabilities)
+            if not isinstance(y, Collection):
+                y = (y,)
+                probabilities = (probabilities,)
+            loss = tf.convert_to_tensor(0, dtype=tf.float32)
+            for y_t, y_pred, loss_tsk in zip(y, probabilities, self.model.loss):
+                mask = tf.reduce_any(tf.math.is_finite(y_t), axis=tuple(range(1, y_t.ndim)))
+                y_t = tf.cast(
+                    tf.boolean_mask(
+                        tensor=y_t,
+                        mask=mask,
+                        axis=0,
+                    ),
+                    tf.float32,
+                )
+                y_pred = tf.cast(
+                    tf.boolean_mask(
+                        tensor=y_pred,
+                        mask=mask,
+                        axis=0,
+                    ),
+                    tf.float32,
+                )
+
+                loss += loss_tsk(y_true=y_t, y_pred=y_pred)
             # do backpropagation
             gradients = tape.gradient(loss, self.model.trainable_weights)
         return gradients
