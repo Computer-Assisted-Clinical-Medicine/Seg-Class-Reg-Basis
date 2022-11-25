@@ -219,7 +219,7 @@ class SegLoader:
                 np.array(image_shape[:2]) == labels_shape[:2]
             ), "Sample and label shapes do not match."
             first_labels = [
-                l["label"] for l in self.file_dict.values() if l["labels"] is not None
+                l["labels"] for l in self.file_dict.values() if l["labels"] is not None
             ][0]
             if isinstance(first_labels, (list, tuple)):
                 self.dshapes += [labels_shape] * len(first_labels)
@@ -321,7 +321,7 @@ class SegLoader:
         for tsk in ("classification", "regression"):
             is_nan_list = []
             for f in file_list:
-                is_nan_list.append([s is None for s in self.file_dict[f][tsk]])
+                is_nan_list.append([s is None for s in self.file_dict[f].get(tsk, [])])
             is_nan = np.array(is_nan_list)
             all_nan = np.all(is_nan, axis=0)
             if np.any(all_nan):

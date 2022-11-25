@@ -695,6 +695,8 @@ class SegBasisNet:
 
         # export the images
         for out, tsk, task_name in zip(output, self.tasks, self.task_names):
+            if tsk not in ("segmentation", "autoencoder"):
+                continue
             # remove padding
             if tsk in ("segmentation", "autoencoder"):
                 if self.options["rank"] == 2:
@@ -741,7 +743,13 @@ class SegBasisNet:
             image_data = application_dataset(filename)
             assert image_data.ndim == 4, "Image should have 4 dimensions"
 
-            if self.model.output.shape[1:3].is_fully_defined():
+            if isinstance(self.model.output, Collection):
+                fully_defined = np.any(
+                    [o.shape.is_fully_defined() for o in self.model.output]
+                )
+            else:
+                fully_defined = self.model.output.shape.is_fully_defined()
+            if fully_defined:
                 predictions = []
                 window_shape = [1] + cfg.train_input_shape[:2]
                 overlap = [0, 15, 15]
@@ -788,7 +796,7 @@ class SegBasisNet:
                 for sample in image_data_batched:
                     res = self.model(sample)
                     # make sure the result is a tuple
-                    if not isinstance(res, tuple):
+                    if not isinstance(res, Collection):
                         res = (res,)
                     # convert to numpy
                     res_np = tuple(r.numpy() for r in res)

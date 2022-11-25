@@ -888,6 +888,8 @@ class Experiment:
             results_col = results[col_name]
             std_col = results[col_name + "_std"]
             ground_truth = class_dict[col_name]
+            if ground_truth is None:
+                continue
             col_metrics = evaluation.evaluate_classification(
                 results_col, std_col, ground_truth, map_dict
             )
@@ -919,6 +921,8 @@ class Experiment:
         # do the evaluation
         for col_name, map_dict in mapping.items():
             results_col = results[col_name]
+            if class_dict[col_name] is None:
+                continue
             ground_truth = float(class_dict[col_name])
             col_metrics = evaluation.evaluate_regression(
                 results_col, ground_truth, map_dict

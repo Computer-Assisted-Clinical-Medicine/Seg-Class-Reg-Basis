@@ -6,7 +6,7 @@ import subprocess
 import sys
 from io import StringIO
 from pathlib import Path
-from typing import List
+from typing import Dict, List
 
 import numpy as np
 import pandas as pd
@@ -135,7 +135,7 @@ def output_to_image(
             output = output[:, :, :, 0]
 
     # turn the output into an image
-    pred_img = sitk.GetImageFromArray(output)
+    pred_img = sitk.GetImageFromArray(output.astype(np.float32))
     # cast to the right type
     if task in ("regression", "autoencoder") and output.ndim < 4:
         pred_img = sitk.Cast(pred_img, sitk.sitkFloat32)
@@ -184,7 +184,7 @@ def export_npz(
         The path where the file should be saved
     """
     assert len(task_names) == len(output)
-    output_dict = {}
+    output_dict: Dict[str, np.ndarray] = {}
     for out, tsk, name in zip(output, tasks, task_names):
         # for regression, just save the whole thing, it is not that big
         if tsk == "regression":
@@ -194,9 +194,9 @@ def export_npz(
             output_dict[name] = out.mean(axis=tuple(range(out.ndim - 1)))
             output_dict[name + "_std"] = out.std(axis=tuple(range(out.ndim - 1)))
             output_dict[name + "_median"] = np.median(out, axis=tuple(range(out.ndim - 1)))
-        # for now, just use less data for segmentation
+        # for now, just don't export data for segmentation
         elif tsk == "segmentation":
-            output_dict[name] = None
+            output_dict[name] = np.array([])
     np.savez_compressed(file_path, **output_dict)
 
 
