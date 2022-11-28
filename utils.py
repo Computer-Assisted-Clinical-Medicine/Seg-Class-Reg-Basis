@@ -240,18 +240,24 @@ def generate_res_path(version: str, external: bool, postprocessed: bool, task: s
     return res_path
 
 
-def export_hyperparameters(experiments, target_dir, keep_existing=True):
+def export_hyperparameters(
+    experiments, target_dir, additional_info=None, keep_existing=True
+):
     """
     Export a summary of the experiments and compare the hyperparameters of all experiments
     and collect the ones that were changed.
     """
+    if additional_info is None:
+        additional_info = [{}] * len(experiments)
+    if len(experiments) != len(additional_info):
+        raise ValueError("Experiments and additional_info should have the same length.")
     # export the hyperparameters
     experiment_dir = Path(os.environ["experiment_dir"])
     experiments_file = target_dir / "experiments.json"
     hyperparameter_changed_file = target_dir / "hyperparameters_changed.json"
     # collect all results
     hparams = []
-    for exp in experiments:
+    for exp, add_inf in zip(experiments, additional_info):
         # and parameters
         hparams.append(
             {
@@ -269,6 +275,7 @@ def export_hyperparameters(experiments, target_dir, keep_existing=True):
                 "external": exp.external_test_set is not None,
                 "priority": exp.priority,
             }
+            | add_inf
         )
 
     # convert to data frames
@@ -285,8 +292,9 @@ def export_hyperparameters(experiments, target_dir, keep_existing=True):
         )
         hparams_old = hparams_old[missing]
         hparams = pd.concat([hparams_old, hparams])
-        hparams.sort_values("priority", ascending=False, na_position="last", inplace=True)
         hparams = hparams.reset_index().drop(columns="index")
+
+    hparams.sort_values("priority", ascending=False, na_position="last", inplace=True)
 
     # find changed parameters
     changed_params = []
@@ -400,11 +408,15 @@ def gather_results(
 
     results_all_list = []
     for _, row in hparams.iterrows():
+        exp_tasks = list(set(row.tasks.values()))
+        if task not in exp_tasks:
+            continue
         results_file = experiment_dir.parent / row["path"] / res_path
         if results_file.exists():
             results = pd.read_csv(results_file, sep=";")
             # set the model
             results["name"] = Path(row["path"]).name
+            results["task"] = task
             # set the other parameters
             for name, val in row.iteritems():
                 if name in ignore:
@@ -821,7 +833,9 @@ def export_powershell_scripts(script_dir: Path, experiments: list, file_start=""
         powershell_file_tb.write(command_tb)
 
 
-def export_experiments_run_files(script_dir: Path, experiments: list, file_start=""):
+def export_experiments_run_files(
+    script_dir: Path, experiments: list, file_start="", additional_info: List[dict] = None
+):
     """Export the files to run the experiments. These are first the hyperparameter
     comparison files and then depending on the environment (Windows or Linux cluster),
     either bash script to submit slurm jobs or powershell scripts to start the
@@ -835,10 +849,13 @@ def export_experiments_run_files(script_dir: Path, experiments: list, file_start
         The experiments to export
     file_start : str, optional
         Is added to the start of each file, by default empty
+    additional_info List[dict], optional
+        Additional info to add to the experiments file for each experiment, the keys
+        will become columns as the values the entries.
     """
 
     # export all hyperparameters
-    export_hyperparameters(experiments, script_dir)
+    export_hyperparameters(experiments, script_dir, additional_info)
 
     # if on cluster, export slurm files
     if "CLUSTER" in os.environ:
