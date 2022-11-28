@@ -294,7 +294,9 @@ class CustomTBCallback(callbacks.TensorBoard):
                 probabilities = (probabilities,)
             loss = tf.convert_to_tensor(0, dtype=tf.float32)
             for y_t, y_pred, loss_tsk in zip(y, probabilities, self.model.loss):
-                mask = tf.reduce_any(tf.math.is_finite(y_t), axis=tuple(range(1, y_t.ndim)))
+                mask = tf.reduce_any(
+                    tf.math.is_finite(y_t), axis=tuple(range(1, len(y_t.shape)))
+                )
                 y_t = tf.cast(
                     tf.boolean_mask(
                         tensor=y_t,
