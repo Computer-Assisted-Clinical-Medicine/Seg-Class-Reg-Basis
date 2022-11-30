@@ -10,7 +10,6 @@ from typing import (
     Callable,
     Collection,
     Dict,
-    Iterable,
     List,
     Optional,
     OrderedDict,
@@ -56,7 +55,7 @@ class SegBasisNet:
 
     def __init__(
         self,
-        loss_name: Union[dict, str, Callable],
+        loss_name: Dict[str, str],
         tasks: Optional[OrderedDict[str, str]] = None,
         is_training=True,
         do_finetune=False,
@@ -188,29 +187,9 @@ class SegBasisNet:
 
         return regularizer
 
-    def _get_task_losses(self, loss_input: Union[str, dict, object, Iterable]):
-        if isinstance(loss_input, str):
-            loss_obj = self.get_loss(loss_input)
-            loss_name = loss_input
-        elif hasattr(loss_input, "__call__"):
-            if hasattr(loss_input, "__name__"):
-                loss_name = loss_input.__name__
-            else:
-                loss_name = type(loss_input).__name__
-            loss_obj = loss_input
-        elif isinstance(loss_input, dict):
-            loss_name = "Multitask"
-            loss_obj = tuple(self.get_loss(loss_input[t], t) for t in self.tasks)
-        elif isinstance(loss_input, Iterable):
-            loss_name = "-".join(str(l) for l in loss_input)
-            loss_obj = tuple(self.get_loss(l) for l in loss_input)
-        elif loss_input is None:
-            loss_name = "None"
-            loss_obj = None
-        else:
-            raise ValueError(
-                "Incompatible loss, it should be a Callable, string, dict or Iterable."
-            )
+    def _get_task_losses(self, loss_input: Dict[str, str]):
+        loss_name = tuple(loss_input[t] for t in self.tasks)
+        loss_obj = tuple(self.get_loss(loss_input[t], t) for t in self.tasks)
         return loss_obj, loss_name
 
     def get_loss(self, loss_name: str, task="segmentation") -> Callable:

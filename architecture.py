@@ -8,6 +8,7 @@ class Model(tf.keras.models.Model):
         super(Model, self).__init__(**kwargs)
 """
 import logging
+from typing import Dict
 
 import tensorflow as tf
 from SegmentationArchitectures import deeplab, densenets, unets
@@ -32,7 +33,7 @@ class UNet(SegBasisNet):
 
     def __init__(
         self,
-        loss_name,
+        loss_name: Dict[str, str],
         is_training=True,
         do_finetune=False,
         model_path=None,
@@ -116,10 +117,16 @@ class UNet(SegBasisNet):
     def _build_model(self) -> Model:
         """Builds UNet"""
 
+        seg_loss_name = [
+            t_name
+            for t, t_name in zip(self.tasks, self.options["loss_name"])
+            if t == "segmentation"
+        ][0]
+
         return unets.unet(
             input_tensor=self.inputs["x"],
             out_channels=self.options["out_channels"],
-            loss=self.options["loss_name"],
+            loss=seg_loss_name,
             n_filter=self.options["n_filters"],
             n_convolutions=self.options["n_convolutions"],
             attention=self.options["attention"],
