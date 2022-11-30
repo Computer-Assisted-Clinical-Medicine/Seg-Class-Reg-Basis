@@ -796,7 +796,7 @@ class Experiment:
                 continue
 
             # remember the results
-            results = []
+            results_list = []
 
             for file in tqdm(
                 test_files,
@@ -821,14 +821,25 @@ class Experiment:
                     raise ValueError(f"Task {task} unknown")
                 if file_metrics is not None:
                     file_metrics["File Number"] = file
-                    results.append(file_metrics)
+                    results_list.append(file_metrics)
 
             # write evaluation results
-            if len(results) == 0 and len(test_files) != 0:
+            if len(results_list) == 0 and len(test_files) != 0:
                 continue
-            results = pd.DataFrame(results)
+            results = pd.DataFrame(results_list)
             if len(test_files) != 0:
                 results.set_index("File Number", inplace=True)
+            for col in results:
+                dtypes = [type(r.get(col)) for r in results_list if col in r]
+                if np.all([pd.api.types.is_integer_dtype(d) for d in dtypes]):
+                    dtype = pd.Int64Dtype()
+                elif np.all([pd.api.types.is_float_dtype(d) for d in dtypes]):
+                    dtype = pd.Float64Dtype()
+                elif np.all([pd.api.types.is_string_dtype(d) for d in dtypes]):
+                    dtype = pd.StringDtype()
+                else:
+                    raise TypeError(f"Column {col} has inconsistent types.")
+                results[col] = results[col].astype(dtype)
             results.to_csv(eval_file_path, sep=";")
 
     def evaluate_segmentation(self, file: str, prediction_path: Path) -> Dict[str, Any]:

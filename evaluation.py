@@ -350,7 +350,7 @@ def evaluate_autoencoder_prediction(
     result_metrics["norm_mutual_inf"] = skimage.metrics.normalized_mutual_information(
         orig_img_np, pred_img_np, bins=100
     )
-    # set win size to 7 or to the smalles dimension
+    # set win size to 7 or to the smallest dimension
     win_size = np.min(orig_img_np.shape + (7,))
     if win_size % 2 == 0:
         win_size -= 1
@@ -382,7 +382,7 @@ def calculate_regression_metrics(prediction: np.ndarray, ground_truth: np.ndarra
     Returns
     -------
     Dict
-        _description_
+        The resulting metrics
     """
     ground_truth = ground_truth.astype(float)
     prediction = prediction.astype(float)
