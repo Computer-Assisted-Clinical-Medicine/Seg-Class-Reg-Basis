@@ -236,7 +236,7 @@ def generate_res_path(version: str, external: bool, postprocessed: bool, task: s
         folder_name = f"results_external_testset_{version}_{task}"
     else:
         folder_name = f"results_test_{version}_{task}"
-    res_path = Path(folder_name) / "evaluation-all-files.csv"
+    res_path = Path(folder_name) / "evaluation-all-files.h5"
     return res_path
 
 
@@ -413,7 +413,7 @@ def gather_results(
             continue
         results_file = experiment_dir.parent / row["path"] / res_path
         if results_file.exists():
-            results = pd.read_csv(results_file, sep=";")
+            results = pd.read_hdf(results_file).reset_index()
             # set the model
             results["name"] = Path(row["path"]).name
             results["task"] = task
@@ -438,8 +438,7 @@ def gather_results(
     complete_percent = int(np.round(len(results_all_list) / hparams.shape[0] * 100))
     print(f"{complete_percent:3d} % of experiments completed.")
 
-    # drop first column (which is just the old index)
-    results_all.drop(results_all.columns[0], axis="columns", inplace=True)
+    results_all = results_all.copy()
     results_all["fold"] = pd.Categorical(results_all["fold"])
     results_all["name"] = pd.Categorical(results_all["name"])
     results_all["version"] = version

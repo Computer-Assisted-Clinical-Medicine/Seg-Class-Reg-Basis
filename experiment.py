@@ -789,7 +789,7 @@ class Experiment:
                 if "postprocessed" in version:
                     continue
 
-            eval_name = f"evaluation-{folder_name}-{version}_{name}-{task}.csv"
+            eval_name = f"evaluation-{folder_name}-{version}_{name}-{task}.h5"
             eval_file_path = self.output_path / folder_name / eval_name
 
             if eval_file_path.exists():
@@ -830,17 +830,25 @@ class Experiment:
             if len(test_files) != 0:
                 results.set_index("File Number", inplace=True)
             for col in results:
-                dtypes = [type(r.get(col)) for r in results_list if col in r]
-                if np.all([pd.api.types.is_integer_dtype(d) for d in dtypes]):
-                    dtype = pd.Int64Dtype()
-                elif np.all([pd.api.types.is_float_dtype(d) for d in dtypes]):
-                    dtype = pd.Float64Dtype()
-                elif np.all([pd.api.types.is_string_dtype(d) for d in dtypes]):
-                    dtype = pd.StringDtype()
+                dtypes = [
+                    type(r.get(col)) for r in results_list if col in r and pd.notna(r)
+                ]
+                most_common_dtype = pd.Series(dtypes).value_counts().index[0]
+                if pd.api.types.is_integer_dtype(most_common_dtype):
+                    # make sure it is a number
+                    assert np.all([pd.api.types.is_numeric_dtype(d) for d in dtypes])
+                    results.loc[pd.isna(results[col]), col] = -1
+                    results[col] = results[col].astype(int)
+                elif pd.api.types.is_float_dtype(most_common_dtype):
+                    # make sure it is a number
+                    assert np.all([pd.api.types.is_numeric_dtype(d) for d in dtypes])
+                    results[col] = results[col].astype(float)
+                elif pd.api.types.is_string_dtype(most_common_dtype):
+                    pass
                 else:
-                    raise TypeError(f"Column {col} has inconsistent types.")
-                results[col] = results[col].astype(dtype)
-            results.to_csv(eval_file_path, sep=";")
+                    raise TypeError(f"Column {col} has unknown types.")
+            results.to_hdf(eval_file_path, key="results")
+            results.to_csv(eval_file_path.with_suffix(".csv"), sep=";")
 
     def evaluate_segmentation(self, file: str, prediction_path: Path) -> Dict[str, Any]:
         """Evaluate the segmentation of a single image
@@ -1066,7 +1074,7 @@ class Experiment:
             eval_base = f"evaluation-{folder_name}-{version}"
             # do the application and evaluation
             eval_files = (
-                fold_dir / f"{eval_base}_test-{tsk}.csv"
+                fold_dir / f"{eval_base}_test-{tsk}.h5"
                 for tsk in self.tasks
                 if "discriminator" not in tsk
             )
@@ -1079,7 +1087,7 @@ class Experiment:
 
             # evaluate the postprocessed files
             eval_files = (
-                fold_dir / f"{eval_base}-postprocessed_test-{tsk}.csv"
+                fold_dir / f"{eval_base}-postprocessed_test-{tsk}.h5"
                 for tsk in self.tasks
                 if "discriminator" not in tsk
             )
@@ -1092,7 +1100,7 @@ class Experiment:
             # evaluate the external set if present
             if self.external_test_set is not None:
                 eval_files = (
-                    fold_dir / f"{eval_base}_external_testset-{tsk}.csv"
+                    fold_dir / f"{eval_base}_external_testset-{tsk}.h5"
                     for tsk in self.tasks
                 )
                 eval_files_exist = np.all([eval_f.exists() for eval_f in eval_files])
@@ -1109,7 +1117,7 @@ class Experiment:
                     )
                 # also evaluate the postprocessed version
                 eval_files = (
-                    fold_dir / f"{eval_base}-postprocessed_external_testset-{tsk}.csv"
+                    fold_dir / f"{eval_base}-postprocessed_external_testset-{tsk}.h5"
                     for tsk in self.tasks
                 )
                 eval_files_exist = np.all([eval_f.exists() for eval_f in eval_files])
@@ -1172,7 +1180,7 @@ class Experiment:
                     eval_files.append(
                         self.output_path
                         / f_name
-                        / f"evaluation-{f_name}-{version}_{name}-{task}.csv"
+                        / f"evaluation-{f_name}-{version}_{name}-{task}.h5"
                     )
                 if not np.all([f.exists() for f in eval_files]):
                     raise FileNotFoundError("Eval file not found")

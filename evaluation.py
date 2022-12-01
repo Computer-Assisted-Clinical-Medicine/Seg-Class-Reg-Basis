@@ -427,9 +427,9 @@ def combine_evaluation_results_from_folds(
         results_path.mkdir()
 
     experiment = results_path.name
-    eval_mean_file_path = results_path / ("evaluation-mean-" + experiment + ".csv")
-    eval_std_file_path = results_path / ("evaluation-std-" + experiment + ".csv")
-    all_statistics_path = results_path / "evaluation-all-files.csv"
+    eval_mean_file_path = results_path / ("evaluation-mean-" + experiment + ".h5")
+    eval_std_file_path = results_path / ("evaluation-std-" + experiment + ".h5")
+    all_statistics_path = results_path / "evaluation-all-files.h5"
 
     files = [eval_mean_file_path, eval_std_file_path, all_statistics_path]
 
@@ -439,8 +439,8 @@ def combine_evaluation_results_from_folds(
     statistics_list = []
     for eval_f in eval_files:
         if not eval_f.exists():
-            continue
-        data = pd.read_csv(eval_f, sep=";")
+            raise FileNotFoundError("Eval file does not exist")
+        data = pd.read_hdf(eval_f)
         data["fold"] = eval_f.parent.name
         statistics_list.append(data)
 
@@ -448,13 +448,16 @@ def combine_evaluation_results_from_folds(
         # concatenate to one array
         statistics = pd.concat(statistics_list).sort_values(["File Number", "fold"])
         # write to file
-        statistics.to_csv(all_statistics_path, sep=";")
+        statistics.to_hdf(all_statistics_path, key="results")
+        statistics.to_csv(all_statistics_path.with_suffix(".csv"), sep=";")
 
         mean_statistics = statistics.groupby("fold").mean()
-        mean_statistics.to_csv(eval_mean_file_path, sep=";")
+        mean_statistics.to_hdf(eval_mean_file_path, key="results")
+        mean_statistics.to_csv(eval_mean_file_path.with_suffix(".csv"), sep=";")
 
         std_statistics = statistics.groupby("fold").std()
-        std_statistics.to_csv(eval_std_file_path, sep=";")
+        std_statistics.to_hdf(eval_std_file_path, key="results")
+        std_statistics.to_csv(eval_std_file_path.with_suffix(".csv"), sep=";")
 
 
 def make_boxplot_graphic(results_path: Path, result_file: Path, overwrite=False):
