@@ -11,7 +11,8 @@ import pandas as pd
 import scipy
 import SimpleITK as sitk
 import skimage
-import sklearn
+from sklearn import metrics as skmetrics
+
 from . import metric
 
 # configure logger
@@ -171,7 +172,7 @@ def calculate_classification_metrics(
     prediction: np.ndarray,
     ground_truth: np.ndarray,
     probabilities: np.ndarray,
-    labels: List,
+    labels: np.ndarray,
 ) -> Dict:
     """Calculate a few classification metrics. Those include:
     - accuracy
@@ -191,8 +192,8 @@ def calculate_classification_metrics(
         The ground truth as 1d array
     probabilities : np.ndarray
         The probabilities as a 2d array
-    labels : List
-        The labels as list
+    labels : np.ndarray
+        The labels as 1d array
 
     Returns
     -------
@@ -200,15 +201,20 @@ def calculate_classification_metrics(
         A dictionary with one entry for each metric
     """
     # treat it as strings
-    ground_truth = ground_truth.astype(str)
-    prediction = prediction.astype(str)
+    ground_truth = np.array(ground_truth).astype(str)
+    prediction = np.array(prediction).astype(str)
+    labels = np.array(labels).astype(str)
     assert np.allclose(prediction.shape, ground_truth.shape)
+    assert np.all([g in labels for g in ground_truth])
 
-    metrics_dict = {}
+    metrics_dict: Dict[str, float] = {}
+
+    if prediction.size == 0:
+        return metrics_dict
 
     metrics_dict["accuracy"] = np.mean(prediction == ground_truth)
 
-    confusion_matrix = sklearn.metrics.confusion_matrix(ground_truth, prediction)
+    confusion_matrix = skmetrics.confusion_matrix(ground_truth, prediction)
     metrics_dict["confusion_matrix"] = confusion_matrix
     precision = np.diag(confusion_matrix) / np.sum(confusion_matrix, axis=0)
     recall = np.diag(confusion_matrix) / np.sum(confusion_matrix, axis=1)
@@ -217,10 +223,10 @@ def calculate_classification_metrics(
     recall[np.isnan(recall)] = 0
     metrics_dict["precision"] = precision
     metrics_dict["recall"] = recall
-    metrics_dict["precision_mean"] = sklearn.metrics.precision_score(
+    metrics_dict["precision_mean"] = skmetrics.precision_score(
         ground_truth, prediction, average="micro"
     )
-    metrics_dict["recall_mean"] = sklearn.metrics.recall_score(
+    metrics_dict["recall_mean"] = skmetrics.recall_score(
         ground_truth, prediction, average="micro"
     )
 
@@ -229,17 +235,23 @@ def calculate_classification_metrics(
     prob_sum = probabilities.sum(axis=1)
     assert np.allclose(prob_sum, 1, atol=0.2)
     probabilities = (probabilities.T / prob_sum).T
+    if len(labels) == 2:
+        probabilities = probabilities[:, 0]
 
-    metrics_dict["auc_ovo"] = sklearn.metrics.roc_auc_score(
+    metrics_dict["auc_ovo"] = skmetrics.roc_auc_score(
         y_true=ground_truth, y_score=probabilities, labels=labels, multi_class="ovo"
     )
-    metrics_dict["auc_ovr"] = sklearn.metrics.roc_auc_score(
-        y_true=ground_truth, y_score=probabilities, labels=labels, multi_class="ovr"
-    )
+    # one versus rest only is defined if all classes are present
+    if np.all([l in ground_truth for l in labels]):
+        metrics_dict["auc_ovr"] = skmetrics.roc_auc_score(
+            y_true=ground_truth, y_score=probabilities, labels=labels, multi_class="ovr"
+        )
+    else:
+        metrics_dict["auc_ovr"] = np.nan
 
     for k in [2, 3, 5]:
         if len(labels) > k:
-            metrics_dict[f"top_{k}_accuracy"] = sklearn.metrics.top_k_accuracy_score(
+            metrics_dict[f"top_{k}_accuracy"] = skmetrics.top_k_accuracy_score(
                 k=k,
                 y_true=ground_truth,
                 y_score=probabilities,

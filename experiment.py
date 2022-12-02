@@ -837,7 +837,7 @@ class Experiment:
                 if pd.api.types.is_integer_dtype(most_common_dtype):
                     # make sure it is a number
                     assert np.all([pd.api.types.is_numeric_dtype(d) for d in dtypes])
-                    results.loc[pd.isna(results[col]), col] = -1
+                    results.loc[pd.isna(results[col]) | np.isinf(results[col]), col] = -1
                     results[col] = results[col].astype(int)
                 elif pd.api.types.is_float_dtype(most_common_dtype):
                     # make sure it is a number
