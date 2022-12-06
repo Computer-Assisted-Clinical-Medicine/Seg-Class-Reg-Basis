@@ -207,20 +207,31 @@ def calculate_classification_metrics(
     assert np.allclose(prediction.shape, ground_truth.shape)
     assert np.all([g in labels for g in ground_truth])
 
-    metrics_dict: Dict[str, float] = {}
+    metrics_dict: Dict[str, Any[float, np.ndarray]] = {}
 
     if prediction.size == 0:
         return metrics_dict
 
     metrics_dict["accuracy"] = np.mean(prediction == ground_truth)
 
-    confusion_matrix = skmetrics.confusion_matrix(ground_truth, prediction)
+    confusion_matrix = skmetrics.confusion_matrix(ground_truth, prediction, labels=labels)
     metrics_dict["confusion_matrix"] = confusion_matrix
-    precision = np.diag(confusion_matrix) / np.sum(confusion_matrix, axis=0)
-    recall = np.diag(confusion_matrix) / np.sum(confusion_matrix, axis=1)
-    # replace nans (when it is undefined) with 0s
-    precision[np.isnan(precision)] = 0
-    recall[np.isnan(recall)] = 0
+    diag_conf = np.diag(confusion_matrix)
+    diag_nz = diag_conf != 0
+    missing_gt = [l not in np.unique(ground_truth) for l in labels]
+
+    precision = np.zeros(len(labels))
+    # if there are no true positives, precision is zero
+    precision[diag_nz] = diag_conf[diag_nz] / np.sum(confusion_matrix, axis=0)[diag_nz]
+    # there is no precision for missing labels
+    precision[missing_gt] = np.nan
+
+    recall = np.zeros(len(labels))
+    # if there are no true positives, recall is zero
+    recall[diag_nz] = diag_conf[diag_nz] / np.sum(confusion_matrix, axis=1)[diag_nz]
+    # there is no recall for missing labels
+    recall[missing_gt] = np.nan
+
     metrics_dict["precision"] = precision
     metrics_dict["recall"] = recall
     metrics_dict["precision_mean"] = skmetrics.precision_score(
@@ -236,7 +247,8 @@ def calculate_classification_metrics(
     assert np.allclose(prob_sum, 1, atol=0.2)
     probabilities = (probabilities.T / prob_sum).T
     if len(labels) == 2:
-        probabilities = probabilities[:, 0]
+        # the probability for the greater class is used
+        probabilities = probabilities[:, 1]
 
     metrics_dict["auc_ovo"] = skmetrics.roc_auc_score(
         y_true=ground_truth, y_score=probabilities, labels=labels, multi_class="ovo"

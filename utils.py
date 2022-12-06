@@ -94,7 +94,7 @@ def output_to_image(
     output : np.ndarray
         The output to process
     task : str
-        The name of the task, it should be "segmentation", "classification" or "regression".
+        The name of the task, it should be "segmentation", "classification", "regression" or "autoencoder".
     processed_image : sitk.Image
         The processed image used for the prediction
     original_image : sitk.Image
@@ -168,7 +168,11 @@ def output_to_image(
 
 
 def export_npz(
-    output: List[np.ndarray], tasks: List[str], task_names: List[str], file_path: Path
+    output: List[np.ndarray],
+    tasks: List[str],
+    task_names: List[str],
+    file_path: Path,
+    write_class_probabilities=True,
 ):
     """Export the output of the network as npz file
 
@@ -182,6 +186,8 @@ def export_npz(
        The task names to be used as keys in the file
     file_path : Path
         The path where the file should be saved
+    write_class_probabilities : bool, optional
+        If probabilities should be written for classification tasks
     """
     assert len(task_names) == len(output)
     output_dict: Dict[str, np.ndarray] = {}
@@ -189,11 +195,15 @@ def export_npz(
         # for regression, just save the whole thing, it is not that big
         if tsk == "regression":
             output_dict[name] = out.astype(np.float16)
-        # average over the output
-        elif tsk == "classification":
-            output_dict[name] = out.mean(axis=tuple(range(out.ndim - 1)))
             output_dict[name + "_std"] = out.std(axis=tuple(range(out.ndim - 1)))
             output_dict[name + "_median"] = np.median(out, axis=tuple(range(out.ndim - 1)))
+        # average over the output
+        elif tsk == "classification":
+            output_dict[name + "_mean"] = out.mean(axis=tuple(range(out.ndim - 1)))
+            output_dict[name + "_std"] = out.std(axis=tuple(range(out.ndim - 1)))
+            output_dict[name + "_median"] = np.median(out, axis=tuple(range(out.ndim - 1)))
+            if write_class_probabilities:
+                output_dict[name] = out.astype(np.float16)
         # for now, just don't export data for segmentation
         elif tsk == "segmentation":
             output_dict[name] = np.array([])
@@ -406,10 +416,13 @@ def gather_results(
     # ignore some fields
     ignore = ["tasks", "label_shapes", "path"]
 
+    total_experiments = hparams.shape[0]
+
     results_all_list = []
     for _, row in hparams.iterrows():
         exp_tasks = list(set(row.tasks.values()))
         if task not in exp_tasks:
+            total_experiments -= 1
             continue
         results_file = experiment_dir.parent / row["path"] / res_path
         if results_file.exists():
@@ -435,7 +448,7 @@ def gather_results(
     else:
         results_all = pd.concat(results_all_list)
 
-    complete_percent = int(np.round(len(results_all_list) / hparams.shape[0] * 100))
+    complete_percent = int(np.round(len(results_all_list) / total_experiments * 100))
     print(f"{complete_percent:3d} % of experiments completed.")
 
     results_all = results_all.copy()

@@ -309,9 +309,6 @@ class ApplyLoader(SegLoader):
         else:
             assert len(overlap) == 3, "Overlap should have length 3"
         self.last_overlap = overlap
-
-        assert np.all(img.shape == self.last_shape), "Shape does not match the last image"
-
         # remove the batch dimension
         if img.ndim == 5:
             img = img[0]

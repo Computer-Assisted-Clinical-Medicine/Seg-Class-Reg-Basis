@@ -673,8 +673,9 @@ class SegBasisNet:
                 output[num] = out.squeeze()
 
         # export the images
+        write_seg_class_img = self.options.get("write_seg_class_images", False)
         for out, tsk, task_name in zip(output, self.tasks, self.task_names):
-            if tsk not in ("segmentation", "autoencoder"):
+            if tsk not in ("segmentation", "autoencoder") and not write_seg_class_img:
                 continue
             # remove padding
             if tsk in ("segmentation", "autoencoder"):
@@ -695,7 +696,13 @@ class SegBasisNet:
         output_path_npz = Path(apply_path) / f"{res_name}.npz"
         assert len(output) == len(self.task_names)
         # do not save the raw output, it is too big,
-        utils.export_npz(output, self.tasks, self.task_names, output_path_npz)
+        utils.export_npz(
+            output=output,
+            tasks=self.tasks,
+            task_names=self.task_names,
+            file_path=output_path_npz,
+            write_class_probabilities=self.options.get("write_probabilities", True),
+        )
 
     def get_network_output(self, application_dataset, filename: str) -> List[np.ndarray]:
         """Get the output of the network for a given example
@@ -718,48 +725,36 @@ class SegBasisNet:
         # set the divisible by parameter
         application_dataset.divisible_by = self.divisible_by
 
-        if self.options["rank"] == 2:
-            image_data = application_dataset(filename)
-            assert image_data.ndim == 4, "Image should have 4 dimensions"
+        if isinstance(self.model.output, Collection):
+            fully_defined = np.any([o.shape.is_fully_defined() for o in self.model.output])
+        else:
+            fully_defined = self.model.output.shape.is_fully_defined()
 
-            if isinstance(self.model.output, Collection):
-                fully_defined = np.any(
-                    [o.shape.is_fully_defined() for o in self.model.output]
-                )
-            else:
-                fully_defined = self.model.output.shape.is_fully_defined()
-            if fully_defined:
-                predictions = []
-                window_shape = [1] + cfg.train_input_shape[:2]
-                overlap = [0, 15, 15]
-                image_data_patches = application_dataset.get_windowed_test_sample(
-                    image_data, window_shape, overlap
-                )
-                # remove z-dimension
-                image_data_patches = image_data_patches.reshape(
-                    [-1] + cfg.train_input_shape
-                )
-                # turn into batches with last batch being not a full one
-                batch_rest = image_data_patches.shape[0] % cfg.batch_size_train
-                batch_shape = (-1, cfg.batch_size_train) + image_data_patches.shape[-3:]
-                if batch_rest != 0:
-                    image_data_batched = image_data_patches[:-batch_rest].reshape(
-                        batch_shape
-                    )
-                    last_batch_shape = (batch_rest,) + image_data_patches.shape[-3:]
-                    last_batch = image_data_patches[-batch_rest:].reshape(last_batch_shape)
+        image_data = application_dataset(filename)
+
+        if self.options["rank"] == 2:
+            window_shape = [1] + cfg.train_input_shape[:2]
+            if self.options["eval_center"]:
+                # only cut in z-direction if there are enough slices
+                if image_data.shape[0] > 16:
+                    cut_z = 4
                 else:
-                    image_data_batched = image_data_patches.reshape(batch_shape)
-                for x in image_data_batched:
-                    pred = self.model(x, training=False)
-                    predictions.append(pred)
-                if batch_rest != 0:
-                    pred = self.model(last_batch, training=False)
-                    predictions.append(pred)
-                # concatenate
-                probability_patches = np.concatenate(predictions)
-                probability_map = application_dataset.stitch_patches(probability_patches)
-                output = [probability_map]
+                    cut_z = 0
+                to_cut = np.array([cut_z, 0, 0], dtype=int)
+                to_cut[1:] = (image_data.shape[1:-1] - np.array(window_shape[1:])) // 2
+
+                extra_cut = (0,) + tuple(np.array(image_data.shape[1:-1]) % 2)
+                start = to_cut + extra_cut
+                end = image_data.shape[0:3] - to_cut
+                image_data = image_data[
+                    start[0] : end[0], start[1] : end[1], start[2] : end[2]
+                ]
+            assert image_data.ndim == 4, "Image should have 4 dimensions"
+            if fully_defined:
+                overlap = [0, 15, 15]
+                output = self._run_batches(
+                    application_dataset, image_data, window_shape, overlap
+                )
             else:
                 # reduce batch size according to data size
                 batch_size = int(
@@ -786,5 +781,57 @@ class SegBasisNet:
                 # and concatenate them
                 output = [np.concatenate(out, axis=0) for out in output_lists]
         else:
-            raise NotImplementedError("Only implemented for 2D")
+            if fully_defined:
+                window_shape = cfg.train_input_shape[:3]
+                if self.options["eval_center"]:
+                    to_cut = (image_data.shape[1:-1] - np.array(window_shape)) // 2
+                    extra_cut = np.array(image_data.shape[1:-1]) % 2
+                    start = to_cut + extra_cut
+                    end = image_data.shape[1:-1] - to_cut
+                    x = image_data[
+                        :, start[0] : end[0], start[1] : end[1], start[2] : end[2]
+                    ]
+                    # add batches
+                    x = np.repeat(x, cfg.batch_size_train, axis=0)
+                    output = [o.numpy() for o in self.model(x)]
+                else:
+                    overlap = [4, 15, 15]
+                    output = self._run_batches(
+                        application_dataset, image_data, window_shape, overlap
+                    )
+            else:
+                raise NotImplementedError("Only implemented for 2D")
+        return output
+
+    def _run_batches(self, application_dataset, image_data, window_shape, overlap):
+        predictions = []
+        image_data_patches = application_dataset.get_windowed_test_sample(
+            image_data, window_shape, overlap
+        )
+        # remove z-dimension
+        image_data_patches = image_data_patches.reshape([-1] + cfg.train_input_shape)
+        # turn into batches with last batch being not a full one
+        batch_rest = image_data_patches.shape[0] % cfg.batch_size_train
+        patch_shape = image_data_patches.shape[-self.options["rank"] - 1 :]
+
+        batch_shape = (-1, cfg.batch_size_train) + patch_shape
+        if batch_rest != 0:
+            image_data_batched = image_data_patches[:-batch_rest].reshape(batch_shape)
+            last_batch_shape = (batch_rest,) + patch_shape
+            last_batch = image_data_patches[-batch_rest:].reshape(last_batch_shape)
+        else:
+            image_data_batched = image_data_patches.reshape(batch_shape)
+        for x in image_data_batched:
+            pred = self.model(x, training=False)
+            predictions.append(pred)
+        if batch_rest != 0:
+            pred = self.model(last_batch, training=False)
+            predictions.append(pred)
+        # concatenate
+        output = []
+        for i, tsk in enumerate(self.tasks):
+            patches = np.concatenate([p[i] for p in predictions])
+            if tsk in ("segmentation", "autoencoder"):
+                patches = application_dataset.stitch_patches(patches)
+            output.append(patches)
         return output

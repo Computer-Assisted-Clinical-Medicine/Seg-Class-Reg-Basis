@@ -1183,7 +1183,9 @@ class Experiment:
                         / f"evaluation-{f_name}-{version}_{name}-{task}.h5"
                     )
                 if not np.all([f.exists() for f in eval_files]):
-                    raise FileNotFoundError("Eval file not found")
+                    raise FileNotFoundError(
+                        "Not all eval file not found, maybe not all folds have finished training."
+                    )
                 # combine previous evaluations
                 output_path = self.output_path / f"results_{name}_{version}_{task}"
                 if not output_path.exists():
