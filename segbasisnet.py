@@ -793,7 +793,7 @@ class SegBasisNet:
                     ]
                     # add batches
                     x = np.repeat(x, cfg.batch_size_train, axis=0)
-                    output = [o.numpy() for o in self.model(x)]
+                    output = [o.numpy()[:1] for o in self.model(x)]
                 else:
                     overlap = [4, 15, 15]
                     output = self._run_batches(

@@ -1,6 +1,7 @@
 """
 Preprocess the input images
 """
+import copy
 import logging
 import warnings
 from pathlib import Path
@@ -403,7 +404,7 @@ def preprocess_dataset(
         # add additional keys
         additional_keys = set(data.keys()) - set(("labels", "images"))
         for key in additional_keys:
-            preprocessed_dict[str(name)][key] = data[key]
+            preprocessed_dict[str(name)][key] = copy.deepcopy(data[key])
 
     logger.info("Preprocessing finished.")
 
