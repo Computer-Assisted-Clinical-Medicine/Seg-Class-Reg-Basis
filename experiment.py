@@ -4,6 +4,7 @@ Class to run an experiment using user-defined hyperparameters.
 import copy
 import logging
 import os
+import warnings
 from pathlib import Path, PurePath
 from typing import Any, Collection, Dict, Iterable, List, Optional, OrderedDict, Union
 
@@ -16,8 +17,8 @@ from tqdm.autonotebook import tqdm
 
 from . import config as cfg
 from . import evaluation, postprocessing, segbasisnet
-from .segloader import SegLoader
 from .segapplyloader import ApplyLoader
+from .segloader import SegLoader
 
 # configure logger
 logger = logging.getLogger(__name__)
@@ -390,7 +391,7 @@ class Experiment:
 
         cfg.batch_size_train = hp_train["batch_size"]
         if cfg.batch_size_train < 4:
-            raise Warning("Batch size is below 4, which is pretty small.")
+            warnings.warn("Batch size is below 4, which is pretty small.")
         cfg.batch_size_valid = cfg.batch_size_train
 
         # set shape according to the dimension
