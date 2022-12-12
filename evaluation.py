@@ -371,6 +371,8 @@ def evaluate_autoencoder_prediction(
     result_metrics["mean_absolute_error"] = np.mean(error_abs)
     result_metrics["max_absolute_error"] = np.max(error_abs)
     result_metrics["min_absolute_error"] = np.min(error_abs)
+    result_metrics["pred_max"] = np.max(pred_img_np)
+    result_metrics["pred_min"] = np.min(pred_img_np)
     result_metrics["norm_mutual_inf"] = skimage.metrics.normalized_mutual_information(
         orig_img_np, pred_img_np, bins=100
     )

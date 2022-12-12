@@ -6,6 +6,7 @@ import os
 from enum import Enum
 from pathlib import Path
 from typing import Any, Collection, Dict, List, Optional, Tuple, Union
+import warnings
 
 import numpy as np
 import SimpleITK as sitk
@@ -81,9 +82,18 @@ class Normalization:
         return image_normalized
 
     def check_image(self, image: np.ndarray) -> None:
+        """Check the image for NaNs and too high values
+
+        Parameters
+        ----------
+        image : np.ndarray
+            The image as a numpy array
+        """
         # do checks
         assert not np.any(np.isnan(image)), "NaNs in normalized image."
-        assert np.abs(image).max() < 1e4, "Voxel values over 10000."
+        assert np.abs(image).max() < 1e2, "Voxel values over 100."
+        if np.abs(image).max() < 10:
+            warnings.warn("Voxel values over 100.")
 
     def get_parameters(self) -> Dict[str, Any]:
         """get the parameters used to initialize the method, they are converted

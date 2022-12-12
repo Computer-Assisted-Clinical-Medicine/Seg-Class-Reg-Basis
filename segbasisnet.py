@@ -239,8 +239,12 @@ class SegBasisNet:
         return regularizer
 
     def _get_task_losses(self, loss_input: Dict[str, str]):
-        loss_name = tuple(loss_input[t] for t in self.tasks)
-        loss_obj = tuple(self.get_loss(loss_input[t], t) for t in self.tasks)
+        if loss_input is None:
+            loss_name = (None,) * len(self.tasks)
+            loss_obj = (None,) * len(self.tasks)
+        else:
+            loss_name = tuple(loss_input[t] for t in self.tasks)
+            loss_obj = tuple(self.get_loss(loss_input[t], t) for t in self.tasks)
         return loss_obj, loss_name
 
     def get_loss(self, loss_name: str, task="segmentation") -> Callable:
