@@ -332,7 +332,7 @@ class ApplyLoader(SegLoader):
         for i in range(3):
             if window_shape[i] < img.shape[i]:
                 # the stride uses two times the overlap, because it is needed for both patches
-                stride[i] = window_shape[i] - overlap[i] * 2
+                stride[i] = max(window_shape[i] - overlap[i] * 2, 1)
             else:
                 # in this case, window and image shape are the same, the stride should be the image shape
                 stride[i] = 1

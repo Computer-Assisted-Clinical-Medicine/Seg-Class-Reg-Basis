@@ -42,13 +42,49 @@ class SegBasisNet:
 
     Parameters
     ----------
-    loss_name : str
-        The name of the loss to use. If multiple tasks are performed, it can also
-        be a dict with the task name as keys and a list of losses as values
+    loss_name : Dict[str, str]
+        A dictionary specifying the loss for each task, is should be a dictionary
+        with an entry for ev ery task in tasks and a loss name as key
     tasks : OrderedDict[str, str], optional
-        The tasks that should be performed, loss and metrics will be selected accordingly
+        The tasks that should be performed, loss and metrics will be selected accordingly.
+        The key is the name of the task and the value the type. Supported types are
+        segmentation, classification, regression and autoencoder
+    is_training : bool, optional
+        If the network should be trained, by default True
+    do_finetuning : bool, optional
+        If finetuning should by performed, by default False
+    model_path : str, optional
+        The path of the model, needed for finetuning or if not trainable, by default None
+    regularize : Tuple[bool, str, float], optional
+        If the model should be regularized. The first element is a boolean if it should
+        be done, the seconde one is the type (L1 or L2) as string and the third one
+        is the strength, by default (True, "L2", 0.00001)
     custom_objects : dict, optional
-        Custom objects, that should be used when loading the network
+        Custom objects, that should be used when loading the network, by default None
+    loss_parameters : dict, optional
+        If parameters are required for the loss, they can be set here. Keys are the
+        names of the losses
+    clip_value : float, optional
+        Gradients will be clipped to this value, by default None
+    write_class_reg_images : bool, optional
+        If this is true, images will be generated for classification and regression
+        images. This can be helpful for fully convolutional networks. By default False.
+    write_probabilities : bool, optional
+        If all probability values should be saved for classification tasks. If False,
+        only the average is saved. This can be helpful if there are a lot of values
+        and it would require too much space. By default True.
+    eval_center : bool, optional
+        If only the center should be evaluated. If True, when applying the network
+        only the volume in the center will be used. For 2D networks, the center
+        of each slice will be used with the top 4 and bottom 4 cut off. This only
+        makes sense for classification and regression tasks. By default False.
+
+    The keyword arguments will be saved in self.options. Additional keyword arguments
+    can be provided and will be saved in self.options and can for example be used
+    by subclasses. The following options will be set:
+    - regularizer: the regularizer as a tf object
+    - in_channels: the number of input channels
+    - out_channels: the number of output channels
     """
 
     name: str
@@ -62,6 +98,11 @@ class SegBasisNet:
         model_path=None,
         regularize=(True, "L2", 0.00001),
         custom_objects=None,
+        loss_parameters=None,
+        clip_value=None,
+        write_class_reg_images=False,
+        write_probabilities=True,
+        eval_center=False,
         **kwargs,
     ):
 
@@ -98,6 +139,16 @@ class SegBasisNet:
                 warnings.warn("Caution: argument model_path is ignored in training!")
 
         self.options["model_path"] = str(model_path)
+
+        if loss_parameters is None:
+            self.options["loss_parameters"] = {}
+        else:
+            self.options["loss_parameters"] = loss_parameters
+
+        self.options["clip_value"] = clip_value
+        self.options["write_class_reg_images"] = write_class_reg_images
+        self.options["write_probabilities"] = write_probabilities
+        self.options["eval_center"] = eval_center
 
         load_full_model = False
         if model_path is not None:
@@ -417,7 +468,7 @@ class SegBasisNet:
         # compile model
         self.model.compile(
             optimizer=tf_utils.get_optimizer(
-                optimizer, l_r, clipvalue=self.options.get("clip_value", None)
+                optimizer, l_r, clipvalue=self.options["clip_value"]
             ),
             loss=self.outputs["loss"],
             metrics=metric_objects,
@@ -635,7 +686,7 @@ class SegBasisNet:
             the hyperparameters as a dictionary
         """
         hyp = {
-            "dimension": self.options.get("rank"),
+            "dimension": self.options["rank"],
             "regularize": self.options["regularize"][0],
             "regularizer": self.options["regularize"][1],
             "regularizer_param": self.options["regularize"][2],
@@ -673,7 +724,7 @@ class SegBasisNet:
                 output[num] = out.squeeze()
 
         # export the images
-        write_seg_class_img = self.options.get("write_seg_class_images", False)
+        write_seg_class_img = self.options["write_class_reg_images"]
         for out, tsk, task_name in zip(output, self.tasks, self.task_names):
             if tsk not in ("segmentation", "autoencoder") and not write_seg_class_img:
                 continue
@@ -701,7 +752,7 @@ class SegBasisNet:
             tasks=self.tasks,
             task_names=self.task_names,
             file_path=output_path_npz,
-            write_class_probabilities=self.options.get("write_probabilities", True),
+            write_class_probabilities=self.options["write_probabilities"],
         )
 
     def get_network_output(self, application_dataset, filename: str) -> List[np.ndarray]:
