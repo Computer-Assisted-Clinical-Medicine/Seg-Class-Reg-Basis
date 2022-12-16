@@ -72,6 +72,17 @@ def evaluate_segmentation_prediction(prediction_path: str, label_path: str) -> d
             result_metrics["Hausdorff"] = np.NAN
             result_metrics["Mean Symmetric Surface Distance"] = np.NAN
             return result_metrics
+        else:
+            result_metrics["Volume (P)"] = 0
+            result_metrics["Dice"] = 1
+            result_metrics["False Negative"] = 0
+            result_metrics["False Positive"] = 0
+            result_metrics["Confusion Rate"] = 0
+            result_metrics["Connectivity"] = 1
+            result_metrics["Fragmentation"] = 0
+            result_metrics["Hausdorff"] = 0
+            result_metrics["Mean Symmetric Surface Distance"] = 0
+            return result_metrics
 
     result_metrics["Volume (P)"] = metric.get_ml_sitk(pred_img)
 
