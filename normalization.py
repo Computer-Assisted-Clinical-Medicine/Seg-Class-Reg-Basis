@@ -92,8 +92,8 @@ class Normalization:
         # do checks
         assert not np.any(np.isnan(image)), "NaNs in normalized image."
         assert np.abs(image).max() < 1e2, "Voxel values over 100."
-        if np.abs(image).max() < 10:
-            warnings.warn("Voxel values over 100.")
+        if np.abs(image).max() > 10:
+            warnings.warn("Voxel values over 10.")
 
     def get_parameters(self) -> Dict[str, Any]:
         """get the parameters used to initialize the method, they are converted

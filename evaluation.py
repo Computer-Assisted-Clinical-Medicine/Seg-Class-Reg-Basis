@@ -224,6 +224,7 @@ def calculate_classification_metrics(
         return metrics_dict
 
     metrics_dict["accuracy"] = np.mean(prediction == ground_truth)
+    metrics_dict["std"] = np.std(probabilities, axis=0).mean()
 
     confusion_matrix = skmetrics.confusion_matrix(ground_truth, prediction, labels=labels)
     metrics_dict["confusion_matrix"] = confusion_matrix
