@@ -448,6 +448,26 @@ def gather_results(
     else:
         results_all = pd.concat(results_all_list)
 
+    dtypes_list = pd.DataFrame([r.dtypes for r in results_all_list]).apply(
+        lambda x: x.dropna().unique()
+    )
+    if isinstance(dtypes_list, pd.DataFrame):
+        assert dtypes_list.shape[0] == 1
+        dtypes_list = dtypes_list.iloc[0]
+    for col, dtypes in zip(results_all, dtypes_list):
+        if not isinstance(dtypes, List):
+            dtype = dtypes
+        elif len(dtypes) == 1:
+            dtype = dtypes[0]
+        elif np.all([pd.api.types.is_numeric_dtype(d) for d in dtypes]):
+            dtype = float
+        else:
+            raise TypeError(f"Multiple dtypes found for {col}")
+        is_int = pd.api.types.is_integer_dtype(dtype)
+        if ("prediction" in col or "ground_truth" in col) and is_int:
+            results_all.loc[results_all[col].isna(), col] = -1
+        results_all[col] = results_all[col].astype(dtype)
+
     complete_percent = int(np.round(len(results_all_list) / total_experiments * 100))
     print(f"{complete_percent:3d} % of experiments completed.")
 

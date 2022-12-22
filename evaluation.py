@@ -223,11 +223,11 @@ def calculate_classification_metrics(
     if prediction.size == 0:
         return metrics_dict
 
+    metrics_dict["label"] = labels
     metrics_dict["accuracy"] = np.mean(prediction == ground_truth)
     metrics_dict["std"] = np.std(probabilities, axis=0).mean()
 
     confusion_matrix = skmetrics.confusion_matrix(ground_truth, prediction, labels=labels)
-    metrics_dict["confusion_matrix"] = confusion_matrix
     diag_conf = np.diag(confusion_matrix)
     diag_nz = diag_conf != 0
     missing_gt = [l not in np.unique(ground_truth) for l in labels]
