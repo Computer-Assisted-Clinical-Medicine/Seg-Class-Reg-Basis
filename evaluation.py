@@ -262,11 +262,15 @@ def calculate_classification_metrics(
         # the probability for the greater class is used
         probabilities = probabilities[:, 1]
 
-    metrics_dict["auc_ovo"] = skmetrics.roc_auc_score(
-        y_true=ground_truth, y_score=probabilities, labels=labels, multi_class="ovo"
-    )
+    only_one_label = np.all(ground_truth == ground_truth[0])
+    if only_one_label:
+        metrics_dict["auc_ovo"] = np.nan
+    else:
+        metrics_dict["auc_ovo"] = skmetrics.roc_auc_score(
+            y_true=ground_truth, y_score=probabilities, labels=labels, multi_class="ovo"
+        )
     # one versus rest only is defined if all classes are present
-    if np.all([l in ground_truth for l in labels]):
+    if np.all([l in ground_truth for l in labels]) and only_one_label:
         metrics_dict["auc_ovr"] = skmetrics.roc_auc_score(
             y_true=ground_truth, y_score=probabilities, labels=labels, multi_class="ovr"
         )
