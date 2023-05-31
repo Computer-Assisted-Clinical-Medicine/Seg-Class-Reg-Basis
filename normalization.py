@@ -380,8 +380,6 @@ class MeanSTD(Normalization):
         np.array
             The normalized image
         """
-        # clip image
-        image = clip_outliers(image, 0.01, 0.95)
         # set mask if not present
         mask_data = image > np.quantile(image, self.mask_quantile)
         # apply mask
